@@ -36,6 +36,18 @@ export interface SlotProps {
    */
   'admin-ai-settings-sections': Record<string, never>
   /**
+   * Extra entries in the sidebar's Designs section, below My Workspaces.
+   *
+   * A module that contributes whole routes has to contribute the way in as
+   * well: core cannot link to a route it does not have, and a `NavSubItem`
+   * whose `to` matches nothing falls through to `/designs/$id` and asks the
+   * API for a design named after the path segment. Contributions render
+   * `NavSubItem` themselves — the sidebar's own children are the shape to
+   * follow — and are passed the click handler that closes the sidebar on
+   * mobile.
+   */
+  'designs-nav-items': { onNavClick: () => void }
+  /**
    * Extra actions in the part detail header, alongside Edit and Delete.
    * Rendered only when viewing an existing part, never while creating one.
    * A contribution owns its own trigger, state, and any dialog it opens.
@@ -69,7 +81,15 @@ type AnySlotComponent = ComponentType<any>
 
 const registry = new Map<SlotName, Array<AnySlotComponent>>()
 
-/** Contribute a component to a slot. Called from a composition root. */
+/**
+ * Contribute a component to a slot. Called from a composition root.
+ *
+ * Deliberately additive, unlike the name-keyed registries (`JobTypeRegistry`,
+ * `ApprovalRegistry`, `ReleaseHookRegistry`, `registerPackage`) which throw on
+ * a duplicate. A slot is a *list* of contributions rendered in registration
+ * order — several modules decorating one extension point is the contract, not
+ * a collision, so there is nothing here that could conflict.
+ */
 export function registerSlot<TName extends SlotName>(
   name: TName,
   component: ComponentType<SlotProps[TName]>,

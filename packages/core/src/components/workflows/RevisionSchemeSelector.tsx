@@ -31,15 +31,22 @@ function getPrefix(scheme?: RevisionScheme): string {
   return 'X'
 }
 
+function getStartAt(scheme?: RevisionScheme): number {
+  if (scheme?.type === 'numeric' || scheme?.type === 'prefixed-numeric') {
+    return scheme.startAt ?? 1
+  }
+  return 1
+}
+
 /** Preview of example revision sequence (pure client-side, no server imports) */
-function getPreview(type: SchemeType, prefix: string): string {
+function getPreview(type: SchemeType, prefix: string, startAt: number): string {
   switch (type) {
     case 'alpha':
       return 'A, B, C, D, ...'
     case 'numeric':
-      return '1, 2, 3, 4, ...'
+      return `${startAt}, ${startAt + 1}, ${startAt + 2}, ${startAt + 3}, ...`
     case 'prefixed-numeric':
-      return `${prefix}1, ${prefix}2, ${prefix}3, ...`
+      return `${prefix}${startAt}, ${prefix}${startAt + 1}, ${prefix}${startAt + 2}, ...`
     case 'none':
       // Not "(no revision)": a released item does carry a revision under this
       // scheme — the fixed marker — it just never advances.
@@ -54,6 +61,7 @@ export function RevisionSchemeSelector({
 }: RevisionSchemeSelectorProps) {
   const schemeType = getSchemeType(value)
   const prefix = getPrefix(value)
+  const startAt = getStartAt(value)
 
   const handleTypeChange = (type: SchemeType) => {
     switch (type) {
@@ -61,10 +69,10 @@ export function RevisionSchemeSelector({
         onChange({ type: 'alpha' })
         break
       case 'numeric':
-        onChange({ type: 'numeric' })
+        onChange({ type: 'numeric', startAt })
         break
       case 'prefixed-numeric':
-        onChange({ type: 'prefixed-numeric', prefix })
+        onChange({ type: 'prefixed-numeric', prefix, startAt })
         break
       case 'none':
         onChange({ type: 'none' })
@@ -73,7 +81,27 @@ export function RevisionSchemeSelector({
   }
 
   const handlePrefixChange = (newPrefix: string) => {
-    onChange({ type: 'prefixed-numeric', prefix: newPrefix || 'X' })
+    onChange({
+      type: 'prefixed-numeric',
+      prefix: newPrefix || 'X',
+      startAt,
+    })
+  }
+
+  const handleStartAtChange = (rawValue: string) => {
+    if (!/^\d+$/.test(rawValue)) return
+    const nextStartAt = Number(rawValue)
+    if (!Number.isInteger(nextStartAt) || nextStartAt < 0) return
+
+    if (schemeType === 'numeric') {
+      onChange({ type: 'numeric', startAt: nextStartAt })
+    } else if (schemeType === 'prefixed-numeric') {
+      onChange({
+        type: 'prefixed-numeric',
+        prefix,
+        startAt: nextStartAt,
+      })
+    }
   }
 
   return (
@@ -109,8 +137,25 @@ export function RevisionSchemeSelector({
         </div>
       )}
 
+      {(schemeType === 'numeric' || schemeType === 'prefixed-numeric') && (
+        <div className="space-y-1.5">
+          <Label htmlFor="revStartAt" className="text-xs">
+            Start at
+          </Label>
+          <Input
+            id="revStartAt"
+            type="number"
+            min={0}
+            step={1}
+            value={startAt}
+            onChange={(e) => handleStartAtChange(e.target.value)}
+            className="h-8 text-sm"
+          />
+        </div>
+      )}
+
       <div className="text-xs text-slate-500 dark:text-slate-400">
-        Preview: {getPreview(schemeType, prefix)}
+        Preview: {getPreview(schemeType, prefix, startAt)}
       </div>
     </div>
   )

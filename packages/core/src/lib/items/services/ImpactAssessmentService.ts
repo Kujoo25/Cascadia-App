@@ -435,6 +435,32 @@ export class ImpactAssessmentService {
       WITH RECURSIVE resolved_items AS (
         ${resolved}
       ),
+      bom_edges AS (
+        SELECT
+          source_id,
+          target_id,
+          MAX(quantity) AS quantity,
+          MIN(find_number) AS find_number,
+          MIN(reference_designator) AS reference_designator
+        FROM (
+          SELECT
+            source_id, target_id, quantity, find_number, reference_designator
+          FROM item_relationships
+          WHERE relationship_type = 'BOM'
+          UNION ALL
+          SELECT
+            execution.part_item_id AS source_id,
+            line.target_item_id AS target_id,
+            line.quantity,
+            line.find_number,
+            line.reference_designator
+          FROM part_variant_execution_bom_lines line
+          JOIN part_variant_executions execution
+            ON execution.id = line.execution_id
+          WHERE execution.is_active = true
+        ) all_bom_edges
+        GROUP BY source_id, target_id
+      ),
       where_used AS (
         -- Base case: direct parents — any line pointing at any version of
         -- the item asked about.
@@ -453,10 +479,9 @@ export class ImpactAssessmentService {
           r.find_number,
           r.reference_designator
         FROM items t
-        JOIN item_relationships r ON r.target_id = t.id
+        JOIN bom_edges r ON r.target_id = t.id
         JOIN resolved_items i ON i.id = r.source_id
         WHERE t.master_id = (SELECT master_id FROM items WHERE id = ${itemId})
-          AND r.relationship_type = 'BOM'
 
         UNION ALL
 
@@ -477,10 +502,9 @@ export class ImpactAssessmentService {
           r.reference_designator
         FROM where_used wu
         JOIN items t ON t.master_id = wu.master_id
-        JOIN item_relationships r ON r.target_id = t.id
+        JOIN bom_edges r ON r.target_id = t.id
         JOIN resolved_items i ON i.id = r.source_id
         WHERE wu.depth < ${maxDepth}
-          AND r.relationship_type = 'BOM'
           AND NOT i.master_id = ANY(wu.path)  -- Prevent circular references
       )
       SELECT
@@ -535,6 +559,23 @@ export class ImpactAssessmentService {
       WITH RECURSIVE resolved_items AS (
         ${resolved}
       ),
+      bom_edges AS (
+        SELECT source_id, target_id
+        FROM (
+          SELECT source_id, target_id
+          FROM item_relationships
+          WHERE relationship_type = 'BOM'
+          UNION ALL
+          SELECT
+            execution.part_item_id AS source_id,
+            line.target_item_id AS target_id
+          FROM part_variant_execution_bom_lines line
+          JOIN part_variant_executions execution
+            ON execution.id = line.execution_id
+          WHERE execution.is_active = true
+        ) all_bom_edges
+        GROUP BY source_id, target_id
+      ),
       ancestors AS (
         -- Base case: direct parents within the same design
         SELECT
@@ -549,10 +590,9 @@ export class ImpactAssessmentService {
           1 as depth,
           ARRAY[t.master_id, i.master_id] as path
         FROM items t
-        JOIN item_relationships r ON r.target_id = t.id
+        JOIN bom_edges r ON r.target_id = t.id
         JOIN resolved_items i ON i.id = r.source_id
         WHERE t.master_id = (SELECT master_id FROM items WHERE id = ${itemId})
-          AND r.relationship_type = 'BOM'
           AND i.design_id = ${designId}
 
         UNION ALL
@@ -571,10 +611,9 @@ export class ImpactAssessmentService {
           a.path || i.master_id
         FROM ancestors a
         JOIN items t ON t.master_id = a.master_id
-        JOIN item_relationships r ON r.target_id = t.id
+        JOIN bom_edges r ON r.target_id = t.id
         JOIN resolved_items i ON i.id = r.source_id
         WHERE a.depth < ${maxDepth}
-          AND r.relationship_type = 'BOM'
           AND i.design_id = ${designId}
           AND NOT i.master_id = ANY(a.path)  -- Prevent circular references
       )

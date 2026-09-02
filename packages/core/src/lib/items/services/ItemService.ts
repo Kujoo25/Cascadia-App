@@ -850,12 +850,6 @@ export class ItemService {
         .set({ isCurrent: false })
         .where(eq(items.masterId, currentItem.masterId))
 
-      // Get type-specific data
-      const typeSpecificData = await this.getTypeSpecificData(
-        currentItem.itemType,
-        id,
-      )
-
       // Create new revision, starting at the lifecycle's initial state
       const revisionInitialState = await this.resolveInitialStateId(
         currentItem.itemType,
@@ -888,15 +882,26 @@ export class ItemService {
           .returning(),
       )
 
-      // Copy type-specific data
-      if (typeSpecificData) {
-        await this.insertTypeSpecificData(
-          currentItem.itemType,
-          newItem.id,
-          typeSpecificData,
-          tx,
-        )
-      }
+      // Copy the extension row and any version-owned child content (including
+      // Variant executions). The generic copier is deliberately the one
+      // authority for this; a remembered field list drifts as schemas grow.
+      const { copyTypeSpecificData } = await import('../type-handlers/copy')
+      await copyTypeSpecificData(
+        currentItem.itemType,
+        currentItem.id,
+        newItem.id,
+        tx,
+      )
+
+      // The new revision owns its own outgoing structure. Branch merges also
+      // copy these rows; the branchless revise path must not publish an empty
+      // BOM or lose traceability links.
+      await ItemRelationshipService.copyRelationshipsToItem({
+        sourceItemId: currentItem.id,
+        targetItemId: newItem.id,
+        userId,
+        tx,
+      })
 
       // Carry the item's files onto the new revision. File rows point at one
       // item *version*, so the revision would otherwise be born with no CAD and

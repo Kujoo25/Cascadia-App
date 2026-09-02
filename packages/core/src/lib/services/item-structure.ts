@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { db } from '../db'
-import { itemRelationships } from '../db/schema'
+import {
+  itemRelationships,
+  partVariantExecutionBomLines,
+  partVariantExecutions,
+} from '../db/schema'
 
 /**
  * An item's BOM structure, reduced to something two versions can be compared
@@ -27,7 +31,8 @@ export async function bomStructureOf(
   itemId: string,
   tx?: Pick<typeof db, 'select'>,
 ): Promise<BomStructure> {
-  const rows = await (tx ?? db)
+  const executor = tx ?? db
+  const rows = await executor
     .select({
       targetId: itemRelationships.targetId,
       quantity: itemRelationships.quantity,
@@ -41,13 +46,74 @@ export async function bomStructureOf(
       ),
     )
 
+  const executions = await executor
+    .select({
+      id: partVariantExecutions.id,
+      executionMasterId: partVariantExecutions.executionMasterId,
+      code: partVariantExecutions.code,
+      name: partVariantExecutions.name,
+      sku: partVariantExecutions.sku,
+      isActive: partVariantExecutions.isActive,
+      attributes: partVariantExecutions.attributes,
+    })
+    .from(partVariantExecutions)
+    .where(eq(partVariantExecutions.partItemId, itemId))
+
+  const executionLines =
+    executions.length === 0
+      ? []
+      : await executor
+          .select({
+            executionId: partVariantExecutionBomLines.executionId,
+            targetId: partVariantExecutionBomLines.targetItemId,
+            quantity: partVariantExecutionBomLines.quantity,
+            findNumber: partVariantExecutionBomLines.findNumber,
+            referenceDesignator:
+              partVariantExecutionBomLines.referenceDesignator,
+          })
+          .from(partVariantExecutionBomLines)
+          .where(
+            inArray(
+              partVariantExecutionBomLines.executionId,
+              executions.map((execution) => execution.id),
+            ),
+          )
+  const masterByExecution = new Map(
+    executions.map((execution) => [execution.id, execution.executionMasterId]),
+  )
+  const signature = [
+    ...rows.map(
+      (row) =>
+        `B:${row.targetId}:${row.quantity ?? ''}:${row.findNumber ?? ''}`,
+    ),
+    ...executions.map(
+      (execution) =>
+        `E:${execution.executionMasterId}:${execution.code}:${execution.name ?? ''}:${execution.sku ?? ''}:${execution.isActive}:${stableJson(execution.attributes)}`,
+    ),
+    ...executionLines.map(
+      (line) =>
+        `M:${masterByExecution.get(line.executionId)}:${line.targetId}:${line.quantity}:${line.findNumber ?? ''}:${line.referenceDesignator ?? ''}`,
+    ),
+  ]
+    .sort()
+    .join('|')
+
   return {
-    lineCount: rows.length,
-    signature: rows
-      .map((r) => `${r.targetId}:${r.quantity ?? ''}:${r.findNumber ?? ''}`)
-      .sort()
-      .join('|'),
+    lineCount: rows.length + executionLines.length,
+    signature,
   }
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+      .join(',')}}`
+  }
+  if (value === undefined) return 'undefined'
+  return JSON.stringify(value)
 }
 
 /** How a BOM structure reads in a conflict list. */

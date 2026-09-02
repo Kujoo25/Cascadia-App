@@ -7,14 +7,27 @@ import { eq } from 'drizzle-orm'
 import { tagged } from '../adapter'
 import type { Part } from '@/lib/items/types/part'
 import type { PartUpdate } from '@/lib/api/schemas'
+import type {
+  ConfigurePartVariantInput,
+  CreateExecutionBomLineInput,
+  CreateVariantExecutionInput,
+  UpdateVariantExecutionInput,
+} from '@/lib/product-variants/types'
 import { ItemService } from '@/lib/items/services/ItemService'
 import { VerificationService } from '@/lib/services/VerificationService'
 import { ParametricResolutionService } from '@/lib/services/ParametricResolutionService'
+import { PartVariantService } from '@/lib/services/PartVariantService'
 import { NotFoundError, ValidationError } from '@/lib/errors'
 import { apiHandler, created } from '@/lib/api/handler'
 import { requireItemAccess, requireItemsAccess } from '@/lib/auth/access'
 import { mountRoutes } from '@/lib/api/route-registry'
 import { partUpdateSchema } from '@/lib/api/schemas'
+import {
+  configurePartVariantSchema,
+  createExecutionBomLineSchema,
+  createVariantExecutionSchema,
+  updateVariantExecutionSchema,
+} from '@/lib/product-variants/types'
 import { db } from '@/lib/db'
 import {
   items,
@@ -29,6 +42,12 @@ const adapt = tagged('Parts')
 const app = new Hono()
 
 const partIdParamSchema = z.object({ id: z.string().uuid() })
+const executionParamSchema = partIdParamSchema.extend({
+  executionId: z.string().uuid(),
+})
+const executionBomLineParamSchema = executionParamSchema.extend({
+  lineId: z.string().uuid(),
+})
 const partResponseSchema = z
   .object({
     id: z.string().uuid(),
@@ -58,6 +77,210 @@ app.get(
         const part = await ItemService.findById(id)
         if (!part) throw new NotFoundError('Part', id)
         return { part }
+      },
+    ),
+  ),
+)
+
+// GET /api/parts/:id/variant-configuration
+app.get(
+  '/:id/variant-configuration',
+  adapt(
+    apiHandler<{ id: string }>(
+      {
+        permission: ['parts', 'read'],
+        openapi: {
+          summary: 'Get the product Variant and MK configuration',
+          request: { params: partIdParamSchema },
+          responses: {
+            200: {
+              schema: z.object({ configuration: z.unknown().nullable() }),
+            },
+          },
+        },
+      },
+      async ({ params, user }) => {
+        await requireItemAccess(user.id, params.id)
+        return {
+          configuration: await PartVariantService.getConfiguration(params.id),
+        }
+      },
+    ),
+  ),
+)
+
+// POST /api/parts/:id/variant-configuration
+app.post(
+  '/:id/variant-configuration',
+  adapt(
+    apiHandler<{ id: string }, ConfigurePartVariantInput>(
+      {
+        permission: ['parts', 'update'],
+        body: configurePartVariantSchema,
+        openapi: {
+          summary: 'Configure a Part as a product Variant',
+          request: { params: partIdParamSchema },
+          responses: {
+            201: { schema: z.object({ configuration: z.unknown() }) },
+          },
+        },
+      },
+      async ({ params, body, user }) => {
+        await requireItemAccess(user.id, params.id)
+        return created({
+          configuration: await PartVariantService.configureVariant(
+            params.id,
+            body,
+            user.id,
+          ),
+        })
+      },
+    ),
+  ),
+)
+
+// POST /api/parts/:id/variant-executions
+app.post(
+  '/:id/variant-executions',
+  adapt(
+    apiHandler<{ id: string }, CreateVariantExecutionInput>(
+      {
+        permission: ['parts', 'update'],
+        body: createVariantExecutionSchema,
+        openapi: { request: { params: partIdParamSchema } },
+      },
+      async ({ params, body, user }) => {
+        await requireItemAccess(user.id, params.id)
+        return created({
+          execution: await PartVariantService.createExecution(
+            params.id,
+            body,
+            user.id,
+          ),
+        })
+      },
+    ),
+  ),
+)
+
+// PUT /api/parts/:id/variant-executions/:executionId
+app.put(
+  '/:id/variant-executions/:executionId',
+  adapt(
+    apiHandler<
+      { id: string; executionId: string },
+      UpdateVariantExecutionInput
+    >(
+      {
+        permission: ['parts', 'update'],
+        body: updateVariantExecutionSchema,
+        openapi: { request: { params: executionParamSchema } },
+      },
+      async ({ params, body, user }) => {
+        await requireItemAccess(user.id, params.id)
+        return {
+          execution: await PartVariantService.updateExecution(
+            params.id,
+            params.executionId,
+            body,
+            user.id,
+          ),
+        }
+      },
+    ),
+  ),
+)
+
+// DELETE /api/parts/:id/variant-executions/:executionId (soft delete)
+app.delete(
+  '/:id/variant-executions/:executionId',
+  adapt(
+    apiHandler<{ id: string; executionId: string }>(
+      {
+        permission: ['parts', 'update'],
+        openapi: { request: { params: executionParamSchema } },
+      },
+      async ({ params, user }) => {
+        await requireItemAccess(user.id, params.id)
+        await PartVariantService.deactivateExecution(
+          params.id,
+          params.executionId,
+          user.id,
+        )
+        return { success: true }
+      },
+    ),
+  ),
+)
+
+// POST /api/parts/:id/variant-executions/:executionId/bom
+app.post(
+  '/:id/variant-executions/:executionId/bom',
+  adapt(
+    apiHandler<
+      { id: string; executionId: string },
+      CreateExecutionBomLineInput
+    >(
+      {
+        permission: ['parts', 'update'],
+        body: createExecutionBomLineSchema,
+        openapi: { request: { params: executionParamSchema } },
+      },
+      async ({ params, body, user }) => {
+        await requireItemsAccess(user.id, [params.id, body.targetItemId])
+        return created({
+          line: await PartVariantService.addExecutionBomLine(
+            params.id,
+            params.executionId,
+            body,
+            user.id,
+          ),
+        })
+      },
+    ),
+  ),
+)
+
+// DELETE /api/parts/:id/variant-executions/:executionId/bom/:lineId
+app.delete(
+  '/:id/variant-executions/:executionId/bom/:lineId',
+  adapt(
+    apiHandler<{ id: string; executionId: string; lineId: string }>(
+      {
+        permission: ['parts', 'update'],
+        openapi: { request: { params: executionBomLineParamSchema } },
+      },
+      async ({ params, user }) => {
+        await requireItemAccess(user.id, params.id)
+        await PartVariantService.removeExecutionBomLine(
+          params.id,
+          params.executionId,
+          params.lineId,
+          user.id,
+        )
+        return { success: true }
+      },
+    ),
+  ),
+)
+
+// GET /api/parts/:id/variant-executions/:executionId/resolved-bom
+app.get(
+  '/:id/variant-executions/:executionId/resolved-bom',
+  adapt(
+    apiHandler<{ id: string; executionId: string }>(
+      {
+        permission: ['parts', 'read'],
+        openapi: { request: { params: executionParamSchema } },
+      },
+      async ({ params, user }) => {
+        await requireItemAccess(user.id, params.id)
+        return {
+          lines: await PartVariantService.getResolvedBom(
+            params.id,
+            params.executionId,
+          ),
+        }
       },
     ),
   ),

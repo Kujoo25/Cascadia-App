@@ -24,6 +24,7 @@ export * from './cache'
 export * from './crossReferences'
 export * from './componentCatalog'
 export * from './api-keys'
+export * from './product-variants'
 
 // Module-owned schema files are deliberately absent. They are composed into an
 // edition by `src/modules.schema.ts`, which is what drizzle-kit reads; code

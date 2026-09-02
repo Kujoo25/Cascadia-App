@@ -288,6 +288,10 @@ export {
 export type { SearchResultRow } from './options/enterprise-search'
 export { itemSearchQuery, itemTextSearchQuery } from './options/item-search'
 export type { ItemSearchParams } from './options/item-search'
+export {
+  partVariantConfigurationQuery,
+  resolvedVariantBomQuery,
+} from './options/product-variants'
 export { itemHistoryQuery } from './options/item-history'
 export { workflowDefinitionQuery } from './options/workflows'
 export { upstreamChangesQuery } from './options/mbom'

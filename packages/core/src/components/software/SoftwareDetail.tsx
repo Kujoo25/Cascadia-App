@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Cascadia PLM LLC
 
 import { Link } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Edit, Save, Trash2, X } from 'lucide-react'
+import { ArrowLeft, Edit, ExternalLink, Save, Trash2, X } from 'lucide-react'
 import { BuildArtifactCard } from './BuildArtifactCard'
 import { SourceViewer } from './SourceViewer'
 import type { Software } from '@/lib/items/types/software'
@@ -36,6 +37,8 @@ import {
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
 import { StateBadge } from '@/components/items/StateBadge'
 import { useReleasedFamily } from '@/lib/hooks/useReleasedFamily'
+import { ItemCreateDesignSection } from '@/components/items/ItemCreateDesignSection'
+import { designStatusQuery } from '@/lib/query'
 
 const SOFTWARE_TYPE_OPTIONS = [
   { value: 'firmware', label: 'Firmware' },
@@ -62,6 +65,9 @@ const createEmptySoftware = (defaultDesignId?: string): Software => ({
   description: '',
   softwareType: 'firmware',
   sourceMode: 'internal',
+  externalRepositoryUrl: '',
+  externalRef: '',
+  externalCommitSha: '',
   version: '',
   targetHardware: '',
   toolchain: '',
@@ -77,11 +83,77 @@ const createEmptySoftware = (defaultDesignId?: string): Software => ({
 export const SOFTWARE_DETAIL_TABS = ['details', 'source', 'history'] as const
 export type SoftwareDetailTab = (typeof SOFTWARE_DETAIL_TABS)[number]
 
+function ExternalRepositoryField({
+  url,
+  className,
+}: {
+  url?: string | null
+  className?: string
+}) {
+  const isLink = !!url && /^https?:\/\//i.test(url)
+
+  return (
+    <div className={className}>
+      <dt className="text-sm font-medium text-slate-500 dark:text-slate-400">
+        Repository
+      </dt>
+      <dd className="mt-1 break-all text-sm">
+        {isLink ? (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-blue-600 hover:underline dark:text-blue-400"
+          >
+            {url}
+            <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+          </a>
+        ) : (
+          <span className="text-slate-500 dark:text-slate-400">
+            No repository URL recorded
+          </span>
+        )}
+      </dd>
+    </div>
+  )
+}
+
+function ExternalSourcePanel({ software }: { software: Software }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>External source</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        <p className="text-sm text-slate-600 dark:text-slate-400">
+          Development takes place outside Cascadia. This repository pin is
+          maintained manually; Cascadia does not fetch, mirror, or synchronize
+          the repository.
+        </p>
+        <dl className="grid grid-cols-1 gap-5 md:grid-cols-2">
+          <ExternalRepositoryField
+            url={software.externalRepositoryUrl}
+            className="md:col-span-2"
+          />
+          <ViewEditStatic
+            label="Pinned reference"
+            value={software.externalRef}
+          />
+          <ViewEditStatic
+            label="Commit SHA"
+            value={software.externalCommitSha}
+          />
+        </dl>
+      </CardContent>
+    </Card>
+  )
+}
+
 interface SoftwareDetailProps {
   software?: Software
   designs?: Array<Design>
   defaultDesignId?: string
-  onSave: (software: Software) => Promise<void>
+  onSave: (software: Software, branchId?: string) => Promise<void>
   onDelete?: () => Promise<void>
   onCancel: () => void
   isSubmitting?: boolean
@@ -108,6 +180,7 @@ export function SoftwareDetail({
     () => initialSoftware || createEmptySoftware(defaultDesignId),
   )
   const [isEditing, setIsEditing] = useState(isCreateMode)
+  const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>()
   const [attributes, setAttributes] = useState<Record<string, unknown>>(
     initialSoftware?.attributes ?? {},
   )
@@ -121,13 +194,34 @@ export function SoftwareDetail({
 
   const current = software
   const { isReleasedFamily } = useReleasedFamily('Software', current.state)
+  const { data: designStatus = null } = useQuery(
+    designStatusQuery(
+      software.designId,
+      isCreateMode && Boolean(software.designId),
+    ),
+  )
+  const branchRequired = designStatus?.protection.phase === 'post-release'
 
   const updateField = (field: keyof Software, value: unknown) => {
     setSoftware((prev) => ({ ...prev, [field]: value }))
   }
 
+  const updateSourceMode = (value: string) => {
+    setSoftware((prev) => ({
+      ...prev,
+      sourceMode: value as Software['sourceMode'],
+      ...(value === 'internal'
+        ? {
+            externalRepositoryUrl: '',
+            externalRef: '',
+            externalCommitSha: '',
+          }
+        : {}),
+    }))
+  }
+
   const handleSave = async () => {
-    await onSave({ ...software, attributes })
+    await onSave({ ...software, attributes }, selectedBranchId)
     if (!isCreateMode) setIsEditing(false)
   }
 
@@ -162,11 +256,6 @@ export function SoftwareDetail({
     }
   }
 
-  const designOptions = designs.map((d) => ({
-    value: d.id,
-    label: d.name,
-  }))
-
   return (
     <PageContainer>
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -199,7 +288,13 @@ export function SoftwareDetail({
                 <X className="h-4 w-4 mr-2" />
                 Cancel
               </Button>
-              <Button onClick={handleSave} disabled={isSubmitting}>
+              <Button
+                onClick={handleSave}
+                disabled={
+                  isSubmitting ||
+                  (isCreateMode && branchRequired && !selectedBranchId)
+                }
+              >
                 <Save className="h-4 w-4 mr-2" />
                 {isSubmitting
                   ? 'Saving...'
@@ -285,12 +380,19 @@ export function SoftwareDetail({
                       required
                     />
                     {isCreateMode ? (
-                      <ViewEditSelect
-                        label="Design"
-                        value={software.designId}
-                        onChange={(v) => updateField('designId', v)}
+                      <ItemCreateDesignSection
+                        designs={designs}
+                        designId={software.designId}
+                        displayedDesignId={current.designId}
+                        onDesignChange={(value) => {
+                          updateField('designId', value)
+                          setSelectedBranchId(undefined)
+                        }}
                         isEditing={isEditing}
-                        options={designOptions}
+                        isCreateMode={isCreateMode}
+                        selectedBranchId={selectedBranchId}
+                        onBranchChange={setSelectedBranchId}
+                        itemLabel="software item"
                       />
                     ) : (
                       <ViewEditStatic
@@ -325,10 +427,44 @@ export function SoftwareDetail({
                       value={
                         isEditing ? software.sourceMode : current.sourceMode
                       }
-                      onChange={(v) => updateField('sourceMode', v)}
+                      onChange={updateSourceMode}
                       isEditing={isEditing && isCreateMode}
                       options={SOURCE_MODE_OPTIONS}
                     />
+                    {isEditing && software.sourceMode === 'external' && (
+                      <>
+                        <ViewEditText
+                          label="Repository URL"
+                          value={software.externalRepositoryUrl}
+                          onChange={(v) =>
+                            updateField('externalRepositoryUrl', v)
+                          }
+                          isEditing
+                          inputType="url"
+                          placeholder="https://github.com/organization/repository"
+                          className="md:col-span-2"
+                        />
+                        <ViewEditText
+                          label="Pinned Reference"
+                          value={software.externalRef}
+                          onChange={(v) => updateField('externalRef', v)}
+                          isEditing
+                          placeholder="e.g., v2.3.0, release/2.3, or a commit"
+                        />
+                        <ViewEditText
+                          label="Commit SHA"
+                          value={software.externalCommitSha}
+                          onChange={(v) => updateField('externalCommitSha', v)}
+                          isEditing
+                          placeholder="Optional full 40- or 64-character SHA"
+                        />
+                        <div className="md:col-span-2 text-sm text-slate-500 dark:text-slate-400">
+                          The reference is stored manually. Cascadia does not
+                          currently verify it against the repository or keep it
+                          synchronized.
+                        </div>
+                      </>
+                    )}
                     <ViewEditText
                       label="Version"
                       value={isEditing ? software.version : current.version}
@@ -387,19 +523,39 @@ export function SoftwareDetail({
                     label="Mode"
                     value={current.sourceMode ?? 'internal'}
                   />
-                  <ViewEditStatic
-                    label="Source snapshot"
-                    value={
-                      current.manifestId
-                        ? 'Imported (see Source tab)'
-                        : 'No source imported yet'
-                    }
-                  />
-                  {current.draftManifestId && (
-                    <ViewEditStatic
-                      label="Draft"
-                      value="Uncommitted changes (see Source tab)"
-                    />
+                  {(current.sourceMode ?? 'internal') === 'external' ? (
+                    <>
+                      <ExternalRepositoryField
+                        url={current.externalRepositoryUrl}
+                      />
+                      <ViewEditStatic
+                        label="Pinned reference"
+                        value={current.externalRef}
+                      />
+                      {current.externalCommitSha && (
+                        <ViewEditStatic
+                          label="Commit SHA"
+                          value={current.externalCommitSha}
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <ViewEditStatic
+                        label="Source snapshot"
+                        value={
+                          current.manifestId
+                            ? 'Imported (see Source tab)'
+                            : 'No source imported yet'
+                        }
+                      />
+                      {current.draftManifestId && (
+                        <ViewEditStatic
+                          label="Draft"
+                          value="Uncommitted changes (see Source tab)"
+                        />
+                      )}
+                    </>
                   )}
                 </CardContent>
               </Card>
@@ -490,14 +646,15 @@ export function SoftwareDetail({
 
         {!isCreateMode && current.id && (
           <TabsContent value="source" className="mt-6">
-            <SourceViewer
-              itemId={current.id}
-              canImport={(current.sourceMode ?? 'internal') === 'internal'}
-              canEdit={
-                (current.sourceMode ?? 'internal') === 'internal' &&
-                !isReleasedFamily
-              }
-            />
+            {(current.sourceMode ?? 'internal') === 'external' ? (
+              <ExternalSourcePanel software={current} />
+            ) : (
+              <SourceViewer
+                itemId={current.id}
+                canImport
+                canEdit={!isReleasedFamily}
+              />
+            )}
           </TabsContent>
         )}
 

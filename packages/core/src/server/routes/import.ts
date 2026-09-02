@@ -81,7 +81,19 @@ app.post(
         const userId = user.id
 
         // Parse and validate request body
-        const { designId, branchId, rows, bypassBranchProtection } = body
+        const {
+          designId,
+          branchId,
+          rows,
+          bypassBranchProtection,
+          importAsReleased,
+        } = body
+
+        if (importAsReleased && branchId) {
+          throw new ValidationError(
+            'Existing formal releases must be imported directly to main; do not provide a branch ID',
+          )
+        }
 
         // Verify design access
         await requireDesignAccess(user.id, designId)
@@ -92,7 +104,7 @@ app.post(
         }
 
         // Bypass branch protection requires Administrator role
-        if (bypassBranchProtection) {
+        if (bypassBranchProtection || importAsReleased) {
           await requireRole(request, 'Administrator')
         }
 
@@ -108,7 +120,12 @@ app.post(
         const isPostRelease = designStatus.phase === 'post-release'
 
         // If post-release and no bypass, require branchId
-        if (isPostRelease && !bypassBranchProtection && !branchId) {
+        if (
+          isPostRelease &&
+          !bypassBranchProtection &&
+          !importAsReleased &&
+          !branchId
+        ) {
           throw new ValidationError(
             'Branch ID is required for post-release designs',
           )
@@ -145,7 +162,7 @@ app.post(
 
             let createdItem: BaseItem
 
-            if (branchId && !bypassBranchProtection) {
+            if (branchId && !bypassBranchProtection && !importAsReleased) {
               // Create on branch (post-release)
               const branchResult = await ItemService.createOnBranch(
                 'Document',
@@ -161,7 +178,11 @@ app.post(
                 'Document',
                 documentData,
                 userId,
-                { bypassBranchProtection: bypassBranchProtection || false },
+                {
+                  bypassBranchProtection:
+                    bypassBranchProtection || importAsReleased,
+                  importAsReleased,
+                },
               )
             }
 
@@ -326,8 +347,15 @@ app.post(
           branchId,
           rows,
           bypassBranchProtection,
+          importAsReleased,
           bomRelationships,
         } = body
+
+        if (importAsReleased && branchId) {
+          throw new ValidationError(
+            'Existing formal releases must be imported directly to main; do not provide a branch ID',
+          )
+        }
 
         // Verify design access
         await requireDesignAccess(user.id, designId)
@@ -338,7 +366,7 @@ app.post(
         }
 
         // Bypass branch protection requires Administrator role
-        if (bypassBranchProtection) {
+        if (bypassBranchProtection || importAsReleased) {
           await requireRole(request, 'Administrator')
         }
 
@@ -354,7 +382,12 @@ app.post(
         const isPostRelease = designStatus.phase === 'post-release'
 
         // If post-release and no bypass, require branchId
-        if (isPostRelease && !bypassBranchProtection && !branchId) {
+        if (
+          isPostRelease &&
+          !bypassBranchProtection &&
+          !importAsReleased &&
+          !branchId
+        ) {
           throw new ValidationError(
             'Branch ID is required for post-release designs',
           )
@@ -398,7 +431,7 @@ app.post(
 
             let createdItem: BaseItem
 
-            if (branchId && !bypassBranchProtection) {
+            if (branchId && !bypassBranchProtection && !importAsReleased) {
               // Create on branch (post-release)
               const branchResult = await ItemService.createOnBranch(
                 'Part',
@@ -411,7 +444,9 @@ app.post(
             } else {
               // Create directly (pre-release or bypass)
               createdItem = await ItemService.create('Part', partData, userId, {
-                bypassBranchProtection: bypassBranchProtection || false,
+                bypassBranchProtection:
+                  bypassBranchProtection || importAsReleased,
+                importAsReleased,
               })
             }
 

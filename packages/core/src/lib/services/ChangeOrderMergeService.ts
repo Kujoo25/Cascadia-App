@@ -9,6 +9,8 @@ import {
   changeOrderDesigns,
   itemRelationships,
   items,
+  partVariantExecutionBomLines,
+  partVariantExecutions,
   software,
   workflowInstances,
 } from '../db/schema'
@@ -2155,6 +2157,63 @@ export class ChangeOrderMergeService {
                       createdBy: userId,
                     })
                     .onConflictDoNothing()
+                }
+              }
+
+              // MK BOM lines are version-owned structure too. The execution
+              // snapshots were copied with the Part above; re-point their
+              // children to revisions released by this same ECO just like the
+              // ordinary BOM relationships.
+              const releasedExecutions = await tx
+                .select({ id: partVariantExecutions.id })
+                .from(partVariantExecutions)
+                .where(eq(partVariantExecutions.partItemId, releasedItemId))
+              if (releasedExecutions.length > 0) {
+                const executionLines = await tx
+                  .select()
+                  .from(partVariantExecutionBomLines)
+                  .where(
+                    inArray(
+                      partVariantExecutionBomLines.executionId,
+                      releasedExecutions.map((execution) => execution.id),
+                    ),
+                  )
+                const executionTargetIds = [
+                  ...new Set(
+                    executionLines
+                      .map((line) => line.targetItemId)
+                      .filter((id) => !itemIdMapping.has(id)),
+                  ),
+                ]
+                const executionTargetMasterById = new Map(
+                  executionTargetIds.length > 0
+                    ? (
+                        await tx
+                          .select({ id: items.id, masterId: items.masterId })
+                          .from(items)
+                          .where(inArray(items.id, executionTargetIds))
+                      ).map((row) => [row.id, row.masterId])
+                    : [],
+                )
+
+                for (const line of executionLines) {
+                  const targetMasterId = executionTargetMasterById.get(
+                    line.targetItemId,
+                  )
+                  const resolvedTargetId =
+                    itemIdMapping.get(line.targetItemId) ??
+                    (targetMasterId
+                      ? masterIdToNewItemId.get(targetMasterId)
+                      : undefined)
+                  if (
+                    resolvedTargetId &&
+                    resolvedTargetId !== line.targetItemId
+                  ) {
+                    await tx
+                      .update(partVariantExecutionBomLines)
+                      .set({ targetItemId: resolvedTargetId })
+                      .where(eq(partVariantExecutionBomLines.id, line.id))
+                  }
                 }
               }
             }

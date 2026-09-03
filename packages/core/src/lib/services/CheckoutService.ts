@@ -1044,6 +1044,12 @@ export class CheckoutService {
           )
         }
 
+        // A type may keep version-owned content beyond its one-to-one
+        // extension row (Part executions, WorkInstruction operations, ...).
+        // The working copy is a new item version, so those children must move
+        // with it just like files and relationships do.
+        await typeHandler?.copyChildren?.(item.id, newItem.id, tx)
+
         // 1c. Carry the base version's files onto the working copy. Files hang
         // off an item version, so without this the first save on a branch
         // silently strips the item of its CAD and attachments - and the merge

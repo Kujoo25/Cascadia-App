@@ -609,6 +609,15 @@ export class ItemRelationshipService {
       )
     }
 
+    if (relationshipType === 'BOM') {
+      const { PartVariantService } =
+        await import('../../services/PartVariantService')
+      await PartVariantService.assertCommonBomTargetNotOverlaid(
+        sourceId,
+        targetId,
+      )
+    }
+
     // Answer "this edge already exists" ourselves. Left to the database it
     // surfaces as a wrapped 23505 whose message is the whole INSERT statement.
     const existing = await db

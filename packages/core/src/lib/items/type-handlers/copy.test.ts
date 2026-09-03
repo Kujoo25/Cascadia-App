@@ -29,7 +29,12 @@ import type { TestUser } from '@/__tests__/fixtures/users'
 import { TestDatabase } from '@/__tests__/helpers/db'
 import { insertTestUser } from '@/__tests__/fixtures/users'
 import {
+  designs,
   items,
+  partFamilies,
+  partVariantExecutionBomLines,
+  partVariantExecutions,
+  partVariants,
   parts,
   software,
   softwareManifests,
@@ -117,6 +122,98 @@ describe('copyTypeSpecificData', () => {
     // written — which is the drift the old hand-written switches suffered.
     expect({ ...copied, itemId: source.id }).toEqual(sourceRow)
     expect(copied.itemId).toBe(target.id)
+  })
+
+  it('copies MK snapshots and their BOM while preserving execution identity', async () => {
+    const source = await createItemRow('Part', 'VARIANT-SRC')
+    const target = await createItemRow('Part', 'VARIANT-TGT')
+    const component = await createItemRow('Part', 'COMPONENT')
+    const design = takeFirst(
+      await testDb.db
+        .insert(designs)
+        .values({
+          code: `D-${uniquePrefix}`,
+          name: 'Variant design',
+          createdBy: user.id,
+        })
+        .returning(),
+    )
+    await testDb.db
+      .update(items)
+      .set({ designId: design.id, masterId: source.masterId })
+      .where(eq(items.id, target.id))
+    await testDb.db
+      .update(items)
+      .set({ designId: design.id })
+      .where(eq(items.id, source.id))
+    await testDb.db.insert(parts).values({ itemId: source.id })
+
+    const family = takeFirst(
+      await testDb.db
+        .insert(partFamilies)
+        .values({
+          designId: design.id,
+          code: 'P3001',
+          name: 'Hotel controller',
+          createdBy: user.id,
+          modifiedBy: user.id,
+        })
+        .returning(),
+    )
+    const variant = takeFirst(
+      await testDb.db
+        .insert(partVariants)
+        .values({
+          familyId: family.id,
+          partMasterId: source.masterId,
+          code: 'V1',
+          createdBy: user.id,
+        })
+        .returning(),
+    )
+    const execution = takeFirst(
+      await testDb.db
+        .insert(partVariantExecutions)
+        .values({
+          variantId: variant.id,
+          partItemId: source.id,
+          code: 'MK1',
+          name: 'Black',
+          createdBy: user.id,
+          modifiedBy: user.id,
+        })
+        .returning(),
+    )
+    await testDb.db.insert(partVariantExecutionBomLines).values({
+      executionId: execution.id,
+      targetItemId: component.id,
+      quantity: '2',
+      createdBy: user.id,
+      modifiedBy: user.id,
+    })
+
+    await copyTypeSpecificData('Part', source.id, target.id)
+
+    const copiedExecution = takeFirst(
+      await testDb.db
+        .select()
+        .from(partVariantExecutions)
+        .where(eq(partVariantExecutions.partItemId, target.id)),
+    )
+    const copiedLine = takeFirst(
+      await testDb.db
+        .select()
+        .from(partVariantExecutionBomLines)
+        .where(
+          eq(partVariantExecutionBomLines.executionId, copiedExecution.id),
+        ),
+    )
+
+    expect(copiedExecution.id).not.toBe(execution.id)
+    expect(copiedExecution.executionMasterId).toBe(execution.executionMasterId)
+    expect(copiedExecution.code).toBe('MK1')
+    expect(copiedLine.targetItemId).toBe(component.id)
+    expect(copiedLine.quantity).toBe('2.000')
   })
 
   it('never carries a software draft manifest to the new version', async () => {

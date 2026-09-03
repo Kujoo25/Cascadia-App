@@ -64,4 +64,12 @@ registerTypeHandler('Part', {
       await run.update(parts).set(updateData).where(eq(parts.itemId, itemId))
     }
   },
+
+  async copyChildren(sourceItemId, targetItemId, tx) {
+    // Dynamic to avoid PartVariantService -> ItemService -> handler init ->
+    // PartVariantService closing a module cycle during server startup.
+    const { PartVariantService } =
+      await import('@/lib/services/PartVariantService')
+    await PartVariantService.copyVersionData(sourceItemId, targetItemId, tx)
+  },
 })

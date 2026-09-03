@@ -8,7 +8,11 @@ import type { Part } from '@/lib/items/types/part'
 import type { PartDetailTab } from '@/components/parts/PartDetail'
 import { PART_DETAIL_TABS, PartDetail } from '@/components/parts/PartDetail'
 import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
-import { entityQuery, useResourceMutation } from '@/lib/query'
+import {
+  entityQuery,
+  partVariantConfigurationQuery,
+  useResourceMutation,
+} from '@/lib/query'
 import { apiFetch } from '@/lib/api/client'
 
 // Search schema for version context URL params and tab
@@ -22,8 +26,18 @@ const partDetailSearchSchema = z.object({
 export const Route = createFileRoute('/parts/$id')({
   component: PartDetailPage,
   validateSearch: partDetailSearchSchema,
-  loader: ({ context: { queryClient }, params }) =>
-    queryClient.ensureQueryData(entityQuery<Part>('parts', params.id, 'part')),
+  loaderDeps: ({ search }) => ({ tab: search.tab }),
+  loader: async ({ context: { queryClient }, params, deps }) => {
+    const part = await queryClient.ensureQueryData(
+      entityQuery<Part>('parts', params.id, 'part'),
+    )
+    if (deps.tab === 'variants') {
+      await queryClient.ensureQueryData(
+        partVariantConfigurationQuery(params.id),
+      )
+    }
+    return part
+  },
 })
 
 function PartDetailPage() {

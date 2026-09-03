@@ -37,6 +37,7 @@ import {
 import { ItemCreateDesignSection } from '@/components/items/ItemCreateDesignSection'
 import { PartDetailSidebar } from '@/components/parts/PartDetailSidebar'
 import { PartManufacturingCard } from '@/components/parts/PartManufacturingCard'
+import { PartVariantPanel } from '@/components/parts/PartVariantPanel'
 import { useCADViewerState } from '@/components/parts/useCADViewerState'
 import { useCADCompareState } from '@/components/parts/useCADCompareState'
 import { UrlDropOverlay } from '@/components/items/UrlDropOverlay'
@@ -81,7 +82,7 @@ import { useReleasedFamily } from '@/lib/hooks/useReleasedFamily'
 // varies with mode and with whether the part has images to show.
 const tabGridCols = (isCreateMode: boolean, hasGallery: boolean): string => {
   if (isCreateMode) return 'grid-cols-2'
-  return hasGallery ? 'grid-cols-6' : 'grid-cols-5'
+  return hasGallery ? 'grid-cols-7' : 'grid-cols-6'
 }
 
 // Default empty part for create mode
@@ -117,6 +118,7 @@ export const PART_DETAIL_TABS = [
   'details',
   'gallery',
   'relationships',
+  'variants',
   'sources',
   'work-instructions',
   'history',
@@ -702,6 +704,9 @@ export function PartDetail({
             {hasGallery && <TabsTrigger value="gallery">Gallery</TabsTrigger>}
             <TabsTrigger value="relationships">Relationships</TabsTrigger>
             {!isCreateMode && (
+              <TabsTrigger value="variants">Variants</TabsTrigger>
+            )}
+            {!isCreateMode && (
               <TabsTrigger value="sources">Sources</TabsTrigger>
             )}
             {!isCreateMode && (
@@ -897,6 +902,16 @@ export function PartDetail({
               </Card>
             )}
           </TabsContent>
+
+          {!isCreateMode && currentPart.id && (
+            <TabsContent value="variants" className="mt-6">
+              <PartVariantPanel
+                partId={currentPart.id}
+                designId={currentPart.designId}
+                readOnly={!isEditing}
+              />
+            </TabsContent>
+          )}
 
           {/* Sources Tab — Approved Manufacturer List (only for existing parts) */}
           {!isCreateMode && (currentPart.masterId ?? currentPart.id) && (

@@ -49,11 +49,14 @@ export const NO_REVISION_MARKER = 'N/A'
  *   Driven lifecycle mints a new version row per release and two versions of
  *   one item cannot share a revision, so `WorkflowService.validateDefinition`
  *   refuses that combination.
+ *
+ * Numeric schemes default to 1 for backward compatibility. Set `startAt: 0`
+ * for sequences such as 0, 1, 2 or R0, R1, R2.
  */
 export type RevisionScheme =
   | { type: 'alpha'; uppercase?: boolean }
-  | { type: 'numeric' }
-  | { type: 'prefixed-numeric'; prefix: string }
+  | { type: 'numeric'; startAt?: number }
+  | { type: 'prefixed-numeric'; prefix: string; startAt?: number }
   | { type: 'none' }
 
 // ============================================

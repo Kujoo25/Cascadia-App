@@ -3021,6 +3021,104 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/parts/{id}/variant-configuration": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the product Variant and MK configuration */
+        get: operations["getApiV1PartsByIdVariantConfiguration"];
+        put?: never;
+        /** Configure a Part as a product Variant */
+        post: operations["postApiV1PartsByIdVariantConfiguration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/parts/{id}/variant-executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["postApiV1PartsByIdVariantExecutions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/parts/{id}/variant-executions/{executionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["putApiV1PartsByIdVariantExecutionsByExecutionId"];
+        post?: never;
+        delete: operations["deleteApiV1PartsByIdVariantExecutionsByExecutionId"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/parts/{id}/variant-executions/{executionId}/bom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["postApiV1PartsByIdVariantExecutionsByExecutionIdBom"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/parts/{id}/variant-executions/{executionId}/bom/{lineId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteApiV1PartsByIdVariantExecutionsByExecutionIdBomByLineId"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/parts/{id}/variant-executions/{executionId}/resolved-bom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getApiV1PartsByIdVariantExecutionsByExecutionIdResolvedBom"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/parts/{id}/work-instructions": {
         parameters: {
             query?: never;
@@ -11593,6 +11691,226 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    getApiV1PartsByIdVariantConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            configuration: unknown | null;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1PartsByIdVariantConfiguration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    familyCode: string;
+                    familyDescription?: string;
+                    familyName: string;
+                    variantCode: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            configuration: unknown;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1PartsByIdVariantExecutions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @default {} */
+                    attributes?: {
+                        [key: string]: unknown;
+                    };
+                    code: string;
+                    /** @default true */
+                    isActive?: boolean;
+                    name?: string;
+                    sku?: string;
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    putApiV1PartsByIdVariantExecutionsByExecutionId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                executionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    attributes?: {
+                        [key: string]: unknown;
+                    };
+                    isActive?: boolean;
+                    name?: string | null;
+                    sku?: string | null;
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    deleteApiV1PartsByIdVariantExecutionsByExecutionId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                executionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1PartsByIdVariantExecutionsByExecutionIdBom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                executionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    findNumber?: number;
+                    quantity: string | number;
+                    referenceDesignator?: string;
+                    /** Format: uuid */
+                    targetItemId: string;
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    deleteApiV1PartsByIdVariantExecutionsByExecutionIdBomByLineId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                executionId: string;
+                lineId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1PartsByIdVariantExecutionsByExecutionIdResolvedBom: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                executionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     getApiV1PartsByIdWorkInstructions: {
         parameters: {
             query?: never;
@@ -15544,10 +15862,12 @@ export interface operations {
                             type: "alpha";
                             uppercase?: boolean;
                         } | {
+                            startAt?: number;
                             /** @constant */
                             type: "numeric";
                         } | {
                             prefix: string;
+                            startAt?: number;
                             /** @constant */
                             type: "prefixed-numeric";
                         } | {
@@ -15560,10 +15880,12 @@ export interface operations {
                         type: "alpha";
                         uppercase?: boolean;
                     } | {
+                        startAt?: number;
                         /** @constant */
                         type: "numeric";
                     } | {
                         prefix: string;
+                        startAt?: number;
                         /** @constant */
                         type: "prefixed-numeric";
                     } | {
@@ -15737,10 +16059,12 @@ export interface operations {
                             type: "alpha";
                             uppercase?: boolean;
                         } | {
+                            startAt?: number;
                             /** @constant */
                             type: "numeric";
                         } | {
                             prefix: string;
+                            startAt?: number;
                             /** @constant */
                             type: "prefixed-numeric";
                         } | {
@@ -15753,10 +16077,12 @@ export interface operations {
                         type: "alpha";
                         uppercase?: boolean;
                     } | {
+                        startAt?: number;
                         /** @constant */
                         type: "numeric";
                     } | {
                         prefix: string;
+                        startAt?: number;
                         /** @constant */
                         type: "prefixed-numeric";
                     } | {

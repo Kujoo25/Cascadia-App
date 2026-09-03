@@ -1182,6 +1182,7 @@ export class ConflictDetectionService {
         if (typeHandler) {
           const { itemId: _ignored, ...extFields } = mergedData
           await typeHandler.insert(newWorkingCopy.id, extFields, tx)
+          await typeHandler.copyChildren?.(ourItem.id, newWorkingCopy.id, tx)
         }
 
         // Rebase mints a version row like every other step that does, so the
@@ -1331,6 +1332,7 @@ export class ConflictDetectionService {
         if (typeHandler) {
           const { itemId: _ignored, ...extFields } = mergedData
           await typeHandler.insert(newWorkingCopy.id, extFields, tx)
+          await typeHandler.copyChildren?.(ourItem.id, newWorkingCopy.id, tx)
         }
 
         // Main wins on fields here, but not on files: they are not part of the

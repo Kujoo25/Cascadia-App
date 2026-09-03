@@ -96,6 +96,14 @@ describe('RevisionService', () => {
     it('returns 1 for non-numeric input', () => {
       expect(RevisionService.getNextRevision('abc', scheme)).toBe('1')
     })
+
+    it('honors a configured zero start for working and invalid revisions', () => {
+      const zeroBased: RevisionScheme = { type: 'numeric', startAt: 0 }
+      expect(RevisionService.getNextRevision('', zeroBased)).toBe('0')
+      expect(RevisionService.getNextRevision('DRAFT', zeroBased)).toBe('0')
+      expect(RevisionService.getNextRevision('abc', zeroBased)).toBe('0')
+      expect(RevisionService.getNextRevision('0', zeroBased)).toBe('1')
+    })
   })
 
   // ============================================
@@ -139,6 +147,19 @@ describe('RevisionService', () => {
     it('returns prefix+1 for non-prefixed input', () => {
       expect(RevisionService.getNextRevision('abc', scheme)).toBe('X1')
     })
+
+    it('supports R0 as the initial prefixed revision', () => {
+      const zeroBased: RevisionScheme = {
+        type: 'prefixed-numeric',
+        prefix: 'R',
+        startAt: 0,
+      }
+      expect(RevisionService.getNextRevision('', zeroBased)).toBe('R0')
+      expect(RevisionService.getNextRevision('DRAFT', zeroBased)).toBe('R0')
+      expect(RevisionService.getNextRevision('invalid', zeroBased)).toBe('R0')
+      expect(RevisionService.getNextRevision('R0', zeroBased)).toBe('R1')
+      expect(RevisionService.getNextRevision('R2', zeroBased)).toBe('R3')
+    })
   })
 
   // ============================================
@@ -174,6 +195,9 @@ describe('RevisionService', () => {
 
     it('returns 1 for numeric scheme', () => {
       expect(RevisionService.getInitialRevision({ type: 'numeric' })).toBe('1')
+      expect(
+        RevisionService.getInitialRevision({ type: 'numeric', startAt: 0 }),
+      ).toBe('0')
     })
 
     it('returns prefix+1 for prefixed-numeric scheme', () => {
@@ -189,6 +213,13 @@ describe('RevisionService', () => {
           prefix: 'PROTO-',
         }),
       ).toBe('PROTO-1')
+      expect(
+        RevisionService.getInitialRevision({
+          type: 'prefixed-numeric',
+          prefix: 'R',
+          startAt: 0,
+        }),
+      ).toBe('R0')
     })
 
     it('returns the fixed marker for none scheme', () => {
@@ -240,6 +271,13 @@ describe('RevisionService', () => {
           prefix: 'X',
         }),
       ).toBe('X1')
+      expect(
+        RevisionService.getNextRevision(RevisionService.NO_REVISION, {
+          type: 'prefixed-numeric',
+          prefix: 'R',
+          startAt: 0,
+        }),
+      ).toBe('R0')
     })
   })
 

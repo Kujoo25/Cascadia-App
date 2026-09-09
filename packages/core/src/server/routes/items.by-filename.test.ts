@@ -310,7 +310,7 @@ describe('GET /items/by-filename — program isolation', () => {
   // filename from any program. The shared predicate scopes it through the
   // link table instead.
   it('does not hand over an ECO just because it has no design of its own', async () => {
-    const eco = await ChangeOrderService.create(
+    const changeOrder = await ChangeOrderService.create(
       {
         revision: 'A',
         changeType: 'ECO',
@@ -320,11 +320,13 @@ describe('GET /items/by-filename — program isolation', () => {
       [designB],
       crossProgram.id,
     )
-    await attachFile(eco.id!, FILENAME)
+    await attachFile(changeOrder.id!, FILENAME)
 
-    expect((await search(memberA)).items.map((i) => i.id)).not.toContain(eco.id)
+    expect((await search(memberA)).items.map((i) => i.id)).not.toContain(
+      changeOrder.id,
+    )
     expect((await search(crossProgram)).items.map((i) => i.id)).toContain(
-      eco.id,
+      changeOrder.id,
     )
   })
 

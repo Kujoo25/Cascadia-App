@@ -513,6 +513,62 @@ describe('DesignService', () => {
       expect(status.isMainBranchProtected).toBe(true)
     })
 
+    it('stays post-release once every released item has been superseded', async () => {
+      // The whole released FAMILY protects main, not just the release target:
+      // a design whose released items have all been revised away still has
+      // released history, and `BranchService.isMainBranchProtected` — the
+      // policy the write path actually enforces — says so. Counting rows in
+      // the literal state 'Released' reported pre-release here, and every
+      // create form fed by this answer then offered a main-branch create that
+      // the write would refuse.
+      const design = await createDesign({ name: 'All Superseded' })
+
+      await testDb.db.insert(items).values({
+        masterId: crypto.randomUUID(),
+        itemNumber: `ITEM-SUP-${Date.now()}`,
+        revision: 'A',
+        itemType: 'Part',
+        name: 'Superseded Part',
+        state: 'Superseded',
+        designId: design.id,
+        createdBy: user.id,
+        modifiedBy: user.id,
+      })
+
+      const status = await DesignService.getProtectionStatus(design.id)
+
+      expect(status.phase).toBe('post-release')
+      expect(status.isMainBranchProtected).toBe(true)
+      expect(status.releasedItemCount).toBe(1)
+      expect(status.draftItemCount).toBe(0)
+    })
+
+    it('does not count a Free type as released', async () => {
+      // A Free lifecycle defines no release, so its items never protect main
+      // however their states are named. The old literal comparison counted
+      // any row whose state read 'Released'.
+      const design = await createDesign({ name: 'Free Type Only' })
+
+      await testDb.db.insert(items).values({
+        masterId: crypto.randomUUID(),
+        itemNumber: `ITEM-FREE-${Date.now()}`,
+        revision: '-',
+        itemType: 'TestCase',
+        name: 'Free Test Case',
+        state: 'Released',
+        designId: design.id,
+        createdBy: user.id,
+        modifiedBy: user.id,
+      })
+
+      const status = await DesignService.getProtectionStatus(design.id)
+
+      expect(status.phase).toBe('pre-release')
+      expect(status.isMainBranchProtected).toBe(false)
+      expect(status.releasedItemCount).toBe(0)
+      expect(status.draftItemCount).toBe(1)
+    })
+
     it('should throw NotFoundError for non-existent design', async () => {
       await expect(
         DesignService.getProtectionStatus(

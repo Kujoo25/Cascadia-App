@@ -30,14 +30,14 @@ const createWorkspaceSchema = z.object({
   workspaceName: z.string().trim().min(1, 'Workspace name is required').max(80),
 })
 
-const convertToEcoSchema = z.object({
+const convertToChangeOrderSchema = z.object({
   ecoTitle: z.string().trim().min(1, 'ECO title is required').max(500),
   ecoDescription: z.string().max(10_000).optional(),
   changeType: changeOrderTypeSchema.default('ECO'),
   deleteWorkspace: z.boolean().default(false),
 })
 
-const mergeToEcoSchema = z.object({
+const mergeToChangeOrderSchema = z.object({
   ecoId: z.string().uuid(),
   deleteWorkspace: z.boolean().default(false),
 })
@@ -271,16 +271,21 @@ app.delete(
   ),
 )
 
-// POST /api/workspaces/:id/convert-to-eco
-app.post(
-  '/:id/convert-to-eco',
-  adapt(
-    apiHandler<{ id: string }, z.infer<typeof convertToEcoSchema>>(
+// POST /api/workspaces/:id/convert-to-change-order — and
+// `/convert-to-eco`, the path this shipped under, kept mounted as a
+// deprecated alias: v1 is additive-only. The body's `ecoTitle` /
+// `ecoDescription` and the response's `ecoId` / `ecoNumber` stay for the
+// same reason.
+function convertToChangeOrderHandler(options: { deprecated?: boolean } = {}) {
+  return adapt(
+    apiHandler<{ id: string }, z.infer<typeof convertToChangeOrderSchema>>(
       {
-        body: convertToEcoSchema,
+        body: convertToChangeOrderSchema,
         permission: ['change_orders', 'create'],
         openapi: {
-          summary: 'Create a new ECO carrying this workspace’s content',
+          summary:
+            'Create a new change order carrying this workspace’s content',
+          deprecated: options.deprecated,
           request: {
             params: z.object({ id: z.string().uuid() }),
           },
@@ -310,7 +315,7 @@ app.post(
         // ECOs made here behave differently from ECOs made anywhere else.
         // Deferred because the switch reorders branch and workflow creation
         // in this path.
-        const eco = await ItemService.create<ChangeOrder>(
+        const changeOrder = await ItemService.create<ChangeOrder>(
           'ChangeOrder',
           {
             itemNumber: '', // Will be auto-generated
@@ -324,15 +329,15 @@ app.post(
           { bypassBranchProtection: true },
         )
 
-        if (!eco.id) {
-          throw new Error('Failed to create ECO')
+        if (!changeOrder.id) {
+          throw new Error('Failed to create the change order')
         }
 
         // Move the workspace's branch content onto the new ECO's branch, so
         // the merge pipeline releases exactly what the workspace drafted
         const { itemsAdopted, itemsSkipped } =
           await ChangeOrderService.adoptWorkspaceItems(
-            eco.id,
+            changeOrder.id,
             workspace.id,
             user.id,
           )
@@ -343,38 +348,50 @@ app.post(
         }
 
         return created({
-          ecoId: eco.id,
-          ecoNumber: eco.itemNumber,
+          ecoId: changeOrder.id,
+          ecoNumber: changeOrder.itemNumber,
           itemsConverted: itemsAdopted,
           itemsSkipped,
           workspaceDeleted: deleteWorkspace,
         })
       },
     ),
-  ),
+  )
+}
+
+app.post('/:id/convert-to-change-order', convertToChangeOrderHandler())
+app.post(
+  '/:id/convert-to-eco',
+  convertToChangeOrderHandler({ deprecated: true }),
 )
 
-// POST /api/workspaces/:id/merge-to-eco
-app.post(
-  '/:id/merge-to-eco',
-  adapt(
-    apiHandler<{ id: string }, z.infer<typeof mergeToEcoSchema>>(
+// POST /api/workspaces/:id/merge-to-change-order — and `/merge-to-eco`,
+// kept mounted as a deprecated alias; the body's `ecoId` stays.
+function mergeToChangeOrderHandler(options: { deprecated?: boolean } = {}) {
+  return adapt(
+    apiHandler<{ id: string }, z.infer<typeof mergeToChangeOrderSchema>>(
       {
-        body: mergeToEcoSchema,
+        body: mergeToChangeOrderSchema,
         permission: ['change_orders', 'update'],
         openapi: {
-          summary: 'Move this workspace’s content into an existing ECO',
+          summary:
+            'Move this workspace’s content into an existing change order',
+          deprecated: options.deprecated,
           request: {
             params: z.object({ id: z.string().uuid() }),
           },
         },
       },
-      async ({ body: { ecoId, deleteWorkspace }, params, user }) => {
+      async ({
+        body: { ecoId: changeOrderId, deleteWorkspace },
+        params,
+        user,
+      }) => {
         const workspace = await requireOwnedWorkspace(user.id, params.id)
 
-        const eco = await ItemService.findById(ecoId)
-        if (!eco || eco.itemType !== 'ChangeOrder') {
-          throw new NotFoundError('ECO', ecoId)
+        const changeOrder = await ItemService.findById(changeOrderId)
+        if (!changeOrder || changeOrder.itemType !== 'ChangeOrder') {
+          throw new NotFoundError('Change order', changeOrderId)
         }
 
         // Re-homes the workspace's branch items onto the ECO branch and
@@ -382,7 +399,7 @@ app.post(
         // still accepts items (scope not locked, workflow not completed).
         const { itemsAdopted, itemsSkipped } =
           await ChangeOrderService.adoptWorkspaceItems(
-            ecoId,
+            changeOrderId,
             workspace.id,
             user.id,
           )
@@ -392,14 +409,17 @@ app.post(
         }
 
         return {
-          ecoId,
+          ecoId: changeOrderId,
           itemsAdded: itemsAdopted,
           itemsSkipped,
           workspaceDeleted: deleteWorkspace,
         }
       },
     ),
-  ),
-)
+  )
+}
+
+app.post('/:id/merge-to-change-order', mergeToChangeOrderHandler())
+app.post('/:id/merge-to-eco', mergeToChangeOrderHandler({ deprecated: true }))
 
 export default app

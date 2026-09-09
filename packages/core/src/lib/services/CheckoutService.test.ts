@@ -57,9 +57,9 @@ import {
   workInstructions,
 } from '@/lib/db/schema'
 import {
-  workflowDefinitions,
-  workflowInstances,
-} from '@/lib/db/schema/workflows'
+  lifecycleDefinitions,
+  lifecycleInstances,
+} from '@/lib/db/schema/lifecycles'
 import { itemTypeConfigs } from '@/lib/db/schema/config'
 import { ItemTypeRegistry } from '@/lib/items/registry'
 import { LIFECYCLE_IDS } from '@/lib/items/lifecycle-ids'
@@ -77,7 +77,7 @@ describe('CheckoutService', () => {
   let designId: string
   let mainBranchId: string
   let initialCommitId: string
-  let ecoBranchId: string
+  let changeOrderBranchId: string
   let changeOrderId: string
 
   beforeAll(async () => {
@@ -165,12 +165,12 @@ describe('CheckoutService', () => {
 
     changeOrderId = changeOrder.id
 
-    const { branch } = await BranchService.getOrCreateEcoBranch(
+    const { branch } = await BranchService.getOrCreateChangeOrderBranch(
       designId,
       changeOrder.id,
       user.id,
     )
-    ecoBranchId = branch.id
+    changeOrderBranchId = branch.id
   })
 
   afterEach(async () => {
@@ -240,14 +240,14 @@ describe('CheckoutService', () => {
       const branchItem = await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
 
       expect(branchItem).toBeDefined()
       expect(branchItem.itemMasterId).toBe(part.masterId)
-      expect(branchItem.branchId).toBe(ecoBranchId)
+      expect(branchItem.branchId).toBe(changeOrderBranchId)
       expect(branchItem.checkedOutBy).toBe(user.id)
       expect(branchItem.checkedOutAt).toBeDefined()
     })
@@ -258,7 +258,7 @@ describe('CheckoutService', () => {
       const branchItem = await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
@@ -280,15 +280,67 @@ describe('CheckoutService', () => {
       ).rejects.toThrow(ValidationError)
     })
 
+    it('lets a branch-protection-exempt type check out on a protected main', async () => {
+      // Protection is design-wide; exemption is per type. One released Part
+      // protects main for everything in the design, but a Free lifecycle —
+      // here a work instruction — stays editable on that same main:
+      // `ItemEditPolicy.requireContentEditable` lets its writes through.
+      // Refusing it the lock protected nothing (the write was allowed either
+      // way) and removed the only mutual exclusion it had, while breaking its
+      // Edit button outright, since that acquires the lock before entering
+      // edit mode.
+      await createReleasedPart({ name: 'Protects Main' })
+      expect(await BranchService.isMainBranchProtected(designId)).toBe(true)
+
+      const outputPart = await createReleasedPart({ name: 'WI Output' })
+      const wi = await ItemService.create(
+        'WorkInstruction',
+        {
+          itemNumber: `WI-${uniquePrefix}-EXEMPT`,
+          revision: 'A',
+          name: 'Exempt WI',
+          state: 'Released',
+          designId,
+          outputPartId: outputPart.id,
+        } as any,
+        user.id,
+        { bypassBranchProtection: true },
+      )
+      await testDb.db.insert(itemVersions).values({
+        commitId: initialCommitId,
+        itemId: wi.id,
+        changeType: 'added',
+      })
+
+      const branchItem = await CheckoutService.checkout(
+        { itemMasterId: wi.masterId, branchId: mainBranchId },
+        user.id,
+      )
+
+      expect(branchItem.branchId).toBe(mainBranchId)
+      expect(branchItem.checkedOutBy).toBe(user.id)
+
+      // The contrast is the point: a Driven type on the same protected main is
+      // still refused. If this half ever passes, the exemption has widened to
+      // something it must not cover.
+      const part = await createReleasedPart({ name: 'Still Refused' })
+      await expect(
+        CheckoutService.checkout(
+          { itemMasterId: part.masterId, branchId: mainBranchId },
+          user.id,
+        ),
+      ).rejects.toThrow(ValidationError)
+    })
+
     it('throws error when checking out on locked branch', async () => {
       const part = await createReleasedPart()
-      await BranchService.lockBranch(ecoBranchId)
+      await BranchService.lockBranch(changeOrderBranchId)
 
       await expect(
         CheckoutService.checkout(
           {
             itemMasterId: part.masterId,
-            branchId: ecoBranchId,
+            branchId: changeOrderBranchId,
           },
           user.id,
         ),
@@ -301,7 +353,7 @@ describe('CheckoutService', () => {
       const first = await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
@@ -309,7 +361,7 @@ describe('CheckoutService', () => {
       const second = await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
@@ -323,7 +375,7 @@ describe('CheckoutService', () => {
       await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
@@ -332,7 +384,7 @@ describe('CheckoutService', () => {
         CheckoutService.checkout(
           {
             itemMasterId: part.masterId,
-            branchId: ecoBranchId,
+            branchId: changeOrderBranchId,
           },
           otherUser.id,
         ),
@@ -360,7 +412,7 @@ describe('CheckoutService', () => {
 
       const status = await CheckoutService.getCheckoutStatus(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
       )
 
       expect(status.isCheckedOut).toBe(false)
@@ -372,14 +424,14 @@ describe('CheckoutService', () => {
       await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
 
       const status = await CheckoutService.getCheckoutStatus(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
       )
 
       expect(status.isCheckedOut).toBe(true)
@@ -395,16 +447,20 @@ describe('CheckoutService', () => {
       await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
 
-      await CheckoutService.cancelCheckout(part.masterId, ecoBranchId, user.id)
+      await CheckoutService.cancelCheckout(
+        part.masterId,
+        changeOrderBranchId,
+        user.id,
+      )
 
       const status = await CheckoutService.getCheckoutStatus(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
       )
       expect(status.isCheckedOut).toBe(false)
     })
@@ -414,7 +470,7 @@ describe('CheckoutService', () => {
       await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
@@ -422,7 +478,7 @@ describe('CheckoutService', () => {
       await expect(
         CheckoutService.cancelCheckout(
           part.masterId,
-          ecoBranchId,
+          changeOrderBranchId,
           otherUser.id,
         ),
       ).rejects.toThrow(ValidationError)
@@ -432,17 +488,21 @@ describe('CheckoutService', () => {
       const part = await createReleasedPart()
 
       await expect(
-        CheckoutService.cancelCheckout(part.masterId, ecoBranchId, user.id),
+        CheckoutService.cancelCheckout(
+          part.masterId,
+          changeOrderBranchId,
+          user.id,
+        ),
       ).rejects.toThrow(NotFoundError)
     })
   })
 
   describe('ECO scope enforcement at the branch layer', () => {
-    async function lockEcoScope() {
-      const branch = await BranchService.getById(ecoBranchId)
+    async function lockChangeOrderScope() {
+      const branch = await BranchService.getById(changeOrderBranchId)
       // These fixtures create the change order directly, so give it the
       // workflow instance a real one carries before locking its scope.
-      await testDb.db.insert(workflowInstances).values({
+      await testDb.db.insert(lifecycleInstances).values({
         itemId: branch!.changeOrderItemId!,
         currentState: 'InReview',
         scopeLocked: true,
@@ -454,7 +514,7 @@ describe('CheckoutService', () => {
       const part = await createReleasedPart()
 
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -462,7 +522,7 @@ describe('CheckoutService', () => {
       // branch has to appear in the scope reviewers approve. This route is
       // reachable directly (the checkout dialog, the item routes, the AI
       // tools) and used to leave no trace on the change order at all.
-      const branch = await BranchService.getById(ecoBranchId)
+      const branch = await BranchService.getById(changeOrderBranchId)
       const affected = await ChangeOrderService.getAffectedItems(
         branch!.changeOrderItemId!,
       )
@@ -480,11 +540,11 @@ describe('CheckoutService', () => {
       // the row creator here, so registration is its job.
       await CheckoutService.ensureRevisionWorkingCopy(
         part,
-        ecoBranchId,
+        changeOrderBranchId,
         user.id,
       )
       const branchItem = await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -514,7 +574,7 @@ describe('CheckoutService', () => {
           .from(branchItems)
           .where(
             and(
-              eq(branchItems.branchId, ecoBranchId),
+              eq(branchItems.branchId, changeOrderBranchId),
               eq(branchItems.itemMasterId, part.masterId),
             ),
           ),
@@ -522,11 +582,11 @@ describe('CheckoutService', () => {
 
       await CheckoutService.ensureRevisionWorkingCopy(
         part,
-        ecoBranchId,
+        changeOrderBranchId,
         user.id,
       )
       const branchItem = await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -539,13 +599,13 @@ describe('CheckoutService', () => {
     })
 
     it('refuses the eager working-copy mint for a new item once scope is locked', async () => {
-      await lockEcoScope()
+      await lockChangeOrderScope()
 
       const latecomer = await createReleasedPart()
       await expect(
         CheckoutService.ensureRevisionWorkingCopy(
           latecomer,
-          ecoBranchId,
+          changeOrderBranchId,
           user.id,
         ),
       ).rejects.toThrow(ValidationError)
@@ -556,7 +616,7 @@ describe('CheckoutService', () => {
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoBranchId),
+            eq(branchItems.branchId, changeOrderBranchId),
             eq(branchItems.itemMasterId, latecomer.masterId),
           ),
         )
@@ -575,17 +635,17 @@ describe('CheckoutService', () => {
     it('still mints the working copy during review for an item already in scope', async () => {
       const part = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
-      await lockEcoScope()
+      await lockChangeOrderScope()
 
       // Scope locking freezes WHAT the change order covers, not the detail
       // work on it — same rule the lazy mint in saveChanges follows.
       await CheckoutService.ensureRevisionWorkingCopy(
         part,
-        ecoBranchId,
+        changeOrderBranchId,
         user.id,
       )
 
@@ -595,7 +655,7 @@ describe('CheckoutService', () => {
           .from(branchItems)
           .where(
             and(
-              eq(branchItems.branchId, ecoBranchId),
+              eq(branchItems.branchId, changeOrderBranchId),
               eq(branchItems.itemMasterId, part.masterId),
             ),
           ),
@@ -613,16 +673,16 @@ describe('CheckoutService', () => {
     it('refuses to bring a new item onto a scope-locked ECO branch', async () => {
       const alreadyIn = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: alreadyIn.masterId, branchId: ecoBranchId },
+        { itemMasterId: alreadyIn.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
-      await lockEcoScope()
+      await lockChangeOrderScope()
 
       const latecomer = await createReleasedPart()
       await expect(
         CheckoutService.checkout(
-          { itemMasterId: latecomer.masterId, branchId: ecoBranchId },
+          { itemMasterId: latecomer.masterId, branchId: changeOrderBranchId },
           user.id,
         ),
       ).rejects.toThrow(ValidationError)
@@ -631,17 +691,17 @@ describe('CheckoutService', () => {
     it('still allows editing items already in scope while locked', async () => {
       const part = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
-      await lockEcoScope()
+      await lockChangeOrderScope()
 
       // Scope locking freezes WHAT the change order covers, not the detail
       // work on it - reviewers fix the scope, engineers keep refining.
       const saved = await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: part.id,
           changes: { name: 'Refined during review' },
           commitMessage: 'refine',
@@ -652,7 +712,7 @@ describe('CheckoutService', () => {
     })
 
     it('refuses to create a new item on a scope-locked ECO branch', async () => {
-      await lockEcoScope()
+      await lockChangeOrderScope()
 
       await expect(
         CheckoutService.createOnBranch(
@@ -661,7 +721,7 @@ describe('CheckoutService', () => {
             itemNumber: `PN-LATE-${Date.now()}`,
             itemType: 'Part',
           },
-          ecoBranchId,
+          changeOrderBranchId,
           'Added after scope lock',
           user.id,
         ),
@@ -673,13 +733,13 @@ describe('CheckoutService', () => {
     // succeeded and left content the change order could not list, and the
     // release then refused the ECO with nothing the user could do in-app.
     it('refuses to delete a master the branch does not track once scope is locked', async () => {
-      await lockEcoScope()
+      await lockChangeOrderScope()
 
       const latecomer = await createReleasedPart()
       await expect(
         CheckoutService.deleteOnBranch(
           latecomer.masterId,
-          ecoBranchId,
+          changeOrderBranchId,
           'Deleted after scope lock',
           user.id,
         ),
@@ -690,7 +750,7 @@ describe('CheckoutService', () => {
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoBranchId),
+            eq(branchItems.branchId, changeOrderBranchId),
             eq(branchItems.itemMasterId, latecomer.masterId),
           ),
         )
@@ -705,7 +765,7 @@ describe('CheckoutService', () => {
 
       await CheckoutService.deleteOnBranch(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
         'Deleted straight off the branch',
         user.id,
       )
@@ -725,7 +785,7 @@ describe('CheckoutService', () => {
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoBranchId),
+            eq(branchItems.branchId, changeOrderBranchId),
             isNotNull(branchItems.changeType),
           ),
         )
@@ -749,7 +809,7 @@ describe('CheckoutService', () => {
         await expect(
           CheckoutService.createOnBranch(
             { designId, itemNumber, itemType: 'Part', name: 'Doomed' },
-            ecoBranchId,
+            changeOrderBranchId,
             'Added new part',
             user.id,
           ),
@@ -767,7 +827,7 @@ describe('CheckoutService', () => {
       const branchRows = await testDb.db
         .select()
         .from(branchItems)
-        .where(eq(branchItems.branchId, ecoBranchId))
+        .where(eq(branchItems.branchId, changeOrderBranchId))
       expect(branchRows).toHaveLength(0)
     })
   })
@@ -776,13 +836,13 @@ describe('CheckoutService', () => {
     it('leaves the released version as the only current one', async () => {
       const part = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: part.id,
           changes: { name: 'Edited on branch' },
           commitMessage: 'edit',
@@ -806,13 +866,13 @@ describe('CheckoutService', () => {
     it('supports repeated saves on the same branch', async () => {
       const part = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: part.id,
           changes: { name: 'First edit' },
           commitMessage: 'first',
@@ -822,7 +882,7 @@ describe('CheckoutService', () => {
 
       const afterFirst = await CheckoutService.getCheckoutStatus(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
       )
 
       // Working copies are branch-scoped by revision, so a second save must
@@ -830,7 +890,7 @@ describe('CheckoutService', () => {
       // row with the same (itemNumber, revision, designId, itemType).
       const second = await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: afterFirst.branchItem!.currentItemId!,
           changes: { name: 'Second edit' },
           commitMessage: 'second',
@@ -844,7 +904,7 @@ describe('CheckoutService', () => {
     it('keeps working copies of the same item on separate branches apart', async () => {
       const part = await createReleasedPart()
 
-      const otherEco = await ItemService.create(
+      const otherChangeOrder = await ItemService.create(
         'ChangeOrder',
         {
           revision: 'A',
@@ -856,13 +916,14 @@ describe('CheckoutService', () => {
         } as any,
         user.id,
       )
-      const { branch: otherBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        otherEco.id,
-        user.id,
-      )
+      const { branch: otherBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          otherChangeOrder.id,
+          user.id,
+        )
 
-      for (const branchId of [ecoBranchId, otherBranch.id]) {
+      for (const branchId of [changeOrderBranchId, otherBranch.id]) {
         await CheckoutService.checkout(
           { itemMasterId: part.masterId, branchId },
           user.id,
@@ -892,14 +953,14 @@ describe('CheckoutService', () => {
     it('records only field changes readable back on the stored item', async () => {
       const requirement = await createReleasedRequirement()
       await CheckoutService.checkout(
-        { itemMasterId: requirement.masterId, branchId: ecoBranchId },
+        { itemMasterId: requirement.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       // First save mints the branch-local working copy.
       await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: requirement.id,
           changes: { name: 'First edit' },
           commitMessage: 'first',
@@ -909,7 +970,7 @@ describe('CheckoutService', () => {
 
       const afterFirst = await CheckoutService.getCheckoutStatus(
         requirement.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
       )
       const workingCopyId = afterFirst.branchItem!.currentItemId!
 
@@ -920,7 +981,7 @@ describe('CheckoutService', () => {
       // otherwise.
       const second = await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: workingCopyId,
           changes: {
             name: 'Second edit',
@@ -981,16 +1042,16 @@ describe('CheckoutService', () => {
       await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
 
-      await CheckoutService.checkin(part.masterId, ecoBranchId, user.id)
+      await CheckoutService.checkin(part.masterId, changeOrderBranchId, user.id)
 
       const status = await CheckoutService.getCheckoutStatus(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
       )
       expect(status.isCheckedOut).toBe(false)
     })
@@ -1000,13 +1061,17 @@ describe('CheckoutService', () => {
       await CheckoutService.checkout(
         {
           itemMasterId: part.masterId,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         },
         user.id,
       )
 
       await expect(
-        CheckoutService.checkin(part.masterId, ecoBranchId, otherUser.id),
+        CheckoutService.checkin(
+          part.masterId,
+          changeOrderBranchId,
+          otherUser.id,
+        ),
       ).rejects.toThrow(ValidationError)
     })
 
@@ -1014,7 +1079,7 @@ describe('CheckoutService', () => {
       const part = await createReleasedPart()
 
       await expect(
-        CheckoutService.checkin(part.masterId, ecoBranchId, user.id),
+        CheckoutService.checkin(part.masterId, changeOrderBranchId, user.id),
       ).rejects.toThrow(NotFoundError)
     })
   })
@@ -1025,11 +1090,11 @@ describe('CheckoutService', () => {
       const part2 = await createReleasedPart({ name: 'Part 2' })
 
       await CheckoutService.checkout(
-        { itemMasterId: part1.masterId, branchId: ecoBranchId },
+        { itemMasterId: part1.masterId, branchId: changeOrderBranchId },
         user.id,
       )
       await CheckoutService.checkout(
-        { itemMasterId: part2.masterId, branchId: ecoBranchId },
+        { itemMasterId: part2.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -1050,7 +1115,7 @@ describe('CheckoutService', () => {
     it('does not include items checked out by other users', async () => {
       const part = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -1066,15 +1131,16 @@ describe('CheckoutService', () => {
       const part2 = await createReleasedPart({ name: 'Part 2' })
 
       await CheckoutService.checkout(
-        { itemMasterId: part1.masterId, branchId: ecoBranchId },
+        { itemMasterId: part1.masterId, branchId: changeOrderBranchId },
         user.id,
       )
       await CheckoutService.checkout(
-        { itemMasterId: part2.masterId, branchId: ecoBranchId },
+        { itemMasterId: part2.masterId, branchId: changeOrderBranchId },
         otherUser.id,
       )
 
-      const checkouts = await CheckoutService.listBranchCheckouts(ecoBranchId)
+      const checkouts =
+        await CheckoutService.listBranchCheckouts(changeOrderBranchId)
 
       expect(checkouts.length).toBe(2)
     })
@@ -1097,7 +1163,7 @@ describe('CheckoutService', () => {
           itemType: 'Part',
           name: 'New Part on Branch',
         },
-        ecoBranchId,
+        changeOrderBranchId,
         'Added new part',
         user.id,
       )
@@ -1147,7 +1213,7 @@ describe('CheckoutService', () => {
     })
 
     it('throws error when creating on locked branch', async () => {
-      await BranchService.lockBranch(ecoBranchId)
+      await BranchService.lockBranch(changeOrderBranchId)
 
       await expect(
         CheckoutService.createOnBranch(
@@ -1156,7 +1222,7 @@ describe('CheckoutService', () => {
             itemNumber: `PN-NEW-${Date.now()}`,
             itemType: 'Part',
           },
-          ecoBranchId,
+          changeOrderBranchId,
           'Added new part',
           user.id,
         ),
@@ -1190,7 +1256,7 @@ describe('CheckoutService', () => {
           itemType: 'Part',
           name: 'Authored on the ECO',
         },
-        ecoBranchId,
+        changeOrderBranchId,
         'Added new part',
         user.id,
       )
@@ -1217,7 +1283,7 @@ describe('CheckoutService', () => {
       const branchRowsBefore = await testDb.db
         .select()
         .from(branchItems)
-        .where(eq(branchItems.branchId, ecoBranchId))
+        .where(eq(branchItems.branchId, changeOrderBranchId))
 
       await expect(
         ItemService.createOnBranch(
@@ -1228,7 +1294,7 @@ describe('CheckoutService', () => {
             // inside what is now the creating transaction
             outputPartId: '00000000-0000-0000-0000-000000000000',
           } as any,
-          ecoBranchId,
+          changeOrderBranchId,
           'Added work instruction',
           user.id,
         ),
@@ -1248,7 +1314,7 @@ describe('CheckoutService', () => {
       const branchRowsAfter = await testDb.db
         .select()
         .from(branchItems)
-        .where(eq(branchItems.branchId, ecoBranchId))
+        .where(eq(branchItems.branchId, changeOrderBranchId))
       expect(branchRowsAfter).toHaveLength(branchRowsBefore.length)
 
       expect(
@@ -1261,13 +1327,13 @@ describe('CheckoutService', () => {
     it('marks item as deleted on branch', async () => {
       const part = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       const commit = await CheckoutService.deleteOnBranch(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
         'Deleted part',
         user.id,
       )
@@ -1290,12 +1356,12 @@ describe('CheckoutService', () => {
 
     it('throws error when deleting on locked branch', async () => {
       const part = await createReleasedPart()
-      await BranchService.lockBranch(ecoBranchId)
+      await BranchService.lockBranch(changeOrderBranchId)
 
       await expect(
         CheckoutService.deleteOnBranch(
           part.masterId,
-          ecoBranchId,
+          changeOrderBranchId,
           'Deleted part',
           user.id,
         ),
@@ -1324,7 +1390,7 @@ describe('CheckoutService', () => {
           itemType: 'Part',
           name: 'Add then Delete Part',
         },
-        ecoBranchId,
+        changeOrderBranchId,
         'Added new part',
         user.id,
       )
@@ -1332,7 +1398,7 @@ describe('CheckoutService', () => {
       // Delete the added item - should remove branchItem entirely
       const commit = await CheckoutService.deleteOnBranch(
         item.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
         'Deleted added part',
         user.id,
       )
@@ -1351,7 +1417,7 @@ describe('CheckoutService', () => {
           itemType: 'Part',
           name: 'Add then Delete Part',
         },
-        ecoBranchId,
+        changeOrderBranchId,
         'Added new part',
         user.id,
       )
@@ -1363,7 +1429,7 @@ describe('CheckoutService', () => {
 
       await CheckoutService.deleteOnBranch(
         item.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
         'Deleted added part',
         user.id,
       )
@@ -1394,14 +1460,14 @@ describe('CheckoutService', () => {
           itemType: 'Part',
           name: 'Add then Delete Part',
         },
-        ecoBranchId,
+        changeOrderBranchId,
         'Added new part',
         user.id,
       )
 
       const commit = await CheckoutService.deleteOnBranch(
         item.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
         'Deleted added part',
         user.id,
       )
@@ -1438,7 +1504,7 @@ describe('CheckoutService', () => {
 
       const commit = await CheckoutService.deleteOnBranch(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
         'Deleted part directly',
         user.id,
       )
@@ -1452,14 +1518,14 @@ describe('CheckoutService', () => {
     it('refuses a delete by someone other than the checkout holder', async () => {
       const part = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       await expect(
         CheckoutService.deleteOnBranch(
           part.masterId,
-          ecoBranchId,
+          changeOrderBranchId,
           'Deleted out from under the holder',
           otherUser.id,
         ),
@@ -1472,7 +1538,7 @@ describe('CheckoutService', () => {
           .from(branchItems)
           .where(
             and(
-              eq(branchItems.branchId, ecoBranchId),
+              eq(branchItems.branchId, changeOrderBranchId),
               eq(branchItems.itemMasterId, part.masterId),
             ),
           ),
@@ -1484,13 +1550,13 @@ describe('CheckoutService', () => {
     it('lets the checkout holder delete what they hold', async () => {
       const part = await createReleasedPart()
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       await CheckoutService.deleteOnBranch(
         part.masterId,
-        ecoBranchId,
+        changeOrderBranchId,
         'Deleted my own checkout',
         user.id,
       )
@@ -1501,7 +1567,7 @@ describe('CheckoutService', () => {
           .from(branchItems)
           .where(
             and(
-              eq(branchItems.branchId, ecoBranchId),
+              eq(branchItems.branchId, changeOrderBranchId),
               eq(branchItems.itemMasterId, part.masterId),
             ),
           ),
@@ -1525,7 +1591,7 @@ describe('CheckoutService', () => {
       const checkoutRows = await Promise.all(
         parts.map((p) =>
           CheckoutService.checkout(
-            { itemMasterId: p.masterId, branchId: ecoBranchId },
+            { itemMasterId: p.masterId, branchId: changeOrderBranchId },
             user.id,
           ),
         ),
@@ -1534,7 +1600,7 @@ describe('CheckoutService', () => {
       expect(checkoutRows.length).toBe(3)
       checkoutRows.forEach((bi, i) => {
         expect(bi.itemMasterId).toBe(parts[i].masterId)
-        expect(bi.branchId).toBe(ecoBranchId)
+        expect(bi.branchId).toBe(changeOrderBranchId)
       })
     })
 
@@ -1553,17 +1619,18 @@ describe('CheckoutService', () => {
         otherUser.id,
       )
 
-      const { branch: secondBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        secondCO.id,
-        otherUser.id,
-      )
+      const { branch: secondBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          secondCO.id,
+          otherUser.id,
+        )
 
       const part = await createReleasedPart()
 
       // Checkout on first branch
       const firstBranchItem = await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -1573,7 +1640,7 @@ describe('CheckoutService', () => {
         otherUser.id,
       )
 
-      expect(firstBranchItem.branchId).toBe(ecoBranchId)
+      expect(firstBranchItem.branchId).toBe(changeOrderBranchId)
       expect(secondBranchItem.branchId).toBe(secondBranch.id)
       expect(firstBranchItem.itemMasterId).toBe(secondBranchItem.itemMasterId)
     })
@@ -1585,16 +1652,16 @@ describe('CheckoutService', () => {
 
       // First checkout
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       // Checkin
-      await CheckoutService.checkin(part.masterId, ecoBranchId, user.id)
+      await CheckoutService.checkin(part.masterId, changeOrderBranchId, user.id)
 
       // Re-checkout should succeed
       const reCheckout = await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -1606,16 +1673,16 @@ describe('CheckoutService', () => {
 
       // First user checkout
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       // First user checkin
-      await CheckoutService.checkin(part.masterId, ecoBranchId, user.id)
+      await CheckoutService.checkin(part.masterId, changeOrderBranchId, user.id)
 
       // Second user checkout should succeed after checkin
       const newCheckout = await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         otherUser.id,
       )
 
@@ -1627,16 +1694,20 @@ describe('CheckoutService', () => {
 
       // First checkout
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       // Cancel
-      await CheckoutService.cancelCheckout(part.masterId, ecoBranchId, user.id)
+      await CheckoutService.cancelCheckout(
+        part.masterId,
+        changeOrderBranchId,
+        user.id,
+      )
 
       // Re-checkout should succeed
       const reCheckout = await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -1649,22 +1720,22 @@ describe('CheckoutService', () => {
       const part = await createReleasedPart()
 
       // Lock branch
-      await BranchService.lockBranch(ecoBranchId)
+      await BranchService.lockBranch(changeOrderBranchId)
 
       // Should fail while locked
       await expect(
         CheckoutService.checkout(
-          { itemMasterId: part.masterId, branchId: ecoBranchId },
+          { itemMasterId: part.masterId, branchId: changeOrderBranchId },
           user.id,
         ),
       ).rejects.toThrow(ValidationError)
 
       // Unlock branch
-      await BranchService.unlockBranch(ecoBranchId)
+      await BranchService.unlockBranch(changeOrderBranchId)
 
       // Should succeed after unlock
       const branchItem = await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -1682,7 +1753,7 @@ describe('CheckoutService', () => {
       const { workingCopy } =
         await ChangeOrderService.createRevisionWorkingCopy(
           part,
-          ecoBranchId,
+          changeOrderBranchId,
           user.id,
         )
       return { part, workingCopy }
@@ -1700,7 +1771,7 @@ describe('CheckoutService', () => {
       const { part, workingCopy } = await createUnlockedWorkingCopy()
 
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -1727,7 +1798,7 @@ describe('CheckoutService', () => {
 
       // Holder can edit structure
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
       const relationship = await ItemService.addRelationship(
@@ -1809,9 +1880,9 @@ describe('CheckoutService', () => {
       ).rejects.toThrow(ValidationError)
     })
 
-    it('checkoutItemToEco acquires the edit lock on the working copy', async () => {
+    it('checkoutItem acquires the edit lock on the working copy', async () => {
       const part = await createReleasedPart()
-      const eco = await ItemService.create(
+      const changeOrder = await ItemService.create(
         'ChangeOrder',
         {
           revision: 'A',
@@ -1824,8 +1895,8 @@ describe('CheckoutService', () => {
         user.id,
       )
 
-      const { branchItem } = await ChangeOrderService.checkoutItemToEco(
-        eco.id,
+      const { branchItem } = await ChangeOrderService.checkoutItem(
+        changeOrder.id,
         part.id,
         user.id,
       )
@@ -1840,7 +1911,7 @@ describe('CheckoutService', () => {
 
       // Plain checkout first: row points at the shared released version
       const plain = await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
       expect(plain.currentItemId).toBe(part.id)
@@ -1849,7 +1920,7 @@ describe('CheckoutService', () => {
       const { workingCopy } =
         await ChangeOrderService.createRevisionWorkingCopy(
           part,
-          ecoBranchId,
+          changeOrderBranchId,
           user.id,
         )
 
@@ -1858,7 +1929,7 @@ describe('CheckoutService', () => {
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoBranchId),
+            eq(branchItems.branchId, changeOrderBranchId),
             eq(branchItems.itemMasterId, part.masterId),
           ),
         )
@@ -1878,13 +1949,13 @@ describe('CheckoutService', () => {
       const part = await createReleasedPart({ name: 'Original Name' })
 
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       const first = await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: part.id,
           changes: { name: 'Branch Edit' },
           commitMessage: 'First edit',
@@ -1894,7 +1965,9 @@ describe('CheckoutService', () => {
 
       expect(first.item.id).not.toBe(part.id)
       expect(first.item.name).toBe('Branch Edit')
-      expect(first.item.revision).toBe(`-${ecoBranchId.substring(0, 8)}`)
+      expect(first.item.revision).toBe(
+        `-${changeOrderBranchId.substring(0, 8)}`,
+      )
       expect(first.item.isCurrent).toBe(false)
       expect(first.item.state).toBe('Draft') // Released base resets to initial state
 
@@ -1923,12 +1996,12 @@ describe('CheckoutService', () => {
       })
 
       await CheckoutService.checkout(
-        { itemMasterId: parent.masterId, branchId: ecoBranchId },
+        { itemMasterId: parent.masterId, branchId: changeOrderBranchId },
         user.id,
       )
       const saved = await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: parent.id,
           changes: { name: 'Renamed Assembly' },
           commitMessage: 'Field-only edit',
@@ -1950,13 +2023,13 @@ describe('CheckoutService', () => {
       const part = await createReleasedPart()
 
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       const first = await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: part.id,
           changes: { name: 'Edit 1' },
           commitMessage: 'Edit 1',
@@ -1966,7 +2039,7 @@ describe('CheckoutService', () => {
 
       const second = await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: first.item.id,
           changes: { name: 'Edit 2' },
           commitMessage: 'Edit 2',
@@ -1986,17 +2059,17 @@ describe('CheckoutService', () => {
       // its URL — the released base.
       await ChangeOrderService.createRevisionWorkingCopy(
         part,
-        ecoBranchId,
+        changeOrderBranchId,
         user.id,
       )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
       const saved = await CheckoutService.saveChanges(
         {
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemId: part.id,
           changes: { name: 'Branch Edit' },
           commitMessage: 'Edit addressed by the base id',
@@ -2009,7 +2082,7 @@ describe('CheckoutService', () => {
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoBranchId),
+            eq(branchItems.branchId, changeOrderBranchId),
             eq(branchItems.itemMasterId, part.masterId),
           ),
         )
@@ -2032,7 +2105,7 @@ describe('CheckoutService', () => {
       const part = await createReleasedPart({ name: 'Shared Base' })
 
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranchId },
+        { itemMasterId: part.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 
@@ -2059,7 +2132,7 @@ describe('CheckoutService', () => {
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoBranchId),
+            eq(branchItems.branchId, changeOrderBranchId),
             eq(branchItems.itemMasterId, part.masterId),
           ),
         )
@@ -2133,7 +2206,7 @@ describe('CheckoutService', () => {
       const { workingCopy } =
         await ChangeOrderService.createRevisionWorkingCopy(
           wi,
-          ecoBranchId,
+          changeOrderBranchId,
           user.id,
         )
 
@@ -2240,7 +2313,7 @@ describe('CheckoutService', () => {
 
     beforeEach(async () => {
       await testDb.db
-        .insert(workflowDefinitions)
+        .insert(lifecycleDefinitions)
         .values({
           id: RENAMED_LIFECYCLE_ID,
           name: 'Document - Renamed Lifecycle',
@@ -2312,7 +2385,7 @@ describe('CheckoutService', () => {
       // Checkout onto the ECO branch: the branch row still points at the
       // shared Frozen version (changeType null) until a working copy exists
       await CheckoutService.checkout(
-        { itemMasterId: doc.masterId, branchId: ecoBranchId },
+        { itemMasterId: doc.masterId, branchId: changeOrderBranchId },
         user.id,
       )
 

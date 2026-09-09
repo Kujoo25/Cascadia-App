@@ -40,7 +40,6 @@ import { DesignService } from '@/lib/services/DesignService'
 import { ProgramService } from '@/lib/services/ProgramService'
 import { VersionResolver } from '@/lib/services/VersionResolver'
 import { CheckoutService } from '@/lib/services/CheckoutService'
-import { LifecycleService } from '@/lib/services/LifecycleService'
 import { apiHandler, created, parseQuery } from '@/lib/api/handler'
 import { itemUpdateSchemaFor } from '@/lib/api/schemas'
 import { requireDesignAccess, requireItemAccess } from '@/lib/auth/access'
@@ -49,6 +48,7 @@ import { db } from '@/lib/db'
 import { accessScopeCondition, notDeleted } from '@/lib/db/filters'
 import { items, vaultFiles } from '@/lib/db/schema'
 import { designs } from '@/lib/db/schema/designs'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
 
 const adapt = tagged('Items')
 
@@ -1131,7 +1131,7 @@ app.get(
         await requirePermission(request, resource, 'read')
       }
 
-      return LifecycleService.getAvailableFreeTransitions(params.id)
+      return LifecycleInstanceService.getAvailableFreeTransitions(params.id)
     }),
   ),
 )
@@ -1171,7 +1171,7 @@ app.post(
           await requirePermission(request, resource, 'update')
         }
 
-        const transitioned = await LifecycleService.transitionFreeItem(
+        const transitioned = await LifecycleInstanceService.transitionFreeItem(
           params.id,
           toState,
           user.id,

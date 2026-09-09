@@ -1499,6 +1499,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/designs/{id}/change-orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the change orders whose branches belong to this design */
+        get: operations["getApiV1DesignsByIdChangeOrders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/designs/{id}/clone": {
         parameters: {
             query?: never;
@@ -1554,6 +1571,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /**
+         * List the change orders whose branches belong to this design
+         * @deprecated
+         */
         get: operations["getApiV1DesignsByIdEcos"];
         put?: never;
         post?: never;
@@ -2824,6 +2845,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lifecycles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List lifecycle definitions */
+        get: operations["getApiV1Lifecycles"];
+        put?: never;
+        /** Create a lifecycle definition */
+        post: operations["postApiV1Lifecycles"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/lifecycles/by-item-type/{itemType}": {
         parameters: {
             query?: never;
@@ -2834,6 +2873,96 @@ export interface paths {
         get: operations["getApiV1LifecyclesByItemTypeByItemType"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lifecycles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a lifecycle definition */
+        get: operations["getApiV1LifecyclesById"];
+        /** Update a lifecycle definition */
+        put: operations["putApiV1LifecyclesById"];
+        post?: never;
+        /** Delete a lifecycle definition */
+        delete: operations["deleteApiV1LifecyclesById"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lifecycles/{id}/approvers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the approvers of every state of a definition */
+        get: operations["getApiV1LifecyclesByIdApprovers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lifecycles/{id}/states/{stateId}/approvers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the approvers of a state */
+        get: operations["getApiV1LifecyclesByIdStatesByStateIdApprovers"];
+        /** Replace the approvers of a state */
+        put: operations["putApiV1LifecyclesByIdStatesByStateIdApprovers"];
+        /** Add an approver to a state */
+        post: operations["postApiV1LifecyclesByIdStatesByStateIdApprovers"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lifecycles/{id}/states/{stateId}/approvers/{approverId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove a state approver */
+        delete: operations["deleteApiV1LifecyclesByIdStatesByStateIdApproversByApproverId"];
+        options?: never;
+        head?: never;
+        /** Update a state approver */
+        patch: operations["patchApiV1LifecyclesByIdStatesByStateIdApproversByApproverId"];
+        trace?: never;
+    };
+    "/api/v1/lifecycles/{id}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate a lifecycle definition */
+        post: operations["postApiV1LifecyclesByIdValidate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4648,8 +4777,16 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /**
+         * List lifecycle definitions
+         * @deprecated
+         */
         get: operations["getApiV1Workflows"];
         put?: never;
+        /**
+         * Create a lifecycle definition
+         * @deprecated
+         */
         post: operations["postApiV1Workflows"];
         delete?: never;
         options?: never;
@@ -4664,9 +4801,21 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /**
+         * Get a lifecycle definition
+         * @deprecated
+         */
         get: operations["getApiV1WorkflowsById"];
+        /**
+         * Update a lifecycle definition
+         * @deprecated
+         */
         put: operations["putApiV1WorkflowsById"];
         post?: never;
+        /**
+         * Delete a lifecycle definition
+         * @deprecated
+         */
         delete: operations["deleteApiV1WorkflowsById"];
         options?: never;
         head?: never;
@@ -4680,6 +4829,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /**
+         * List the approvers of every state of a definition
+         * @deprecated
+         */
         get: operations["getApiV1WorkflowsByIdApprovers"];
         put?: never;
         post?: never;
@@ -4696,8 +4849,20 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
+        /**
+         * List the approvers of a state
+         * @deprecated
+         */
         get: operations["getApiV1WorkflowsByIdStatesByStateIdApprovers"];
+        /**
+         * Replace the approvers of a state
+         * @deprecated
+         */
         put: operations["putApiV1WorkflowsByIdStatesByStateIdApprovers"];
+        /**
+         * Add an approver to a state
+         * @deprecated
+         */
         post: operations["postApiV1WorkflowsByIdStatesByStateIdApprovers"];
         delete?: never;
         options?: never;
@@ -4715,9 +4880,17 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
+        /**
+         * Remove a state approver
+         * @deprecated
+         */
         delete: operations["deleteApiV1WorkflowsByIdStatesByStateIdApproversByApproverId"];
         options?: never;
         head?: never;
+        /**
+         * Update a state approver
+         * @deprecated
+         */
         patch: operations["patchApiV1WorkflowsByIdStatesByStateIdApproversByApproverId"];
         trace?: never;
     };
@@ -4730,6 +4903,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /**
+         * Validate a lifecycle definition
+         * @deprecated
+         */
         post: operations["postApiV1WorkflowsByIdValidate"];
         delete?: never;
         options?: never;
@@ -4773,6 +4950,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{id}/convert-to-change-order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a new change order carrying this workspace’s content */
+        post: operations["postApiV1WorkspacesByIdConvertToChangeOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{id}/convert-to-eco": {
         parameters: {
             query?: never;
@@ -4782,7 +4976,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create a new ECO carrying this workspace’s content */
+        /**
+         * Create a new change order carrying this workspace’s content
+         * @deprecated
+         */
         post: operations["postApiV1WorkspacesByIdConvertToEco"];
         delete?: never;
         options?: never;
@@ -4824,6 +5021,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspaces/{id}/merge-to-change-order": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move this workspace’s content into an existing change order */
+        post: operations["postApiV1WorkspacesByIdMergeToChangeOrder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workspaces/{id}/merge-to-eco": {
         parameters: {
             query?: never;
@@ -4833,7 +5047,10 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Move this workspace’s content into an existing ECO */
+        /**
+         * Move this workspace’s content into an existing change order
+         * @deprecated
+         */
         post: operations["postApiV1WorkspacesByIdMergeToEco"];
         delete?: never;
         options?: never;
@@ -6609,19 +6826,19 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    attributes?: {
+                        [key: string]: unknown;
+                    };
                     /** @enum {string} */
                     changeType?: "ECO" | "ECN" | "Deviation" | "MCO" | "XCO";
                     commitMessage?: string;
-                    description?: string;
-                    impactDescription?: string;
-                    /** Format: date-time */
-                    implementationDate?: string;
-                    name?: string;
-                    /** @enum {string} */
-                    priority?: "low" | "medium" | "high" | "critical";
-                    reasonForChange?: string;
-                    /** @enum {string} */
-                    riskLevel?: "low" | "medium" | "high" | "critical";
+                    description?: string | null;
+                    impactDescription?: string | null;
+                    implementationDate?: string | null;
+                    name?: string | null;
+                    priority?: ("low" | "medium" | "high" | "critical") | null;
+                    reasonForChange?: string | null;
+                    riskLevel?: ("low" | "medium" | "high" | "critical") | null;
                     state?: string;
                 };
             };
@@ -7233,6 +7450,9 @@ export interface operations {
             content: {
                 "application/json": {
                     resolutions: {
+                        fieldResolutions?: {
+                            [key: string]: "ours" | "theirs";
+                        };
                         /** Format: uuid */
                         itemId: string;
                         /** @enum {string} */
@@ -8002,6 +8222,24 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    getApiV1DesignsByIdChangeOrders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     postApiV1DesignsByIdClone: {
         parameters: {
             query?: never;
@@ -8503,12 +8741,14 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    attributes?: {
+                        [key: string]: unknown;
+                    };
                     commitMessage?: string;
-                    description?: string;
-                    /** Format: uuid */
-                    fileId?: string;
-                    fileName?: string;
-                    name?: string;
+                    description?: string | null;
+                    fileId?: string | null;
+                    fileName?: string | null;
+                    name?: string | null;
                     state?: string;
                 };
             };
@@ -9597,7 +9837,7 @@ export interface operations {
                     description?: string;
                     /** Format: uuid */
                     designId?: string;
-                    dueDate?: string;
+                    dueDate?: (string) | null;
                     estimatedHours?: string;
                     itemNumber?: string;
                     /** @constant */
@@ -9661,8 +9901,7 @@ export interface operations {
                     itemNumber?: string;
                     /** @constant */
                     itemType: "TestCase";
-                    /** Format: date-time */
-                    lastExecutedAt?: string;
+                    lastExecutedAt?: string | null;
                     /** Format: uuid */
                     lastExecutedBy?: string;
                     name?: string;
@@ -9713,9 +9952,9 @@ export interface operations {
                     programId?: string;
                     /** Format: uuid */
                     reportedBy?: string;
-                    reportedDate?: string;
+                    reportedDate?: (string) | null;
                     resolution?: string;
-                    resolvedDate?: string;
+                    resolvedDate?: (string) | null;
                     revision?: string;
                     rootCause?: string;
                     /**
@@ -11072,12 +11311,573 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    getApiV1Lifecycles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1Lifecycles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    applicableItemTypes?: string[];
+                    changeActionMappings?: {
+                        obsolete?: {
+                            assignsRevision: boolean;
+                            fromState: string;
+                            toState: string;
+                        };
+                        promote?: {
+                            assignsRevision: boolean;
+                            fromState: string;
+                            resetRevision?: boolean;
+                            toState: string;
+                        };
+                        release?: {
+                            assignsRevision: boolean;
+                            fromState: string;
+                            toState: string;
+                        };
+                        revise?: {
+                            /** @constant */
+                            assignsRevision: true;
+                            fromState: string;
+                            newVersionState: string;
+                            oldVersionState: string;
+                        };
+                    };
+                    description?: string;
+                    drivers?: string[];
+                    isActive?: boolean;
+                    /** @enum {string} */
+                    lifecycleType?: "Free" | "Driven" | "Driving";
+                    name: string;
+                    phases?: {
+                        color?: string;
+                        id: string;
+                        name: string;
+                        order: number;
+                        resetRevisionOnEntry?: boolean;
+                        revisionScheme?: {
+                            /** @constant */
+                            type: "alpha";
+                            uppercase?: boolean;
+                        } | {
+                            /** @constant */
+                            type: "numeric";
+                        } | {
+                            prefix: string;
+                            /** @constant */
+                            type: "prefixed-numeric";
+                        } | {
+                            /** @constant */
+                            type: "none";
+                        };
+                    }[];
+                    revisionScheme?: {
+                        /** @constant */
+                        type: "alpha";
+                        uppercase?: boolean;
+                    } | {
+                        /** @constant */
+                        type: "numeric";
+                    } | {
+                        prefix: string;
+                        /** @constant */
+                        type: "prefixed-numeric";
+                    } | {
+                        /** @constant */
+                        type: "none";
+                    };
+                    states?: {
+                        color?: string;
+                        description?: string;
+                        /** @enum {string} */
+                        finalKind?: "release" | "cancel" | "complete";
+                        id: string;
+                        instructions?: string;
+                        isFinal?: boolean;
+                        isInitial?: boolean;
+                        name: string;
+                        phaseId?: string;
+                        position?: {
+                            x: number;
+                            y: number;
+                        };
+                    }[];
+                    transitions?: {
+                        actions?: ({
+                            config: {
+                                recipients: {
+                                    id: string;
+                                    /** @enum {string} */
+                                    type: "user" | "role";
+                                }[];
+                                /** @constant */
+                                templateId: "workflow_transition";
+                            };
+                            /** @enum {string} */
+                            executeOn: "before" | "after";
+                            id: string;
+                            name: string;
+                            /** @constant */
+                            type: "send_notification";
+                        } | {
+                            config: {
+                                fieldName: string;
+                                value: string | number | boolean;
+                            };
+                            /** @enum {string} */
+                            executeOn: "before" | "after";
+                            id: string;
+                            name: string;
+                            /** @constant */
+                            type: "update_field";
+                        })[];
+                        approvalRequirement?: {
+                            requiredCount: number;
+                        };
+                        description?: string;
+                        fromStateId: string;
+                        guards?: ({
+                            config: {
+                                fieldName: string;
+                                /** @enum {string} */
+                                operator: "equals" | "not_equals" | "contains" | "is_empty" | "is_not_empty" | "greater_than" | "less_than" | "greater_or_equal" | "less_or_equal";
+                                value?: string | number | boolean;
+                            };
+                            errorMessage?: string;
+                            id: string;
+                            name: string;
+                            /** @constant */
+                            type: "field_value";
+                        } | {
+                            config: {
+                                requireAll?: boolean;
+                                requiredRoles: string[];
+                            };
+                            errorMessage?: string;
+                            id: string;
+                            name: string;
+                            /** @constant */
+                            type: "user_role";
+                        })[];
+                        id: string;
+                        labelPosition?: {
+                            x: number;
+                            y: number;
+                        };
+                        name: string;
+                        toStateId: string;
+                    }[];
+                    /** @enum {string} */
+                    workflowType?: "strict" | "flexible";
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     getApiV1LifecyclesByItemTypeByItemType: {
         parameters: {
             query?: never;
             header?: never;
             path: {
                 itemType: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1LifecyclesById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    putApiV1LifecyclesById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    applicableItemTypes?: string[];
+                    changeActionMappings?: {
+                        obsolete?: {
+                            assignsRevision: boolean;
+                            fromState: string;
+                            toState: string;
+                        };
+                        promote?: {
+                            assignsRevision: boolean;
+                            fromState: string;
+                            resetRevision?: boolean;
+                            toState: string;
+                        };
+                        release?: {
+                            assignsRevision: boolean;
+                            fromState: string;
+                            toState: string;
+                        };
+                        revise?: {
+                            /** @constant */
+                            assignsRevision: true;
+                            fromState: string;
+                            newVersionState: string;
+                            oldVersionState: string;
+                        };
+                    };
+                    description?: string;
+                    drivers?: string[];
+                    isActive?: boolean;
+                    /** @enum {string} */
+                    lifecycleType?: "Free" | "Driven" | "Driving";
+                    name?: string;
+                    phases?: {
+                        color?: string;
+                        id: string;
+                        name: string;
+                        order: number;
+                        resetRevisionOnEntry?: boolean;
+                        revisionScheme?: {
+                            /** @constant */
+                            type: "alpha";
+                            uppercase?: boolean;
+                        } | {
+                            /** @constant */
+                            type: "numeric";
+                        } | {
+                            prefix: string;
+                            /** @constant */
+                            type: "prefixed-numeric";
+                        } | {
+                            /** @constant */
+                            type: "none";
+                        };
+                    }[];
+                    revisionScheme?: {
+                        /** @constant */
+                        type: "alpha";
+                        uppercase?: boolean;
+                    } | {
+                        /** @constant */
+                        type: "numeric";
+                    } | {
+                        prefix: string;
+                        /** @constant */
+                        type: "prefixed-numeric";
+                    } | {
+                        /** @constant */
+                        type: "none";
+                    };
+                    states?: {
+                        color?: string;
+                        description?: string;
+                        /** @enum {string} */
+                        finalKind?: "release" | "cancel" | "complete";
+                        id: string;
+                        instructions?: string;
+                        isFinal?: boolean;
+                        isInitial?: boolean;
+                        name: string;
+                        phaseId?: string;
+                        position?: {
+                            x: number;
+                            y: number;
+                        };
+                    }[];
+                    transitions?: {
+                        actions?: ({
+                            config: {
+                                recipients: {
+                                    id: string;
+                                    /** @enum {string} */
+                                    type: "user" | "role";
+                                }[];
+                                /** @constant */
+                                templateId: "workflow_transition";
+                            };
+                            /** @enum {string} */
+                            executeOn: "before" | "after";
+                            id: string;
+                            name: string;
+                            /** @constant */
+                            type: "send_notification";
+                        } | {
+                            config: {
+                                fieldName: string;
+                                value: string | number | boolean;
+                            };
+                            /** @enum {string} */
+                            executeOn: "before" | "after";
+                            id: string;
+                            name: string;
+                            /** @constant */
+                            type: "update_field";
+                        })[];
+                        approvalRequirement?: {
+                            requiredCount: number;
+                        };
+                        description?: string;
+                        fromStateId: string;
+                        guards?: ({
+                            config: {
+                                fieldName: string;
+                                /** @enum {string} */
+                                operator: "equals" | "not_equals" | "contains" | "is_empty" | "is_not_empty" | "greater_than" | "less_than" | "greater_or_equal" | "less_or_equal";
+                                value?: string | number | boolean;
+                            };
+                            errorMessage?: string;
+                            id: string;
+                            name: string;
+                            /** @constant */
+                            type: "field_value";
+                        } | {
+                            config: {
+                                requireAll?: boolean;
+                                requiredRoles: string[];
+                            };
+                            errorMessage?: string;
+                            id: string;
+                            name: string;
+                            /** @constant */
+                            type: "user_role";
+                        })[];
+                        id: string;
+                        labelPosition?: {
+                            x: number;
+                            y: number;
+                        };
+                        name: string;
+                        toStateId: string;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    deleteApiV1LifecyclesById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1LifecyclesByIdApprovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1LifecyclesByIdStatesByStateIdApprovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                stateId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    putApiV1LifecyclesByIdStatesByStateIdApprovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                stateId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    approvers: {
+                        /** Format: uuid */
+                        id: string;
+                        /** @default true */
+                        isRequired?: boolean;
+                        /** @enum {string} */
+                        type: "user" | "role";
+                    }[];
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1LifecyclesByIdStatesByStateIdApprovers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                stateId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    id: string;
+                    /** @default true */
+                    isRequired?: boolean;
+                    /** @enum {string} */
+                    type: "user" | "role";
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    deleteApiV1LifecyclesByIdStatesByStateIdApproversByApproverId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                stateId: string;
+                approverId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    patchApiV1LifecyclesByIdStatesByStateIdApproversByApproverId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                stateId: string;
+                approverId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    isRequired: boolean;
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1LifecyclesByIdValidate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
             };
             cookie?: never;
         };
@@ -11910,12 +12710,10 @@ export interface operations {
                     customer?: string;
                     description?: string;
                     name: string;
-                    /** Format: date-time */
-                    startDate?: string;
+                    startDate?: string | null;
                     /** @enum {string} */
                     status?: "Active" | "On Hold" | "Completed" | "Cancelled";
-                    /** Format: date-time */
-                    targetEndDate?: string;
+                    targetEndDate?: string | null;
                 };
             };
         };
@@ -11985,12 +12783,10 @@ export interface operations {
                     customer?: string;
                     description?: string;
                     name?: string;
-                    /** Format: date-time */
-                    startDate?: string;
+                    startDate?: string | null;
                     /** @enum {string} */
                     status?: "Active" | "On Hold" | "Completed" | "Cancelled";
-                    /** Format: date-time */
-                    targetEndDate?: string;
+                    targetEndDate?: string | null;
                 };
             };
         };
@@ -12636,17 +13432,18 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    acceptanceCriteria?: string;
+                    acceptanceCriteria?: string | null;
+                    attributes?: {
+                        [key: string]: unknown;
+                    };
                     commitMessage?: string;
-                    description?: string;
-                    name?: string;
-                    /** @enum {string} */
-                    priority?: "low" | "medium" | "high" | "critical";
-                    requirementType?: string;
+                    description?: string | null;
+                    name?: string | null;
+                    priority?: ("low" | "medium" | "high" | "critical") | null;
+                    requirementType?: string | null;
                     state?: string;
-                    type?: string;
-                    /** @enum {string} */
-                    verificationMethod?: "inspection" | "analysis" | "demonstration" | "test" | "documentation";
+                    type?: string | null;
+                    verificationMethod?: ("inspection" | "analysis" | "demonstration" | "test" | "documentation") | null;
                 };
             };
         };
@@ -13610,15 +14407,15 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** Format: uuid */
-                    assignee?: string;
+                    assignee?: string | null;
+                    attributes?: {
+                        [key: string]: unknown;
+                    };
                     commitMessage?: string;
-                    description?: string;
-                    /** Format: date-time */
-                    dueDate?: string;
-                    name?: string;
-                    /** @enum {string} */
-                    priority?: "low" | "medium" | "high" | "critical";
+                    description?: string | null;
+                    dueDate?: string | null;
+                    name?: string | null;
+                    priority?: ("low" | "medium" | "high" | "critical") | null;
                     state?: string;
                 };
             };
@@ -16198,6 +16995,38 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    postApiV1WorkspacesByIdConvertToChangeOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @default ECO
+                     * @enum {string}
+                     */
+                    changeType?: "ECO" | "ECN" | "Deviation" | "MCO" | "XCO";
+                    /** @default false */
+                    deleteWorkspace?: boolean;
+                    ecoDescription?: string;
+                    ecoTitle: string;
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     postApiV1WorkspacesByIdConvertToEco: {
         parameters: {
             query?: never;
@@ -16259,6 +17088,33 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1WorkspacesByIdMergeToChangeOrder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @default false */
+                    deleteWorkspace?: boolean;
+                    /** Format: uuid */
+                    ecoId: string;
+                };
+            };
+        };
         responses: {
             400: components["responses"]["ValidationError"];
             401: components["responses"]["Unauthorized"];

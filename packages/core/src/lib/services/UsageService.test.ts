@@ -1047,7 +1047,7 @@ describe('UsageService', () => {
     it('tracks created usages on the ECO branch with changeType added when branchId is supplied', async () => {
       const { assembly } = await seedSubtree()
       const mainBranch = await BranchService.getMainBranch(targetDesignId)
-      const ecoBranch = takeFirst(
+      const changeOrderBranch = takeFirst(
         await testDb.db
           .insert(branches)
           .values({
@@ -1064,7 +1064,7 @@ describe('UsageService', () => {
         {
           rootItemId: assembly.id,
           targetDesignId,
-          branchId: ecoBranch.id,
+          branchId: changeOrderBranch.id,
         },
         user.id,
       )
@@ -1075,7 +1075,7 @@ describe('UsageService', () => {
           .from(branchItems)
           .where(eq(branchItems.itemMasterId, usage.masterId))
         expect(tracking).toHaveLength(1)
-        expect(tracking[0]!.branchId).toBe(ecoBranch.id)
+        expect(tracking[0]!.branchId).toBe(changeOrderBranch.id)
         expect(tracking[0]!.changeType).toBe('added')
       }
     })

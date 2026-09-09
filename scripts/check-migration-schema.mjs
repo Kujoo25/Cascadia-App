@@ -128,13 +128,28 @@ function reportDifference(migrated, pushed) {
 const args = process.argv.slice(2)
 const dumpAt = args.indexOf('--dump')
 
+/** `process.stdout.write`, resolved once the bytes have actually left. */
+function write(text) {
+  return new Promise((resolve, reject) => {
+    process.stdout.write(text, (error) => (error ? reject(error) : resolve()))
+  })
+}
+
 if (dumpAt !== -1) {
   const url = args[dumpAt + 1]
   if (!url) {
     console.error('--dump needs a database URL')
     process.exit(2)
   }
-  process.stdout.write(await dump(url))
+  // Waiting for the flush is the whole point. `process.stdout.write` to a pipe
+  // is asynchronous on Linux, so a dump this size (~200KB against a 64KB pipe
+  // buffer) is handed to Node's internal queue and only partly written when
+  // `write` returns — and `process.exit` discards whatever is still queued.
+  // The caller then compares a schema dump that stops mid-line against a whole
+  // one and reports hundreds of objects missing, which is what
+  // `db:check-baseline` did on CI while passing on Windows, where writes to a
+  // pipe are synchronous and nothing is ever queued.
+  await write(await dump(url))
   process.exit(0)
 }
 

@@ -46,7 +46,7 @@ export class BranchService {
     return result.at(0) || null
   }
 
-  static async createEcoBranch(
+  static async createChangeOrderBranch(
     designId: string,
     changeOrderItemId: string,
     userId: string,

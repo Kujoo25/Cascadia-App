@@ -9,7 +9,7 @@ import type { ReportCreateInput } from '@/lib/reports/types'
 import { PageContainer } from '@/components/layout'
 import { ReportBuilder } from '@/components/reports/ReportBuilder'
 import { Button } from '@/components/ui'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { reportDetailQuery, useInvalidateResources } from '@/lib/query'
 import { apiFetch } from '@/lib/api/client'
 
@@ -21,7 +21,7 @@ export const Route = createFileRoute('/reports/$id/edit')({
 
 function EditReportPage() {
   const navigate = useNavigate()
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   const { id } = Route.useParams()
   const { data: report } = useQuery(reportDetailQuery(id))
@@ -41,12 +41,7 @@ function EditReportPage() {
 
       navigate({ to: '/reports/$id/view', params: { id } })
     } catch (error) {
-      console.error('Error updating report:', error)
-      alert({
-        title: 'Error',
-        description: `Failed to update report: ${(error as Error).message}`,
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Failed to update report' })
     } finally {
       setIsSubmitting(false)
     }

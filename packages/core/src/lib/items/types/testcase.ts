@@ -34,7 +34,7 @@ export interface TestCase extends BaseItem {
   preconditions?: string
   steps?: Array<TestStep>
   executionStatus?: ExecutionStatus
-  lastExecutedAt?: Date
+  lastExecutedAt?: Date | null
   lastExecutedBy?: string
   environment?: string
 }
@@ -48,7 +48,7 @@ export const testCaseSchema = baseItemSchema.extend({
   preconditions: z.string().max(5000).optional(),
   steps: z.array(testStepSchema).optional(),
   executionStatus: z.enum(['NotRun', 'Passed', 'Failed', 'Blocked']).optional(),
-  lastExecutedAt: z.date().optional(),
+  lastExecutedAt: z.date().nullable().optional(),
   lastExecutedBy: z.string().uuid().optional(),
   environment: z.string().max(100).optional(),
 })

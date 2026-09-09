@@ -3,31 +3,23 @@
 
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { and, eq, inArray } from 'drizzle-orm'
 import { tagged } from '../adapter'
 import type { ChangeOrder } from '@/lib/items/types/change-order'
-import type { ConflictResolution } from '@/components/change-orders/MergeConflictDialog'
 import type { SessionUser } from '@/lib/auth/session'
-import { ApprovalRegistry } from '@/lib/workflows/approval-registry'
-import {
-  changeActionSchema,
-  changeOrderTypeSchema,
-} from '@/lib/items/types/change-order'
+import { ApprovalRegistry } from '@/lib/lifecycles/approval-registry'
+import { changeActionSchema } from '@/lib/items/types/change-order'
 import { ItemService } from '@/lib/items/services/ItemService'
 import { LifecycleService } from '@/lib/services/LifecycleService'
 import { ChangeOrderService } from '@/lib/items/services/ChangeOrderService'
 import { ChangeOrderMergeService } from '@/lib/services/ChangeOrderMergeService'
 import { ImpactAssessmentService } from '@/lib/items/services/ImpactAssessmentService'
-import { ItemRelationshipService } from '@/lib/items/services/ItemRelationshipService'
-import { BranchService } from '@/lib/services/BranchService'
-import { CheckoutService } from '@/lib/services/CheckoutService'
 import { ConflictDetectionService } from '@/lib/services/ConflictDetectionService'
 import { ConflictReviewService } from '@/lib/services/ConflictReviewService'
-import { EcoBranchHistoryService } from '@/lib/services/EcoBranchHistoryService'
-import { EcoStructureService } from '@/lib/services/EcoStructureService'
-import { WorkflowService } from '@/lib/workflows/WorkflowService'
-import { WorkflowApprovalService } from '@/lib/workflows/WorkflowApprovalService'
-import { UserService } from '@/lib/auth/UserService'
+import { ChangeOrderBranchHistoryService } from '@/lib/services/ChangeOrderBranchHistoryService'
+import { ChangeOrderStructureService } from '@/lib/services/ChangeOrderStructureService'
+import { LifecycleDefinitionService } from '@/lib/lifecycles/LifecycleDefinitionService'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
+import { ApprovalService } from '@/lib/lifecycles/ApprovalService'
 import { apiHandler, created, jsonResponse } from '@/lib/api/handler'
 import {
   AlreadyExistsError,
@@ -39,9 +31,9 @@ import { AccessControlService } from '@/lib/auth/AccessControlService'
 import { ProgramService } from '@/lib/services/ProgramService'
 import { DesignService } from '@/lib/services/DesignService'
 import {
+  requireChangeOrderAccess,
   requireDesignAccess,
-  requireEcoAccess,
-  resolveEcoDesignScope,
+  resolveChangeOrderDesignScope,
 } from '@/lib/auth/access'
 import { markConflictReviewedRequestSchema } from '@/lib/services/types/conflict-review'
 import {
@@ -50,37 +42,11 @@ import {
   workflowStateSchema,
   workflowTransitionSchema,
 } from '@/lib/api/schemas'
-import { db } from '@/lib/db'
-import { branchItems } from '@/lib/db/schema'
-import {
-  changeOrderDesigns,
-  changeOrders,
-  itemRelationships,
-  items,
-} from '@/lib/db/schema/items'
-import { designs } from '@/lib/db/schema/designs'
 import '@/lib/items/registerItemTypes.server'
 
 const adapt = tagged('Change Orders')
 
 const app = new Hono()
-
-/**
- * A change order accepts structural edits until its workflow completes.
- *
- * Resolved from the workflow instance rather than by comparing the item's
- * state against the default workflow's state names - those names are one
- * workflow's choice, not a property of change orders, and flexible instances
- * legitimately use entirely different ones.
- */
-async function assertChangeOrderEditable(changeOrderId: string): Promise<void> {
-  const instance = await WorkflowService.getInstanceByItemId(changeOrderId)
-  if (instance?.completedAt) {
-    throw new ValidationError(
-      'Cannot modify this change order: its workflow has been completed',
-    )
-  }
-}
 
 /**
  * Assert the caller reaches the *whole* change order, not merely part of it.
@@ -96,11 +62,14 @@ async function assertChangeOrderEditable(changeOrderId: string): Promise<void> {
  * this ECO is out of reach, so a refusal here reads as that same boundary
  * rather than as a malfunction.
  */
-async function requireWholeEco(
+async function requireWholeChangeOrder(
   userId: string,
   changeOrderId: string,
 ): Promise<void> {
-  const { hasRestricted } = await requireEcoAccess(userId, changeOrderId)
+  const { hasRestricted } = await requireChangeOrderAccess(
+    userId,
+    changeOrderId,
+  )
   if (hasRestricted) {
     throw new PermissionDeniedError('the whole change order', 'read')
   }
@@ -130,16 +99,21 @@ async function requireWholeEco(
  * Runs before the workflow-instance lookup so a denial is a clean 403
  * regardless of workflow configuration.
  */
-async function requireEcoApprovalAccess(
+async function requireChangeOrderApprovalAccess(
   userId: string,
   changeOrderItemId: string,
 ): Promise<void> {
-  const eco = await ItemService.findById(changeOrderItemId)
-  if (!eco) throw new NotFoundError('ChangeOrder', changeOrderItemId)
+  const changeOrder = await ItemService.findById(changeOrderItemId)
+  if (!changeOrder) {
+    throw new NotFoundError('ChangeOrder', changeOrderItemId)
+  }
 
   if (await AccessControlService.hasCrossProgramAccess(userId)) return
 
-  const { linked } = await resolveEcoDesignScope(userId, changeOrderItemId)
+  const { linked } = await resolveChangeOrderDesignScope(
+    userId,
+    changeOrderItemId,
+  )
   if (linked.length === 0) {
     throw new PermissionDeniedError('change order approval', 'submit')
   }
@@ -217,9 +191,8 @@ app.get(
 
         // Scope filters are program-scoped reads: require access to the
         // program/design being asked about, not just change_orders:read
-        // (which every role has). NOTE: the unfiltered branch below still
-        // returns change orders across all programs — see the it.fails test
-        // in program-isolation.access.test.ts pinning that known gap.
+        // (which every role has). The unfiltered list is bounded by the
+        // caller's own reach, below.
         if (designId) {
           await requireDesignAccess(user.id, designId)
         }
@@ -240,74 +213,16 @@ app.get(
         // the counts, which must agree with the rows they sit above.
         const accessScope = await AccessControlService.getAccessScope(user.id)
 
+        // One ordered query for the page and its total; a design filter
+        // wins when both are given, as it always has
         if (designId) {
-          const ecoDesignRecords = await db
-            .select({ changeOrderId: changeOrderDesigns.changeOrderId })
-            .from(changeOrderDesigns)
-            .where(eq(changeOrderDesigns.designId, designId))
-
-          const changeOrderIds = ecoDesignRecords.map((r) => r.changeOrderId)
-
-          if (changeOrderIds.length === 0) {
-            return {
-              changeOrders: [],
-              total: 0,
-            }
-          }
-
-          const paginatedIds = changeOrderIds.slice(offset, offset + limit)
-          const records = await Promise.all(
-            paginatedIds.map((id) => ItemService.findById(id)),
-          )
-
-          const response: Record<string, unknown> = {
-            changeOrders: records.filter(Boolean),
-            total: changeOrderIds.length,
-          }
-          return response
+          return ChangeOrderService.listByScope({ designId }, { limit, offset })
         }
-
         if (programId) {
-          const programDesigns = await db
-            .select({ id: designs.id })
-            .from(designs)
-            .where(eq(designs.programId, programId))
-
-          const designIds = programDesigns.map((d) => d.id)
-
-          if (designIds.length === 0) {
-            return {
-              changeOrders: [],
-              total: 0,
-            }
-          }
-
-          const ecoDesignRecords = await db
-            .select({ changeOrderId: changeOrderDesigns.changeOrderId })
-            .from(changeOrderDesigns)
-            .where(inArray(changeOrderDesigns.designId, designIds))
-
-          const changeOrderIds = [
-            ...new Set(ecoDesignRecords.map((r) => r.changeOrderId)),
-          ]
-
-          if (changeOrderIds.length === 0) {
-            return {
-              changeOrders: [],
-              total: 0,
-            }
-          }
-
-          const paginatedIds = changeOrderIds.slice(offset, offset + limit)
-          const records = await Promise.all(
-            paginatedIds.map((id) => ItemService.findById(id)),
+          return ChangeOrderService.listByScope(
+            { programId },
+            { limit, offset },
           )
-
-          const response: Record<string, unknown> = {
-            changeOrders: records.filter(Boolean),
-            total: changeOrderIds.length,
-          }
-          return response
         }
 
         const result = await ItemService.search('ChangeOrder', {
@@ -416,29 +331,13 @@ app.post(
           }
         }
 
+        // Designs, branches and the running workflow are all part of the
+        // creation; a failure in any of them leaves no change order behind
         const changeOrder = await ChangeOrderService.create(
           data,
           designIds,
           user.id,
         )
-
-        const changeType = changeOrderTypeSchema.safeParse(data.changeType)
-        if (changeType.success && changeOrder.id) {
-          try {
-            await ChangeOrderService.autoStartWorkflow(
-              changeOrder.id,
-              changeType.data,
-              user.id,
-            )
-          } catch (workflowError) {
-            // Matches the items route: a missing workflow definition must not
-            // undo a change order that is otherwise correctly created.
-            console.warn(
-              `Failed to auto-start workflow for ChangeOrder ${changeOrder.id}:`,
-              workflowError,
-            )
-          }
-        }
 
         return created({ changeOrder })
       },
@@ -465,7 +364,10 @@ app.get(
         // `hasRestricted` tells the detail view that this ECO reaches beyond
         // what the caller may see — see the redaction note on
         // `getAffectedItemsForViewer`.
-        const { hasRestricted } = await requireEcoAccess(user.id, params.id)
+        const { hasRestricted } = await requireChangeOrderAccess(
+          user.id,
+          params.id,
+        )
         return { changeOrder, hasRestricted }
       },
     ),
@@ -480,12 +382,16 @@ app.put(
       {
         permission: ['change_orders', 'update'],
         body: changeOrderUpdateSchema,
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ params, body, user }) => {
+        // The schema permits `null` where the column is nullable, which the
+        // ChangeOrder interface spells as an absent optional. `ItemService`
+        // and the type handler both read null as "clear the column".
         const changeOrder = await ItemService.update<ChangeOrder>(
           params.id,
-          body,
+          body as Partial<ChangeOrder>,
           user.id,
         )
         return { changeOrder }
@@ -501,7 +407,7 @@ app.delete(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'delete'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         await ItemService.delete(params.id, user.id)
         return { success: true }
       },
@@ -522,7 +428,7 @@ app.get(
       async ({ params, user }) => {
         const { id } = params
 
-        await requireEcoAccess(user.id, id)
+        await requireChangeOrderAccess(user.id, id)
         const { affectedItems, hasRestricted } =
           await ChangeOrderService.getAffectedItemsForViewer(
             id,
@@ -546,7 +452,8 @@ app.post(
         openapi: {
           summary: 'Add one or more affected items to a change order',
         },
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ body: data, params, user }) => {
         const { id } = params
@@ -595,7 +502,8 @@ app.post(
         openapi: {
           summary: 'Preview the change actions available for items',
         },
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ body: { itemIds }, params }) => {
         const options = await ChangeOrderService.getChangeActionOptions(
@@ -616,7 +524,7 @@ app.delete(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'update'] },
       async ({ params, request, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         const url = new URL(request.url)
         const affectedItemId = url.searchParams.get('itemId')
 
@@ -647,9 +555,11 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         // Get the workflow instance for this change order
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
 
         if (!instance) {
           throw new NotFoundError(
@@ -659,7 +569,7 @@ app.get(
         }
 
         // Check if user can approve
-        const canApprove = await WorkflowApprovalService.canUserApprove(
+        const canApprove = await ApprovalService.canUserApprove(
           instance.id,
           instance.currentState,
           user.id,
@@ -682,9 +592,11 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         // Get the workflow instance for this change order
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
 
         if (!instance) {
           throw new NotFoundError(
@@ -694,12 +606,10 @@ app.get(
         }
 
         // Get all approvals for this instance
-        const approvals = await WorkflowApprovalService.getApprovals(
-          instance.id,
-        )
+        const approvals = await ApprovalService.getApprovals(instance.id)
 
         // Check if current user can approve at current state
-        const canApprove = await WorkflowApprovalService.canUserApprove(
+        const canApprove = await ApprovalService.canUserApprove(
           instance.id,
           instance.currentState,
           user.id,
@@ -745,7 +655,7 @@ app.post(
         permission: ['change_orders', 'update'],
         body: approvalVoteSchema,
         access: ({ params, user }) =>
-          requireEcoApprovalAccess(user.id, params.id),
+          requireChangeOrderApprovalAccess(user.id, params.id),
       },
       async ({ request, body: data, params, user, requestId }) => {
         // Reach before body. A caller outside every design this ECO touches
@@ -755,7 +665,9 @@ app.post(
         // runs before anything is written, which is what it guards.
 
         // Get the workflow instance for this change order
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
 
         if (!instance) {
           throw new NotFoundError(
@@ -765,7 +677,7 @@ app.post(
         }
 
         // Submit the approval
-        const result = await WorkflowApprovalService.submitApproval(
+        const result = await ApprovalService.submitApproval(
           instance.id,
           instance.currentState,
           user.id,
@@ -776,7 +688,7 @@ app.post(
         )
 
         // Get updated approval status
-        const approvalStatus = await WorkflowApprovalService.getStateApprovals(
+        const approvalStatus = await ApprovalService.getStateApprovals(
           instance.id,
           instance.currentState,
         )
@@ -794,9 +706,11 @@ app.get(
     apiHandler<{ id: string; stateId: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         // Get the workflow instance for this change order
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
 
         if (!instance) {
           throw new NotFoundError(
@@ -806,13 +720,13 @@ app.get(
         }
 
         // Get approval status for the specific state
-        const approvalStatus = await WorkflowApprovalService.getStateApprovals(
+        const approvalStatus = await ApprovalService.getStateApprovals(
           instance.id,
           params.stateId,
         )
 
         // Check if current user can approve at this state
-        const canApprove = await WorkflowApprovalService.canUserApprove(
+        const canApprove = await ApprovalService.canUserApprove(
           instance.id,
           params.stateId,
           user.id,
@@ -840,13 +754,15 @@ app.post(
         permission: ['change_orders', 'update'],
         body: approvalVoteSchema,
         access: ({ params, user }) =>
-          requireEcoApprovalAccess(user.id, params.id),
+          requireChangeOrderApprovalAccess(user.id, params.id),
       },
       async ({ request, body: data, params, user, requestId }) => {
         // Reach before write; see the sibling route above.
 
         // Get the workflow instance for this change order
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
 
         if (!instance) {
           throw new NotFoundError(
@@ -856,7 +772,7 @@ app.post(
         }
 
         // Submit the approval for the specified state
-        const result = await WorkflowApprovalService.submitApproval(
+        const result = await ApprovalService.submitApproval(
           instance.id,
           params.stateId,
           user.id,
@@ -867,7 +783,7 @@ app.post(
         )
 
         // Get updated approval status
-        const approvalStatus = await WorkflowApprovalService.getStateApprovals(
+        const approvalStatus = await ApprovalService.getStateApprovals(
           instance.id,
           params.stateId,
         )
@@ -899,158 +815,19 @@ app.post(
       {
         permission: ['change_orders', 'update'],
         body: addBomChangeSchema,
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ params, body: data, user }) => {
-        const changeOrderId = params.id
-
-        // Verify the ECO exists
-        const eco = await db
-          .select({
-            itemId: changeOrders.itemId,
-            state: items.state,
-          })
-          .from(changeOrders)
-          .innerJoin(items, eq(changeOrders.itemId, items.id))
-          .where(eq(changeOrders.itemId, changeOrderId))
-          .limit(1)
-
-        if (!eco[0]) {
-          throw new NotFoundError('Change Order', changeOrderId)
-        }
-
-        // Editable means the workflow has not completed. The previous check
-        // compared against the literal state names of the default workflow,
-        // so a flexible change order (states 'start'/'complete') could never
-        // edit its BOM at all, and any custom workflow was locked out too.
-        await assertChangeOrderEditable(changeOrderId)
-
-        // Verify the parent item is an affected item in this ECO
-        // Match by affectedItemId, workingCopyId, or masterId since the tree
-        // view may pass a branch-resolved working copy ID rather than the
-        // original item ID stored in the affected items table
-        const affectedItems =
-          await ChangeOrderService.getAffectedItems(changeOrderId)
-
-        // Look up the parent item's masterId for stable matching
-        const parentItem = await ItemService.findById(data.parentItemId)
-        const parentMasterId = parentItem?.masterId
-
-        const parentAffectedItem = affectedItems.find(
-          (ai) =>
-            ai.affectedItemId === data.parentItemId ||
-            (parentMasterId && ai.affectedItemMasterId === parentMasterId),
+        const { message } = await ChangeOrderService.applyBomChange(
+          params.id,
+          data,
+          user.id,
         )
-
-        if (!parentAffectedItem) {
-          throw new ValidationError(
-            'Parent item must be an affected item in this ECO. BOM changes require a revision on the parent item.',
-          )
-        }
-
-        // Write to the ECO's working copy of the parent, never to the row on
-        // main. The affected item is matched by masterId, so the client can
-        // legitimately pass the released item's id - and writing the
-        // relationship against that id edited the released baseline in place,
-        // outside the branch and outside the change order entirely.
-        const parentTargetId =
-          parentAffectedItem.workingCopyId ?? data.parentItemId
-
-        // Verify the child item exists
-        const childItem = await ItemService.findById(data.childItemId)
-        if (!childItem) {
-          throw new NotFoundError('Item', data.childItemId)
-        }
-
-        // The ECO BOM editor edits the parent's working copy on the ECO
-        // branch, and checkout-to-ECO is the edit intent here: acquire (or
-        // verify) the edit lock for this user before mutating. A lock held
-        // by another user rejects with 423. requireContentEditable also
-        // rejects the released main version if the caller passed the
-        // original item ID instead of the branch working copy.
-        if (parentItem?.designId) {
-          const [ecoDesign] = await db
-            .select({ branchId: changeOrderDesigns.branchId })
-            .from(changeOrderDesigns)
-            .where(
-              and(
-                eq(changeOrderDesigns.changeOrderId, changeOrderId),
-                eq(changeOrderDesigns.designId, parentItem.designId),
-              ),
-            )
-            .limit(1)
-          if (ecoDesign?.branchId) {
-            await CheckoutService.checkout(
-              {
-                itemMasterId: parentItem.masterId,
-                branchId: ecoDesign.branchId,
-              },
-              user.id,
-            )
-          }
-          await ItemService.requireContentEditable(parentItem, user.id)
-        }
-
-        if (data.action === 'add') {
-          // Create the BOM relationship
-          await ItemService.addRelationship(
-            parentTargetId,
-            data.childItemId,
-            'BOM',
-            user.id,
-            {
-              quantity: String(data.quantity),
-              findNumber: data.findNumber,
-            },
-          )
-
-          return created({ success: true, message: 'BOM relationship added.' })
-        } else if (data.action === 'remove') {
-          // Through the audited service, so the removal is recorded in branch
-          // history like every other structural edit
-          const existing = await db
-            .select({ id: itemRelationships.id })
-            .from(itemRelationships)
-            .where(
-              and(
-                eq(itemRelationships.sourceId, parentTargetId),
-                eq(itemRelationships.targetId, data.childItemId),
-                eq(itemRelationships.relationshipType, 'BOM'),
-              ),
-            )
-
-          for (const relationship of existing) {
-            await ItemRelationshipService.removeRelationship(
-              relationship.id,
-              user.id,
-            )
-          }
-
-          return {
-            success: true,
-            message: 'BOM relationship removed.',
-          }
-        } else {
-          // Update existing BOM relationship
-          await db
-            .update(itemRelationships)
-            .set({
-              quantity: String(data.quantity),
-              findNumber: data.findNumber,
-            })
-            .where(
-              and(
-                eq(itemRelationships.sourceId, parentTargetId),
-                eq(itemRelationships.targetId, data.childItemId),
-                eq(itemRelationships.relationshipType, 'BOM'),
-              ),
-            )
-
-          return {
-            success: true,
-            message: 'BOM relationship updated.',
-          }
-        }
+        // A new relationship is a created resource; the other two edit one
+        return data.action === 'add'
+          ? created({ success: true, message })
+          : { success: true, message }
       },
     ),
   ),
@@ -1063,93 +840,18 @@ app.delete(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'update'] },
       async ({ params, request, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const changeOrderId = params.id
+        await requireChangeOrderAccess(user.id, params.id)
 
-        // Parse query params for relationshipId
         const url = new URL(request.url, 'http://localhost')
         const relationshipId = url.searchParams.get('relationshipId')
-
         if (!relationshipId) {
           throw new ValidationError(
             'relationshipId query parameter is required',
           )
         }
 
-        // Verify the ECO exists and is editable
-        const eco = await db
-          .select({
-            itemId: changeOrders.itemId,
-            state: items.state,
-          })
-          .from(changeOrders)
-          .innerJoin(items, eq(changeOrders.itemId, items.id))
-          .where(eq(changeOrders.itemId, changeOrderId))
-          .limit(1)
-
-        if (!eco[0]) {
-          throw new NotFoundError('Change Order', changeOrderId)
-        }
-
-        await assertChangeOrderEditable(changeOrderId)
-
-        // Get the relationship to verify the parent is an affected item
-        const [relationship] = await db
-          .select()
-          .from(itemRelationships)
-          .where(eq(itemRelationships.id, relationshipId))
-          .limit(1)
-
-        if (!relationship) {
-          throw new NotFoundError('Relationship', relationshipId)
-        }
-
-        // Verify the parent (source) is an affected item
-        // Match by affectedItemId or masterId (working copy IDs differ from originals)
-        const affectedItems =
-          await ChangeOrderService.getAffectedItems(changeOrderId)
-        const sourceItem = await ItemService.findById(relationship.sourceId)
-        const sourceMasterId = sourceItem?.masterId
-
-        const parentAffectedItem = affectedItems.find(
-          (ai) =>
-            ai.affectedItemId === relationship.sourceId ||
-            (sourceMasterId && ai.affectedItemMasterId === sourceMasterId),
-        )
-
-        if (!parentAffectedItem) {
-          throw new ValidationError(
-            'Parent item must be an affected item in this ECO to remove BOM relationships.',
-          )
-        }
-
-        // Acquire (or verify) the edit lock on the parent's working copy —
-        // same edit-intent semantics as adding a BOM change above.
-        if (sourceItem?.designId) {
-          const [ecoDesign] = await db
-            .select({ branchId: changeOrderDesigns.branchId })
-            .from(changeOrderDesigns)
-            .where(
-              and(
-                eq(changeOrderDesigns.changeOrderId, changeOrderId),
-                eq(changeOrderDesigns.designId, sourceItem.designId),
-              ),
-            )
-            .limit(1)
-          if (ecoDesign?.branchId) {
-            await CheckoutService.checkout(
-              {
-                itemMasterId: sourceItem.masterId,
-                branchId: ecoDesign.branchId,
-              },
-              user.id,
-            )
-          }
-        }
-
-        // Delete the relationship (via service for audit trail — the service
-        // enforces the edit-lock policy on the source item)
-        await ItemRelationshipService.removeRelationship(
+        await ChangeOrderService.removeBomRelationship(
+          params.id,
           relationshipId,
           user.id,
         )
@@ -1174,8 +876,8 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        return EcoBranchHistoryService.getTimeline(params.id)
+        await requireChangeOrderAccess(user.id, params.id)
+        return ChangeOrderBranchHistoryService.getTimeline(params.id)
       },
     ),
   ),
@@ -1188,10 +890,10 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ request, params, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         const url = new URL(request.url, 'http://localhost')
         const limitParam = url.searchParams.get('limit')
-        return EcoBranchHistoryService.getGraph(params.id, {
+        return ChangeOrderBranchHistoryService.getGraph(params.id, {
           designId: url.searchParams.get('designId'),
           limit: limitParam ? parseInt(limitParam, 10) : undefined,
         })
@@ -1212,12 +914,13 @@ app.post(
       {
         permission: ['change_orders', 'update'],
         body: z.object({ itemId: z.string().uuid() }),
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ body, params, user }) => {
         const { itemId } = body
 
-        const result = await ChangeOrderService.checkoutItemToEco(
+        const result = await ChangeOrderService.checkoutItem(
           params.id,
           itemId,
           user.id,
@@ -1240,8 +943,10 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const reviews = await ConflictReviewService.getReviewsForEco(params.id)
+        await requireChangeOrderAccess(user.id, params.id)
+        const reviews = await ConflictReviewService.getReviewsForChangeOrder(
+          params.id,
+        )
 
         return reviews
       },
@@ -1260,20 +965,23 @@ app.post(
       {
         permission: ['change_orders', 'update'],
         body: markConflictReviewedRequestSchema,
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ body: parsed, params, user }) => {
         // Get the current conflict to compute signature
         const conflictResult =
-          await ConflictDetectionService.detectConflictsForEco(params.id)
+          await ConflictDetectionService.detectConflictsForChangeOrder(
+            params.id,
+          )
 
         // Find the matching conflict
         const conflict = conflictResult.conflicts.find((c) => {
           const matchesMasterId = c.itemMasterId === parsed.itemMasterId
           const matchesType = c.conflictType === parsed.conflictType
-          const matchesTheirEco =
+          const matchesTheirChangeOrder =
             (c.theirEcoId || null) === (parsed.theirEcoId || null)
-          return matchesMasterId && matchesType && matchesTheirEco
+          return matchesMasterId && matchesType && matchesTheirChangeOrder
         })
 
         if (!conflict) {
@@ -1307,7 +1015,7 @@ app.delete(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'update'] },
       async ({ params, request, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         // Get review ID from query params
         const url = new URL(request.url)
         const reviewId = url.searchParams.get('reviewId')
@@ -1335,10 +1043,11 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireWholeEco(user.id, params.id)
-        const result = await ConflictDetectionService.detectConflictsForEco(
-          params.id,
-        )
+        await requireWholeChangeOrder(user.id, params.id)
+        const result =
+          await ConflictDetectionService.detectConflictsForChangeOrder(
+            params.id,
+          )
 
         // Enrich conflicts with review status
         const enrichedConflicts =
@@ -1381,14 +1090,14 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const { designs: ecoDesigns, hasRestricted } =
-          await ChangeOrderService.getEcoDesignsForViewer(
+        await requireChangeOrderAccess(user.id, params.id)
+        const { designs: changeOrderDesigns, hasRestricted } =
+          await ChangeOrderService.getChangeOrderDesignsForViewer(
             params.id,
             await AccessControlService.getAccessibleDesignIds(user.id),
           )
 
-        return { designs: ecoDesigns, hasRestricted }
+        return { designs: changeOrderDesigns, hasRestricted }
       },
     ),
   ),
@@ -1402,18 +1111,19 @@ app.post(
       {
         permission: ['change_orders', 'update'],
         body: z.object({ designId: z.string().uuid() }),
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ body, params, user }) => {
         const { designId } = body
 
-        const ecoDesign = await ChangeOrderService.addDesignToEco(
+        const changeOrderDesign = await ChangeOrderService.addDesign(
           params.id,
           designId,
           user.id,
         )
 
-        return created({ ecoDesign })
+        return created({ ecoDesign: changeOrderDesign })
       },
     ),
   ),
@@ -1436,7 +1146,7 @@ app.get(
         await requireDesignAccess(user.id, params.designId)
 
         const url = new URL(request.url, 'http://localhost')
-        return EcoStructureService.getDesignStructure(
+        return ChangeOrderStructureService.getDesignStructure(
           params.id,
           params.designId,
           {
@@ -1461,7 +1171,7 @@ app.get(
       async ({ params, user }) => {
         const { id } = params
 
-        await requireWholeEco(user.id, id)
+        await requireWholeChangeOrder(user.id, id)
         const impactReport = await ChangeOrderService.getImpactReport(id)
 
         if (!impactReport) {
@@ -1513,7 +1223,8 @@ app.post(
           includeDocuments: z.boolean().default(true),
           includeCrossChanges: z.boolean().default(true),
         }),
-        access: ({ params, user }) => requireWholeEco(user.id, params.id),
+        access: ({ params, user }) =>
+          requireWholeChangeOrder(user.id, params.id),
       },
       async ({ params, body: options }) => {
         const impactAnalysis = await ImpactAssessmentService.analyzeImpact(
@@ -1538,7 +1249,7 @@ app.get(
     apiHandler<{ id: string; itemId: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, request, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         const { id: changeOrderId, itemId } = params
 
         // Get designId from query params
@@ -1558,8 +1269,8 @@ app.get(
         // Find ancestors within the design, as the change order's own branches
         // see it — a parent added to the assembly on this branch is a parent
         // the user needs to decide about
-        const ecoBranchIds = (
-          await ChangeOrderService.getEcoDesigns(changeOrderId)
+        const changeOrderBranchIds = (
+          await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
         )
           .map((d) => d.branchId)
           .filter((id): id is string => id !== null)
@@ -1567,7 +1278,7 @@ app.get(
         const allAncestors = await ImpactAssessmentService.findAncestorChain(
           itemId,
           designId,
-          { branchIds: ecoBranchIds },
+          { branchIds: changeOrderBranchIds },
         )
 
         // Filter out ancestors already in this change order
@@ -1623,7 +1334,7 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         const preview = await ChangeOrderMergeService.previewMerge(params.id)
 
         return preview
@@ -1643,12 +1354,21 @@ const resolveConflictsSchema = z.object({
         // itemMasterId, despite the name the dialog sends.
         itemId: z.string().uuid(),
         resolution: z.enum(['keep_ours', 'keep_theirs', 'skip']),
+        // Per-field overrides of the item-level choice, keyed by field name
+        fieldResolutions: z
+          .record(z.string(), z.enum(['ours', 'theirs']))
+          .optional(),
       }),
     )
     .max(1000),
 })
 
 // POST /api/change-orders/:id/resolve-conflicts
+//
+// The arms live in `ChangeOrderService.resolveConflicts`: a three-way rebase
+// onto main for keep-ours / keep-theirs, and removal from scope for skip.
+// They were raw `branch_items` writes here, which the release then misread
+// — see the service for what each one did.
 app.post(
   '/:id/resolve-conflicts',
   adapt(
@@ -1656,148 +1376,15 @@ app.post(
       {
         permission: ['change_orders', 'update'],
         body: resolveConflictsSchema,
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
-      async ({ body, params }) => {
-        const changeOrderId = params.id
-
-        // Get all ECO designs with branches
-        const ecoDesigns = await ChangeOrderService.getEcoDesigns(changeOrderId)
-        const designsWithBranches = ecoDesigns.filter((d) => d.branchId)
-
-        const results: Array<{
-          itemId: string
-          resolution: ConflictResolution
-          success: boolean
-          error?: string
-        }> = []
-
-        for (const { itemId, resolution } of body.resolutions) {
-          try {
-            switch (resolution) {
-              case 'keep_ours':
-                // Update the ECO branch's baseItemId to main's current
-                // This acknowledges the conflict but keeps our changes
-                for (const ecoDesign of designsWithBranches) {
-                  if (!ecoDesign.branchId) continue
-
-                  const mainBranch = await BranchService.getMainBranch(
-                    ecoDesign.designId,
-                  )
-                  if (!mainBranch) continue
-
-                  // Get main's current item for this itemMasterId
-                  const mainBranchItem = await db
-                    .select()
-                    .from(branchItems)
-                    .where(
-                      and(
-                        eq(branchItems.branchId, mainBranch.id),
-                        eq(branchItems.itemMasterId, itemId),
-                      ),
-                    )
-                    .limit(1)
-                    .then((r) => r.at(0))
-
-                  if (mainBranchItem?.currentItemId) {
-                    // Update our branch's baseItemId to match main's current
-                    // This "rebases" our changes on top of the new main
-                    await db
-                      .update(branchItems)
-                      .set({
-                        baseItemId: mainBranchItem.currentItemId,
-                      })
-                      .where(
-                        and(
-                          eq(branchItems.branchId, ecoDesign.branchId),
-                          eq(branchItems.itemMasterId, itemId),
-                        ),
-                      )
-                  }
-                }
-                results.push({ itemId, resolution, success: true })
-                break
-
-              case 'keep_theirs':
-                // Discard our changes and use main's version
-                for (const ecoDesign of designsWithBranches) {
-                  if (!ecoDesign.branchId) continue
-
-                  const mainBranch = await BranchService.getMainBranch(
-                    ecoDesign.designId,
-                  )
-                  if (!mainBranch) continue
-
-                  // Get main's current item
-                  const mainBranchItem = await db
-                    .select()
-                    .from(branchItems)
-                    .where(
-                      and(
-                        eq(branchItems.branchId, mainBranch.id),
-                        eq(branchItems.itemMasterId, itemId),
-                      ),
-                    )
-                    .limit(1)
-                    .then((r) => r.at(0))
-
-                  if (mainBranchItem?.currentItemId) {
-                    // Update our branch to use main's version
-                    // Clear changeType since we're not actually changing anything
-                    await db
-                      .update(branchItems)
-                      .set({
-                        currentItemId: mainBranchItem.currentItemId,
-                        baseItemId: mainBranchItem.currentItemId,
-                        changeType: null, // No longer a change
-                      })
-                      .where(
-                        and(
-                          eq(branchItems.branchId, ecoDesign.branchId),
-                          eq(branchItems.itemMasterId, itemId),
-                        ),
-                      )
-                  }
-                }
-                results.push({ itemId, resolution, success: true })
-                break
-
-              case 'skip':
-                // Remove this item from the ECO entirely
-                for (const ecoDesign of designsWithBranches) {
-                  if (!ecoDesign.branchId) continue
-
-                  // Delete the branch item record for this item on the ECO branch
-                  await db
-                    .delete(branchItems)
-                    .where(
-                      and(
-                        eq(branchItems.branchId, ecoDesign.branchId),
-                        eq(branchItems.itemMasterId, itemId),
-                      ),
-                    )
-                }
-                results.push({ itemId, resolution, success: true })
-                break
-
-              default:
-                results.push({
-                  itemId,
-                  resolution,
-                  success: false,
-                  error: `Unknown resolution type: ${resolution}`,
-                })
-            }
-          } catch (error) {
-            results.push({
-              itemId,
-              resolution,
-              success: false,
-              error: (error as Error).message,
-            })
-          }
-        }
-
+      async ({ body, params, user }) => {
+        const results = await ChangeOrderService.resolveConflicts(
+          params.id,
+          body.resolutions,
+          user.id,
+        )
         const allSuccess = results.every((r) => r.success)
 
         // 207 Multi-Status when only some resolutions applied
@@ -1821,7 +1408,7 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         const { id } = params
 
         const risks = await ChangeOrderService.getRisks(id)
@@ -1839,7 +1426,7 @@ app.post(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'update'] },
       async ({ params, request, user }) => {
-        await requireEcoAccess(user.id, params.id)
+        await requireChangeOrderAccess(user.id, params.id)
         const url = new URL(request.url)
         const riskId = url.searchParams.get('riskId')
 
@@ -1870,8 +1457,8 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const summary = await ChangeOrderService.getEcoSummary(
+        await requireChangeOrderAccess(user.id, params.id)
+        const summary = await ChangeOrderService.getSummary(
           params.id,
           await AccessControlService.getAccessibleDesignIds(user.id),
         )
@@ -1893,14 +1480,16 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        await requireChangeOrderAccess(user.id, params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
 
         if (!instance) {
           throw new NotFoundError('Workflow for change order', params.id)
         }
 
-        const history = await WorkflowService.getHistory(instance.id)
+        const history = await LifecycleInstanceService.getHistory(instance.id)
 
         return { history }
       },
@@ -1915,13 +1504,15 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        await requireChangeOrderAccess(user.id, params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
         if (!instance) {
           throw new NotFoundError('Workflow instance', params.id)
         }
 
-        const structure = await WorkflowService.getEffectiveStructure(
+        const structure = await LifecycleInstanceService.getEffectiveStructure(
           instance.id,
         )
 
@@ -1953,16 +1544,19 @@ app.put(
       {
         permission: ['change_orders', 'update'],
         body: instanceStructureSchema,
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ body, params, user }) => {
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
         if (!instance) {
           throw new NotFoundError('Workflow instance', params.id)
         }
 
         // Check if workflow is flexible and editable
-        const isEditable = await WorkflowService.isFlexibleAndEditable(
+        const isEditable = await LifecycleInstanceService.isFlexibleAndEditable(
           instance.id,
         )
         if (!isEditable) {
@@ -1971,7 +1565,7 @@ app.put(
           )
         }
 
-        const result = await WorkflowService.updateInstanceStructure(
+        const result = await LifecycleInstanceService.updateInstanceStructure(
           instance.id,
           body.states,
           body.transitions,
@@ -1998,13 +1592,15 @@ app.get(
     apiHandler<{ id: string; stateId: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        await requireChangeOrderAccess(user.id, params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
         if (!instance) {
           throw new NotFoundError('Workflow instance', params.id)
         }
 
-        const approvers = await WorkflowApprovalService.getInstanceApprovers(
+        const approvers = await ApprovalService.getInstanceApprovers(
           instance.id,
           params.stateId,
         )
@@ -2028,17 +1624,20 @@ app.put(
         body: z.object({
           approvers: z.array(stateApproverInputSchema).max(100),
         }),
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ body, params, user }) => {
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
         if (!instance) {
           throw new NotFoundError('Workflow instance', params.id)
         }
 
         // Same editability gate as the structure endpoint: approvers are
         // part of the instance-level workflow configuration
-        const isEditable = await WorkflowService.isFlexibleAndEditable(
+        const isEditable = await LifecycleInstanceService.isFlexibleAndEditable(
           instance.id,
         )
         if (!isEditable) {
@@ -2048,7 +1647,7 @@ app.put(
         }
 
         // The state must exist on the instance's effective structure
-        const structure = await WorkflowService.getEffectiveStructure(
+        const structure = await LifecycleInstanceService.getEffectiveStructure(
           instance.id,
         )
         if (!structure.states.some((s) => s.id === params.stateId)) {
@@ -2057,7 +1656,7 @@ app.put(
           )
         }
 
-        const approvers = await WorkflowApprovalService.setInstanceApprovers(
+        const approvers = await ApprovalService.setInstanceApprovers(
           instance.id,
           params.stateId,
           body.approvers,
@@ -2077,8 +1676,10 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        await requireChangeOrderAccess(user.id, params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
 
         if (!instance) {
           throw new NotFoundError('Workflow', params.id, {
@@ -2086,18 +1687,13 @@ app.get(
           })
         }
 
-        // Fetch actual user roles for guard evaluation
-        const userWithRoles = await UserService.getUserById(user.id)
-        const userRoleNames = userWithRoles?.roles.map((r) => r.name) ?? []
-
-        // Build context for guard evaluation
-        const context = {
-          item: {}, // Will be populated by the service
-          user: { id: user.id, roles: userRoleNames },
-        }
-
+        // The service loads the change order and the caller's roles itself;
+        // this used to hand it an empty item, so field guards failed here
+        // and passed on execution
         const availableTransitions =
-          await WorkflowService.getAvailableTransitions(instance.id, context)
+          await LifecycleInstanceService.getAvailableTransitions(instance.id, {
+            user: { id: user.id },
+          })
 
         return { transitions: availableTransitions }
       },
@@ -2123,12 +1719,13 @@ app.post(
       {
         permission: ['change_orders', 'update'],
         body: transitionSchema,
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ params, body: data, user }) => {
         // All orchestration (finalKind resolution, release claim, merge or
         // cancel interlock) lives in the service so every entry point — this
-        // route, the AI tools, submit/approve/reject — shares one behavior
+        // route and the AI tools — shares one behavior
         const outcome = await ChangeOrderService.executeWorkflowTransition(
           params.id,
           data.toStateId,
@@ -2172,163 +1769,17 @@ app.post(
       {
         permission: ['change_orders', 'read'],
         body: transitionSchema,
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
-      async ({ body: data, params, user }) => {
-        // Get workflow instance
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
-        if (!instance) {
-          throw new NotFoundError('Workflow for change order', params.id)
-        }
-
-        // Get effective structure (handles flexible workflows with instance-level overrides)
-        const effectiveStructure = await WorkflowService.getEffectiveStructure(
-          instance.id,
-        )
-
-        // Find the transition from effective structure
-        const transition = effectiveStructure.transitions.find(
-          (t) =>
-            t.fromStateId === instance.currentState &&
-            t.toStateId === data.toStateId,
-        )
-
-        if (!transition) {
-          return {
-            valid: false,
-            error: 'No valid transition from current state to target state',
-          }
-        }
-
-        // Get actual user roles for guard evaluation
-        const userWithRoles = await UserService.getUserById(user.id)
-        const userRoleNames = userWithRoles?.roles.map((r) => r.name) ?? []
-
-        // Check basic transition possibility (guards)
-        const canTransitionResult = await WorkflowService.canTransition(
-          instance.id,
-          data.toStateId,
-          {
-            item: {},
-            user: { id: user.id, roles: userRoleNames },
-            workflowInstance: instance,
-          },
-        )
-
-        if (!canTransitionResult.allowed) {
-          return {
-            valid: false,
-            workflowGuardErrors: canTransitionResult.reasons,
-            lifecycleEffectErrors: [],
-            affectedItemsPreview: [],
-          }
-        }
-
-        // Preview what completing this transition will do to affected items.
-        // changeActionMappings are the single mechanism for ECO-driven state
-        // change, applied by the merge — so a meaningful preview exists only
-        // when the target state releases (finalKind 'release').
-        const targetState = effectiveStructure.states.find(
-          (s) => s.id === data.toStateId,
-        )
-        const isReleaseTarget =
-          targetState?.isFinal === true && targetState.finalKind === 'release'
-
-        const affectedItems = await ChangeOrderService.getAffectedItems(
+      async ({ body: data, params, user }) =>
+        // The dry run of the transition route, in the service beside the
+        // execution it predicts
+        ChangeOrderService.validateTransition(
           params.id,
-        )
-        // Masters the branch merge releases outright. The change-action
-        // mappings are never consulted for these, so predicting from them
-        // reports a violation for a release that will happen anyway — an
-        // item authored on the ECO branch sits in its lifecycle's initial
-        // state, which is not where `release` maps from for every type.
-        const mastersOnBranches =
-          await ChangeOrderService.getMastersWithBranchContent(params.id)
-        // Kept under its historical name for API/UI compatibility; now
-        // sourced from the mappings the merge will actually apply
-        const lifecycleEffectErrors: Array<string> = []
-        const affectedItemsPreview = await Promise.all(
-          affectedItems.map(async (affected) => {
-            const item = affected.affectedItemDetails
-            if (!item) {
-              return {
-                itemId: affected.affectedItemId,
-                itemNumber: null,
-                changeAction: affected.changeAction,
-                currentState: null,
-                predictedTransitions: [],
-              }
-            }
-
-            const predictedTransitions: Array<{
-              fromState: string
-              toState: string
-              lifecycleName: string
-            }> = []
-
-            const releasedByBranchMerge =
-              affected.affectedItemMasterId != null &&
-              mastersOnBranches.has(affected.affectedItemMasterId)
-
-            if (isReleaseTarget && !releasedByBranchMerge) {
-              const validation = await LifecycleService.canApplyAction(
-                item.itemType,
-                item.state || '',
-                affected.changeAction,
-                { drivingLifecycleId: instance.workflowDefinitionId },
-              )
-              if (!validation.valid) {
-                lifecycleEffectErrors.push(
-                  `${item.itemNumber}: ${validation.error}`,
-                )
-              } else {
-                const target = await LifecycleService.getTargetState(
-                  item.itemType,
-                  affected.changeAction,
-                )
-                if (target && target !== item.state) {
-                  const lifecycle =
-                    await LifecycleService.getLifecycleForItemType(
-                      item.itemType,
-                    )
-                  predictedTransitions.push({
-                    fromState: item.state || '',
-                    toState: target,
-                    lifecycleName:
-                      lifecycle?.name || `${item.itemType} lifecycle`,
-                  })
-                }
-              }
-            }
-
-            return {
-              itemId: affected.affectedItemId,
-              itemNumber: item.itemNumber,
-              changeAction: affected.changeAction,
-              currentState: item.state,
-              predictedTransitions,
-            }
-          }),
-        )
-
-        // Guard failures already returned above; what remains is whether the
-        // mappings would accept the release — a release they would reject is
-        // not a valid transition, and the preview says so up front instead
-        // of discovering it at merge time
-        const valid = lifecycleEffectErrors.length === 0
-
-        return {
-          valid,
-          workflowGuardErrors: [],
-          lifecycleEffectErrors,
-          affectedItemsPreview: affectedItemsPreview.filter(
-            (p) => p.predictedTransitions.length > 0,
-          ),
-          transitionName: transition.name,
-          fromState: instance.currentState,
-          toState: data.toStateId,
-        }
-      },
+          data.toStateId,
+          user.id,
+        ),
     ),
   ),
 )
@@ -2340,22 +1791,23 @@ app.get(
     apiHandler<{ id: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ params, user }) => {
-        await requireEcoAccess(user.id, params.id)
-        const instance = await WorkflowService.getInstanceByItemId(params.id)
+        await requireChangeOrderAccess(user.id, params.id)
+        const instance = await LifecycleInstanceService.getInstanceByItemId(
+          params.id,
+        )
 
         if (!instance) {
           return { instance: null }
         }
 
         // Get the workflow definition for context
-        const definition = await WorkflowService.getById(
+        const definition = await LifecycleDefinitionService.getById(
           instance.workflowDefinitionId,
         )
 
         // For flexible workflows, get effective structure with instance-level states
-        const effectiveStructure = await WorkflowService.getEffectiveStructure(
-          instance.id,
-        )
+        const effectiveStructure =
+          await LifecycleInstanceService.getEffectiveStructure(instance.id)
 
         // Create an "effective definition" that uses instance-level states if available
         const effectiveDefinition = definition
@@ -2384,21 +1836,26 @@ app.post(
       {
         permission: ['change_orders', 'update'],
         body: z.object({ workflowDefinitionId: z.string().uuid() }),
-        access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+        access: ({ params, user }) =>
+          requireChangeOrderAccess(user.id, params.id),
       },
       async ({ body: data, params, user }) => {
         // Check if workflow already exists
-        const existingInstance = await WorkflowService.getInstanceByItemId(
-          params.id,
-        )
+        const existingInstance =
+          await LifecycleInstanceService.getInstanceByItemId(params.id)
         if (existingInstance) {
           throw new AlreadyExistsError('Workflow', params.id)
         }
 
-        const instance = await WorkflowService.startInstance(
-          data.workflowDefinitionId,
+        // The repair door for a change order that lost its instance. Through
+        // the service, which refuses anything but a Driving definition and
+        // stamps the change order's state from the instance it starts; this
+        // used to hand `startInstance` whatever id it was given, so a Free
+        // item lifecycle could be attached to a change order.
+        const instance = await ChangeOrderService.startWorkflow(
           params.id,
-          { actorId: user.id },
+          data.workflowDefinitionId,
+          user.id,
         )
 
         return created({ instance })

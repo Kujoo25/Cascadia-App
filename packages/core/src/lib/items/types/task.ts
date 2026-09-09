@@ -18,7 +18,7 @@ export interface Task extends BaseItem {
   description?: string
   assignee?: string
   priority?: TaskPriority
-  dueDate?: Date | string
+  dueDate?: Date | string | null
   estimatedHours?: string
   actualHours?: string
   tags?: Array<string>
@@ -32,7 +32,7 @@ export const taskSchema = baseItemSchema.extend({
   description: z.string().max(5000).optional(),
   assignee: z.string().uuid().optional(),
   priority: taskPrioritySchema.optional().default('Medium'),
-  dueDate: z.union([z.string(), z.date()]).optional(),
+  dueDate: z.union([z.string(), z.date()]).nullable().optional(),
   estimatedHours: z.string().optional(),
   actualHours: z.string().optional(),
   tags: z.array(z.string()).optional(),

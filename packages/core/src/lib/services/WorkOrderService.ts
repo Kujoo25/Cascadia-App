@@ -4,7 +4,6 @@
 import { and, asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { paginatedOrderBy } from '../db/paginated-order'
-import { LifecycleService } from './LifecycleService'
 import type {
   WorkOrder,
   WorkOrderCreateInput,
@@ -16,6 +15,7 @@ import { likeContains } from '@/lib/db/like-pattern'
 import { designs, items, programs, workOrders } from '@/lib/db/schema'
 import { NotFoundError } from '@/lib/errors'
 import { ItemService } from '@/lib/items/services/ItemService'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
 
 /**
  * Work orders are items since Phase 2.5 (itemNumber = WO number,
@@ -298,7 +298,7 @@ export class WorkOrderService {
     // an order Complete over an unfinished traveler, and the row they
     // produced could not be repaired by any route. Both halves now live on
     // the shared path, so this endpoint cannot drift away from it again.
-    await LifecycleService.transitionFreeItem(id, newStatus, userId)
+    await LifecycleInstanceService.transitionFreeItem(id, newStatus, userId)
 
     const updated = await this.findById(id)
     return updated!

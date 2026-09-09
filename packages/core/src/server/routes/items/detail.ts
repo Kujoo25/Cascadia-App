@@ -70,7 +70,7 @@ const syncPropertiesSchema = z.object({
 // reasonForChange, impactDescription, riskLevel and the approval stamps for
 // anyone holding the id.
 //
-// `requireItemAccess` dispatches ChangeOrder to `requireEcoAccess` and Issue
+// `requireItemAccess` dispatches ChangeOrder to `requireChangeOrderAccess` and Issue
 // to `requireIssueAccess`, and otherwise ends in the identical
 // `requireDesignAccess` call — so the nine design-carrying types are
 // unaffected. WorkOrder and PhysicalPart rows carry no designId either, and

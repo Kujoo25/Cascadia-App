@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Cascadia PLM LLC
 
 import { Trash2, X } from 'lucide-react'
-import type { InstanceWorkflowTransition } from '@/lib/workflows/types'
+import type { InstanceTransition } from '@/lib/lifecycles/types'
 import {
   Button,
   Card,
@@ -14,8 +14,8 @@ import {
 } from '@/components/ui'
 
 interface InstanceTransitionPropertiesPanelProps {
-  transition: InstanceWorkflowTransition
-  onUpdate: (transition: InstanceWorkflowTransition) => void
+  transition: InstanceTransition
+  onUpdate: (transition: InstanceTransition) => void
   onDelete: (transitionId: string) => void
   onClose: () => void
   readOnly?: boolean
@@ -28,7 +28,7 @@ export function InstanceTransitionPropertiesPanel({
   onClose,
   readOnly = false,
 }: InstanceTransitionPropertiesPanelProps) {
-  const handleChange = (updates: Partial<InstanceWorkflowTransition>) => {
+  const handleChange = (updates: Partial<InstanceTransition>) => {
     onUpdate({ ...transition, ...updates })
   }
 

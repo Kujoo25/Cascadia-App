@@ -22,7 +22,7 @@ import type {
   CommitGraphData,
   CommitGraphEdge,
   CommitGraphNode,
-  CrossDesignEco,
+  CrossDesignChangeOrder as CrossDesignChangeOrder,
   ProgramCommitGraphNode,
   ProgramGraphData,
   ProgramGraphDesign,
@@ -32,6 +32,7 @@ import { db } from '@/lib/db'
 import { changeOrderDesigns, items } from '@/lib/db/schema/items'
 import { branches, commits, tags } from '@/lib/db/schema/versioning'
 import { users } from '@/lib/db/schema/users'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 /**
  * Build commit graph data for visualization
@@ -84,34 +85,34 @@ async function buildCommitGraph(
   }
 
   // 3b. When viewing main branch, also get all open (non-archived) ECO branches
-  const openEcoBranchCommits: typeof mainCommits = []
-  const openEcoBranchInfo = new Map<
+  const openChangeOrderBranchCommits: typeof mainCommits = []
+  const openChangeOrderBranchInfo = new Map<
     string,
     { name: string; branchType: string; baseCommitId: string | null }
   >()
 
   if (!selectedBranchId || selectedBranchId === mainBranch.id) {
     // Find all non-archived ECO branches for this design
-    const openEcoBranches = allBranches.filter(
-      (b) => b.branchType === 'eco' && !b.isArchived,
+    const openChangeOrderBranches = allBranches.filter(
+      (b) => b.branchType === BRANCH_TYPES.changeOrder && !b.isArchived,
     )
 
-    for (const ecoBranch of openEcoBranches) {
-      openEcoBranchInfo.set(ecoBranch.id, {
-        name: ecoBranch.name,
-        branchType: ecoBranch.branchType,
-        baseCommitId: ecoBranch.baseCommitId,
+    for (const changeOrderBranch of openChangeOrderBranches) {
+      openChangeOrderBranchInfo.set(changeOrderBranch.id, {
+        name: changeOrderBranch.name,
+        branchType: changeOrderBranch.branchType,
+        baseCommitId: changeOrderBranch.baseCommitId,
       })
 
       // Get commits for this open ECO branch
-      const ecoBranchCommits = await db
+      const changeOrderBranchCommits = await db
         .select()
         .from(commits)
-        .where(eq(commits.branchId, ecoBranch.id))
+        .where(eq(commits.branchId, changeOrderBranch.id))
         .orderBy(desc(commits.createdAt))
         .limit(limit)
 
-      openEcoBranchCommits.push(...ecoBranchCommits)
+      openChangeOrderBranchCommits.push(...changeOrderBranchCommits)
     }
   }
 
@@ -174,7 +175,7 @@ async function buildCommitGraph(
   const allCommits = [
     ...mainCommits,
     ...branchCommits,
-    ...openEcoBranchCommits,
+    ...openChangeOrderBranchCommits,
     ...historicalBranchCommits,
   ]
   // Deduplicate by commit ID
@@ -237,15 +238,17 @@ async function buildCommitGraph(
         .filter((id): id is string => id !== null),
     ),
   ]
-  let ecoNumberMap = new Map<string, string>()
+  let changeOrderNumberMap = new Map<string, string>()
 
   if (changeOrderIds.length > 0) {
-    const ecoItems = await db
+    const changeOrderItems = await db
       .select({ id: items.id, itemNumber: items.itemNumber })
       .from(items)
       .where(inArray(items.id, changeOrderIds))
 
-    ecoNumberMap = new Map(ecoItems.map((e) => [e.id, e.itemNumber]))
+    changeOrderNumberMap = new Map(
+      changeOrderItems.map((e) => [e.id, e.itemNumber]),
+    )
   }
 
   // 9. Build nodes
@@ -271,9 +274,9 @@ async function buildCommitGraph(
         'eco' | 'workspace' | 'release'
     } else {
       // Look up from open ECO branches first, then historical branches
-      const openEcoInfo = openEcoBranchInfo.get(commit.branchId)
+      const openChangeOrderInfo = openChangeOrderBranchInfo.get(commit.branchId)
       const histInfo = historicalBranchInfo.get(commit.branchId)
-      const branchInfo = openEcoInfo || histInfo
+      const branchInfo = openChangeOrderInfo || histInfo
       branchName = branchInfo?.name || 'Unknown Branch'
       branchType = (branchInfo?.branchType || 'eco') as
         'eco' | 'workspace' | 'release'
@@ -303,7 +306,7 @@ async function buildCommitGraph(
         tags: tagsByCommit.get(commit.id) || [],
         changeOrderItemId: commit.changeOrderItemId || undefined,
         ecoNumber: commit.changeOrderItemId
-          ? ecoNumberMap.get(commit.changeOrderItemId)
+          ? changeOrderNumberMap.get(commit.changeOrderItemId)
           : undefined,
         revisionsAssigned: commit.revisionsAssigned as
           Record<string, string> | undefined,
@@ -394,17 +397,17 @@ async function buildCommitGraph(
 
   // 10b. Add fork point edges for open ECO branches
   // Connect each open ECO branch's first commit to its base commit on main
-  for (const [branchId, branchInfo] of openEcoBranchInfo) {
+  for (const [branchId, branchInfo] of openChangeOrderBranchInfo) {
     if (!branchInfo.baseCommitId) continue
 
     // Find the oldest commit on this open ECO branch
-    const ecoBranchCommits = uniqueCommits.filter(
+    const changeOrderBranchCommits = uniqueCommits.filter(
       (c) => c.branchId === branchId,
     )
-    if (ecoBranchCommits.length === 0) continue
+    if (changeOrderBranchCommits.length === 0) continue
 
     // Sort by date ascending to find oldest (first) commit
-    const sortedCommits = [...ecoBranchCommits].sort(
+    const sortedCommits = [...changeOrderBranchCommits].sort(
       (a, b) =>
         new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
     )
@@ -511,12 +514,12 @@ async function buildProgramGraph(
     if (!mainBranch) continue
 
     // Get branch IDs to query (main + non-archived ECO branches)
-    const openEcoBranches = designBranches.filter(
-      (b) => b.branchType === 'eco' && !b.isArchived,
+    const openChangeOrderBranches = designBranches.filter(
+      (b) => b.branchType === BRANCH_TYPES.changeOrder && !b.isArchived,
     )
     const branchIdsToQuery = [
       mainBranch.id,
-      ...openEcoBranches.map((b) => b.id),
+      ...openChangeOrderBranches.map((b) => b.id),
     ]
 
     // Get commits for these branches
@@ -641,7 +644,11 @@ async function buildProgramGraph(
 
     // Add fork point edges for ECO branches (including archived ones for historical context)
     for (const branch of designBranches) {
-      if (branch.branchType !== 'eco' || !branch.baseCommitId) continue
+      if (
+        branch.branchType !== BRANCH_TYPES.changeOrder ||
+        !branch.baseCommitId
+      )
+        continue
 
       const branchCommits = designCommits.filter(
         (c) => c.branchId === branch.id,
@@ -722,28 +729,35 @@ async function buildProgramGraph(
       ),
     ]
     if (changeOrderIds.length > 0) {
-      const ecoItems = await db
+      const changeOrderItems = await db
         .select({ id: items.id, itemNumber: items.itemNumber })
         .from(items)
         .where(inArray(items.id, changeOrderIds))
 
-      const ecoNumberMap = new Map(ecoItems.map((e) => [e.id, e.itemNumber]))
+      const changeOrderNumberMap = new Map(
+        changeOrderItems.map((e) => [e.id, e.itemNumber]),
+      )
       for (const node of allNodes) {
         if (node.data.changeOrderItemId) {
-          node.data.ecoNumber = ecoNumberMap.get(node.data.changeOrderItemId)
+          node.data.ecoNumber = changeOrderNumberMap.get(
+            node.data.changeOrderItemId,
+          )
         }
       }
     }
   }
 
   // 5. Find cross-design ECOs
-  const crossDesignEcos = await findCrossDesignEcos(designIds, programDesigns)
+  const crossDesignEcos = await findCrossDesignChangeOrders(
+    designIds,
+    programDesigns,
+  )
 
   // 6. Add synthetic "ChangeOrder created" nodes for cross-design ECOs
   // Each design affected by an ECO should show its own "ChangeOrder created" node
   // forking from its main branch, with only that design's commits above it
-  for (const eco of crossDesignEcos) {
-    for (const affectedDesign of eco.affectedDesigns) {
+  for (const changeOrder of crossDesignEcos) {
+    for (const affectedDesign of changeOrder.affectedDesigns) {
       const design = programDesigns.find(
         (d) => d.id === affectedDesign.designId,
       )
@@ -751,52 +765,53 @@ async function buildProgramGraph(
 
       // Find the ECO branch for this design
       const designBranches = branchesByDesign.get(affectedDesign.designId) || []
-      let ecoBranch = affectedDesign.branchId
+      let changeOrderBranch = affectedDesign.branchId
         ? designBranches.find((b) => b.id === affectedDesign.branchId)
         : null
 
       // If branchId from changeOrderDesigns is null, try to find the ECO branch
       // by looking for ECO branches that have commits referencing this ECO
-      let ecoBranchId = affectedDesign.branchId
-      if (!ecoBranchId) {
+      let changeOrderBranchId = affectedDesign.branchId
+      if (!changeOrderBranchId) {
         // Find commits for this design that reference this ECO's changeOrderItemId
-        const ecoCommitsForDesign = allNodes.filter(
+        const changeOrderCommitsForDesign = allNodes.filter(
           (n) =>
             n.data.designId === affectedDesign.designId &&
-            n.data.changeOrderItemId === eco.id &&
-            n.data.branchType === 'eco',
+            n.data.changeOrderItemId === changeOrder.id &&
+            n.data.branchType === BRANCH_TYPES.changeOrder,
         )
-        if (ecoCommitsForDesign.length > 0) {
-          ecoBranchId = ecoCommitsForDesign[0]!.data.branchId
-          ecoBranch = designBranches.find((b) => b.id === ecoBranchId) || null
+        if (changeOrderCommitsForDesign.length > 0) {
+          changeOrderBranchId = changeOrderCommitsForDesign[0]!.data.branchId
+          changeOrderBranch =
+            designBranches.find((b) => b.id === changeOrderBranchId) || null
         }
       }
 
       // Find existing ECO commits for this design and this ECO's branch
-      const designEcoNodes = ecoBranchId
+      const designChangeOrderNodes = changeOrderBranchId
         ? allNodes.filter(
             (n) =>
               n.data.designId === affectedDesign.designId &&
-              n.data.branchId === ecoBranchId,
+              n.data.branchId === changeOrderBranchId,
           )
         : []
 
       // Check if there's already a "ChangeOrder created" commit at the start of this branch
       // Be specific: only match the actual ECO creation commit, not just any commit with ChangeOrder in the message
-      const hasChangeOrderNode = designEcoNodes.some((n) => {
+      const hasChangeOrderNode = designChangeOrderNodes.some((n) => {
         const msg = n.data.message.toLowerCase()
         return (
           (msg.includes('changeorder') && msg.includes('created')) ||
-          n.data.message === `ChangeOrder ${eco.ecoNumber} created`
+          n.data.message === `ChangeOrder ${changeOrder.ecoNumber} created`
         )
       })
 
       if (!hasChangeOrderNode) {
         // Create a synthetic "ChangeOrder created" node for this design
-        const syntheticNodeId = `eco-start-${eco.id}-${affectedDesign.designId}`
+        const syntheticNodeId = `eco-start-${changeOrder.id}-${affectedDesign.designId}`
 
         // Find the fork point (baseCommitId from the ECO branch, or latest main commit)
-        let forkPointId: string | null = ecoBranch?.baseCommitId || null
+        let forkPointId: string | null = changeOrderBranch?.baseCommitId || null
         if (!forkPointId) {
           // Fall back to latest main commit for this design
           const mainNodes = allNodes.filter(
@@ -817,13 +832,13 @@ async function buildProgramGraph(
         // Determine the date for the synthetic node
         // Use the ECO creation date if we can find it, otherwise use earliest ECO commit date
         let nodeDate = new Date().toISOString()
-        if (designEcoNodes.length > 0) {
-          const sortedEcoNodes = [...designEcoNodes].sort(
+        if (designChangeOrderNodes.length > 0) {
+          const sortedChangeOrderNodes = [...designChangeOrderNodes].sort(
             (a, b) =>
               new Date(a.data.date).getTime() - new Date(b.data.date).getTime(),
           )
           // Place synthetic node slightly before the oldest ECO commit
-          const oldestDate = new Date(sortedEcoNodes[0]!.data.date)
+          const oldestDate = new Date(sortedChangeOrderNodes[0]!.data.date)
           oldestDate.setSeconds(oldestDate.getSeconds() - 1)
           nodeDate = oldestDate.toISOString()
         }
@@ -835,18 +850,20 @@ async function buildProgramGraph(
           position: { x: 0, y: 0 },
           data: {
             commitId: syntheticNodeId,
-            message: `ChangeOrder ${eco.ecoNumber} created`,
+            message: `ChangeOrder ${changeOrder.ecoNumber} created`,
             author: { id: '', name: 'System' },
             date: nodeDate,
-            branchId: ecoBranchId || '',
+            branchId: changeOrderBranchId || '',
             branchName:
-              ecoBranch?.name || affectedDesign.branchName || eco.ecoNumber,
-            branchType: 'eco',
+              changeOrderBranch?.name ||
+              affectedDesign.branchName ||
+              changeOrder.ecoNumber,
+            branchType: BRANCH_TYPES.changeOrder,
             isMergeCommit: false,
             changeStats: { added: 0, modified: 0, deleted: 0 },
             tags: [],
-            changeOrderItemId: eco.id,
-            ecoNumber: eco.ecoNumber,
+            changeOrderItemId: changeOrder.id,
+            ecoNumber: changeOrder.ecoNumber,
             designId: affectedDesign.designId,
             designCode: affectedDesign.designCode,
             designName: design.name,
@@ -867,17 +884,17 @@ async function buildProgramGraph(
         }
 
         // Find the oldest ECO commit that should be a child of the synthetic node
-        if (designEcoNodes.length > 0) {
-          const sortedEcoNodes = [...designEcoNodes].sort(
+        if (designChangeOrderNodes.length > 0) {
+          const sortedEcoNodes = [...designChangeOrderNodes].sort(
             (a, b) =>
               new Date(a.data.date).getTime() - new Date(b.data.date).getTime(),
           )
-          const oldestEcoCommit = sortedEcoNodes[0]!
+          const oldestChangeOrderCommit = sortedEcoNodes[0]!
 
           // Remove any existing fork edge to this commit and replace with edge from synthetic
           const existingForkEdgeIndex = allEdges.findIndex(
             (e) =>
-              e.target === oldestEcoCommit.id &&
+              e.target === oldestChangeOrderCommit.id &&
               e.data?.edgeType === 'parent' &&
               e.source !== syntheticNodeId,
           )
@@ -887,9 +904,9 @@ async function buildProgramGraph(
 
           // Add edge from synthetic node to oldest ECO commit
           allEdges.push({
-            id: `${syntheticNodeId}-${oldestEcoCommit.id}`,
+            id: `${syntheticNodeId}-${oldestChangeOrderCommit.id}`,
             source: syntheticNodeId,
-            target: oldestEcoCommit.id,
+            target: oldestChangeOrderCommit.id,
             type: 'default',
             data: { edgeType: 'parent' },
           })
@@ -901,19 +918,23 @@ async function buildProgramGraph(
   // 6b. Also check for ECO branches that span multiple designs but weren't in changeOrderDesigns
   // This catches cases where items from design B were checked out to an ECO created on design A
   // Group ECO nodes by branch name pattern (e.g., "eco/ECO-000008")
-  const ecoBranchNameToDesigns = new Map<
+  const changeOrderBranchNameToDesigns = new Map<
     string,
     Map<string, Array<ProgramCommitGraphNode>>
   >()
   for (const node of allNodes) {
-    if (node.data.branchType !== 'eco' || !node.data.branchName) continue
+    if (
+      node.data.branchType !== BRANCH_TYPES.changeOrder ||
+      !node.data.branchName
+    )
+      continue
     const branchName = node.data.branchName
     const designId = node.data.designId
 
-    if (!ecoBranchNameToDesigns.has(branchName)) {
-      ecoBranchNameToDesigns.set(branchName, new Map())
+    if (!changeOrderBranchNameToDesigns.has(branchName)) {
+      changeOrderBranchNameToDesigns.set(branchName, new Map())
     }
-    const designMap = ecoBranchNameToDesigns.get(branchName)!
+    const designMap = changeOrderBranchNameToDesigns.get(branchName)!
     if (!designMap.has(designId)) {
       designMap.set(designId, [])
     }
@@ -921,12 +942,14 @@ async function buildProgramGraph(
   }
 
   // For each ECO branch name that spans multiple designs, check for missing "ChangeOrder created" nodes
-  for (const [branchName, designMap] of ecoBranchNameToDesigns) {
+  for (const [branchName, designMap] of changeOrderBranchNameToDesigns) {
     if (designMap.size < 2) continue // Only interested in cross-design ECOs
 
     // Extract ECO number from branch name (e.g., "eco/ECO-000008" -> "ECO-000008")
-    const ecoNumberMatch = branchName.match(/eco\/(.+)/)
-    const ecoNumber = ecoNumberMatch ? ecoNumberMatch[1] : branchName
+    const changeOrderNumberMatch = branchName.match(/eco\/(.+)/)
+    const changeOrderNumber = changeOrderNumberMatch
+      ? changeOrderNumberMatch[1]
+      : branchName
 
     for (const [designId, designNodes] of designMap) {
       // Check if this design already has a "ChangeOrder created" node
@@ -946,11 +969,13 @@ async function buildProgramGraph(
 
       // Find the ECO branch for this design
       const designBranches = branchesByDesign.get(designId) || []
-      const ecoBranch = designBranches.find((b) => b.name === branchName)
-      const ecoBranchId = designNodes[0]?.data.branchId || ''
+      const changeOrderBranch = designBranches.find(
+        (b) => b.name === branchName,
+      )
+      const changeOrderBranchId = designNodes[0]?.data.branchId || ''
 
       // Find fork point
-      let forkPointId: string | null = ecoBranch?.baseCommitId || null
+      let forkPointId: string | null = changeOrderBranch?.baseCommitId || null
       if (!forkPointId) {
         const mainNodes = allNodes.filter(
           (n) => n.data.designId === designId && n.data.branchType === 'main',
@@ -983,16 +1008,16 @@ async function buildProgramGraph(
         position: { x: 0, y: 0 },
         data: {
           commitId: syntheticNodeId,
-          message: `ChangeOrder ${ecoNumber} created`,
+          message: `ChangeOrder ${changeOrderNumber} created`,
           author: { id: '', name: 'System' },
           date: nodeDate,
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           branchName: branchName,
-          branchType: 'eco',
+          branchType: BRANCH_TYPES.changeOrder,
           isMergeCommit: false,
           changeStats: { added: 0, modified: 0, deleted: 0 },
           tags: [],
-          ecoNumber: ecoNumber,
+          ecoNumber: changeOrderNumber,
           designId: designId,
           designCode: design.code,
           designName: design.name,
@@ -1069,12 +1094,12 @@ async function buildProgramGraph(
   }
 }
 
-async function findCrossDesignEcos(
+async function findCrossDesignChangeOrders(
   designIds: Array<string>,
   programDesigns: Array<ProgramGraphDesign>,
-): Promise<Array<CrossDesignEco>> {
+): Promise<Array<CrossDesignChangeOrder>> {
   // Query changeOrderDesigns to find ECOs that affect multiple designs
-  const ecoDesignLinks = await db
+  const changeOrderDesignLinks = await db
     .select({
       changeOrderId: changeOrderDesigns.changeOrderId,
       designId: changeOrderDesigns.designId,
@@ -1084,34 +1109,36 @@ async function findCrossDesignEcos(
     .where(inArray(changeOrderDesigns.designId, designIds))
 
   // Group by ECO
-  const ecoMap = new Map<
+  const changeOrderMap = new Map<
     string,
     Array<{ designId: string; branchId: string | null }>
   >()
-  for (const link of ecoDesignLinks) {
-    const existing = ecoMap.get(link.changeOrderId) || []
+  for (const link of changeOrderDesignLinks) {
+    const existing = changeOrderMap.get(link.changeOrderId) || []
     existing.push({ designId: link.designId, branchId: link.branchId })
-    ecoMap.set(link.changeOrderId, existing)
+    changeOrderMap.set(link.changeOrderId, existing)
   }
 
   // Filter to ECOs with 2+ designs in our set
-  const crossDesignEcoIds = Array.from(ecoMap.entries())
+  const crossDesignChangeOrderIds = Array.from(changeOrderMap.entries())
     .filter(([, designs]) => designs.length >= 2)
-    .map(([ecoId]) => ecoId)
+    .map(([changeOrderId]) => changeOrderId)
 
-  if (crossDesignEcoIds.length === 0) {
+  if (crossDesignChangeOrderIds.length === 0) {
     return []
   }
 
   // Get ECO item details
-  const ecoItems = await db
+  const changeOrderItems = await db
     .select({ id: items.id, itemNumber: items.itemNumber, name: items.name })
     .from(items)
-    .where(inArray(items.id, crossDesignEcoIds))
+    .where(inArray(items.id, crossDesignChangeOrderIds))
 
   // Get branch names for affected designs
-  const allBranchIds = ecoDesignLinks
-    .filter((l) => l.branchId && crossDesignEcoIds.includes(l.changeOrderId))
+  const allBranchIds = changeOrderDesignLinks
+    .filter(
+      (l) => l.branchId && crossDesignChangeOrderIds.includes(l.changeOrderId),
+    )
     .map((l) => l.branchId!)
 
   let branchNameMap = new Map<string, string>()
@@ -1127,13 +1154,13 @@ async function findCrossDesignEcos(
   const designCodeMap = new Map(programDesigns.map((d) => [d.id, d.code]))
 
   // Build result
-  const result: Array<CrossDesignEco> = []
-  for (const ecoItem of ecoItems) {
-    const affectedDesigns = ecoMap.get(ecoItem.id) || []
+  const result: Array<CrossDesignChangeOrder> = []
+  for (const changeOrderItem of changeOrderItems) {
+    const affectedDesigns = changeOrderMap.get(changeOrderItem.id) || []
     result.push({
-      id: ecoItem.id,
-      ecoNumber: ecoItem.itemNumber,
-      ecoName: ecoItem.name || ecoItem.itemNumber,
+      id: changeOrderItem.id,
+      ecoNumber: changeOrderItem.itemNumber,
+      ecoName: changeOrderItem.name || changeOrderItem.itemNumber,
       affectedDesigns: affectedDesigns.map((ad) => ({
         designId: ad.designId,
         designCode: designCodeMap.get(ad.designId) || 'Unknown',

@@ -306,7 +306,7 @@ After responding, the card collapses to a static badge showing "Confirmed" (gree
 
 ### ECO Suggestion Flow
 
-When a write operation targets a released design without an ECO, the tool does not fail. Instead it returns a `suggestCreateEco` flag with a message like:
+When a write operation targets a released design without an ECO, the tool does not fail. Instead it returns a `suggestCreateChangeOrder` flag with a message like:
 
 > "The design 'Widget Assembly Prototype' has released items and requires an ECO to add new items. Would you like me to create an ECO first?"
 

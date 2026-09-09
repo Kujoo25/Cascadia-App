@@ -27,6 +27,13 @@ interface Props {
 interface State {
   hasError: boolean
   error?: Error
+  /**
+   * React's component stack for the throw. Kept because the JS stack of a
+   * render-loop error names only the library frame the update counter
+   * happened to trip on — a Radix ref callback, say — and never the component
+   * that is looping. This is the half that identifies it.
+   */
+  componentStack?: string
 }
 
 /**
@@ -61,11 +68,16 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('[ErrorBoundary]', error, errorInfo)
+    this.setState({ componentStack: errorInfo.componentStack ?? undefined })
     this.props.onError?.(error, errorInfo)
   }
 
   handleRetry = () => {
-    this.setState({ hasError: false, error: undefined })
+    this.setState({
+      hasError: false,
+      error: undefined,
+      componentStack: undefined,
+    })
   }
 
   handleReload = () => {
@@ -120,6 +132,12 @@ export class ErrorBoundary extends Component<Props, State> {
                     {this.state.error.message}
                     {'\n\n'}
                     {this.state.error.stack}
+                    {this.state.componentStack !== undefined && (
+                      <>
+                        {'\n\nComponent stack:'}
+                        {this.state.componentStack}
+                      </>
+                    )}
                   </pre>
                 </div>
               )}

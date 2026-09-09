@@ -184,7 +184,7 @@ type ResourceType =
   | 'work_instructions'
   | 'work_orders'
   | 'issues'
-  | 'workflows'
+  | 'lifecycles'
   | 'users'
   | 'roles'
   | 'programs'

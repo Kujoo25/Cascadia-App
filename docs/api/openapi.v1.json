@@ -3908,6 +3908,10 @@
             "application/json": {
               "schema": {
                 "properties": {
+                  "attributes": {
+                    "additionalProperties": {},
+                    "type": "object"
+                  },
                   "changeType": {
                     "enum": [
                       "ECO",
@@ -3923,42 +3927,91 @@
                     "type": "string"
                   },
                   "description": {
-                    "maxLength": 10000,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 10000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "impactDescription": {
-                    "maxLength": 10000,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 10000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "implementationDate": {
-                    "format": "date-time",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "name": {
-                    "maxLength": 500,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "priority": {
-                    "enum": [
-                      "low",
-                      "medium",
-                      "high",
-                      "critical"
-                    ],
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "critical"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "reasonForChange": {
-                    "maxLength": 10000,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 10000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "riskLevel": {
-                    "enum": [
-                      "low",
-                      "medium",
-                      "high",
-                      "critical"
-                    ],
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "critical"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "state": {
                     "maxLength": 50,
@@ -5383,6 +5436,16 @@
                   "resolutions": {
                     "items": {
                       "properties": {
+                        "fieldResolutions": {
+                          "additionalProperties": {
+                            "enum": [
+                              "ours",
+                              "theirs"
+                            ],
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
                         "itemId": {
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
@@ -7362,6 +7425,42 @@
         ]
       }
     },
+    "/api/v1/designs/{id}/change-orders": {
+      "get": {
+        "operationId": "getApiV1DesignsByIdChangeOrders",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "List the change orders whose branches belong to this design",
+        "tags": [
+          "Designs"
+        ]
+      }
+    },
     "/api/v1/designs/{id}/clone": {
       "post": {
         "operationId": "postApiV1DesignsByIdClone",
@@ -7695,6 +7794,7 @@
     },
     "/api/v1/designs/{id}/ecos": {
       "get": {
+        "deprecated": true,
         "operationId": "getApiV1DesignsByIdEcos",
         "parameters": [
           {
@@ -7723,6 +7823,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "List the change orders whose branches belong to this design",
         "tags": [
           "Designs"
         ]
@@ -8509,26 +8610,58 @@
             "application/json": {
               "schema": {
                 "properties": {
+                  "attributes": {
+                    "additionalProperties": {},
+                    "type": "object"
+                  },
                   "commitMessage": {
                     "maxLength": 500,
                     "type": "string"
                   },
                   "description": {
-                    "maxLength": 5000,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "fileId": {
-                    "format": "uuid",
-                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "fileName": {
-                    "maxLength": 500,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "name": {
-                    "maxLength": 500,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "state": {
                     "maxLength": 50,
@@ -11504,11 +11637,18 @@
                       "dueDate": {
                         "anyOf": [
                           {
-                            "type": "string"
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "format": "date-time",
+                                "type": "string"
+                              }
+                            ]
                           },
                           {
-                            "format": "date-time",
-                            "type": "string"
+                            "type": "null"
                           }
                         ]
                       },
@@ -11691,8 +11831,15 @@
                         "type": "string"
                       },
                       "lastExecutedAt": {
-                        "format": "date-time",
-                        "type": "string"
+                        "anyOf": [
+                          {
+                            "format": "date-time",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "lastExecutedBy": {
                         "format": "uuid",
@@ -11864,11 +12011,18 @@
                       "reportedDate": {
                         "anyOf": [
                           {
-                            "type": "string"
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "format": "date-time",
+                                "type": "string"
+                              }
+                            ]
                           },
                           {
-                            "format": "date-time",
-                            "type": "string"
+                            "type": "null"
                           }
                         ]
                       },
@@ -11879,11 +12033,18 @@
                       "resolvedDate": {
                         "anyOf": [
                           {
-                            "type": "string"
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "format": "date-time",
+                                "type": "string"
+                              }
+                            ]
                           },
                           {
-                            "format": "date-time",
-                            "type": "string"
+                            "type": "null"
                           }
                         ]
                       },
@@ -15278,6 +15439,778 @@
         ]
       }
     },
+    "/api/v1/lifecycles": {
+      "get": {
+        "operationId": "getApiV1Lifecycles",
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "List lifecycle definitions",
+        "tags": [
+          "Lifecycles"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1Lifecycles",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "applicableItemTypes": {
+                    "items": {
+                      "maxLength": 100,
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "changeActionMappings": {
+                    "properties": {
+                      "obsolete": {
+                        "properties": {
+                          "assignsRevision": {
+                            "type": "boolean"
+                          },
+                          "fromState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "toState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "toState",
+                          "assignsRevision"
+                        ],
+                        "type": "object"
+                      },
+                      "promote": {
+                        "properties": {
+                          "assignsRevision": {
+                            "type": "boolean"
+                          },
+                          "fromState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "resetRevision": {
+                            "type": "boolean"
+                          },
+                          "toState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "toState",
+                          "assignsRevision"
+                        ],
+                        "type": "object"
+                      },
+                      "release": {
+                        "properties": {
+                          "assignsRevision": {
+                            "type": "boolean"
+                          },
+                          "fromState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "toState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "toState",
+                          "assignsRevision"
+                        ],
+                        "type": "object"
+                      },
+                      "revise": {
+                        "properties": {
+                          "assignsRevision": {
+                            "const": true,
+                            "type": "boolean"
+                          },
+                          "fromState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "newVersionState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "oldVersionState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "newVersionState",
+                          "oldVersionState",
+                          "assignsRevision"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "description": {
+                    "maxLength": 5000,
+                    "type": "string"
+                  },
+                  "drivers": {
+                    "items": {
+                      "maxLength": 100,
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  },
+                  "lifecycleType": {
+                    "enum": [
+                      "Free",
+                      "Driven",
+                      "Driving"
+                    ],
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "phases": {
+                    "items": {
+                      "properties": {
+                        "color": {
+                          "maxLength": 50,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "order": {
+                          "maximum": 1000,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "resetRevisionOnEntry": {
+                          "type": "boolean"
+                        },
+                        "revisionScheme": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "type": {
+                                  "const": "alpha",
+                                  "type": "string"
+                                },
+                                "uppercase": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "type": {
+                                  "const": "numeric",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "prefix": {
+                                  "maxLength": 20,
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "const": "prefixed-numeric",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "prefix"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "type": {
+                                  "const": "none",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "order"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "revisionScheme": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "alpha",
+                            "type": "string"
+                          },
+                          "uppercase": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "numeric",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "prefix": {
+                            "maxLength": 20,
+                            "type": "string"
+                          },
+                          "type": {
+                            "const": "prefixed-numeric",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "prefix"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "none",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "states": {
+                    "items": {
+                      "properties": {
+                        "color": {
+                          "maxLength": 50,
+                          "type": "string"
+                        },
+                        "description": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "finalKind": {
+                          "enum": [
+                            "release",
+                            "cancel",
+                            "complete"
+                          ],
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "instructions": {
+                          "maxLength": 5000,
+                          "type": "string"
+                        },
+                        "isFinal": {
+                          "type": "boolean"
+                        },
+                        "isInitial": {
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "phaseId": {
+                          "maxLength": 100,
+                          "type": "string"
+                        },
+                        "position": {
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 500,
+                    "type": "array"
+                  },
+                  "transitions": {
+                    "items": {
+                      "properties": {
+                        "actions": {
+                          "items": {
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "config": {
+                                    "properties": {
+                                      "recipients": {
+                                        "items": {
+                                          "properties": {
+                                            "id": {
+                                              "maxLength": 200,
+                                              "type": "string"
+                                            },
+                                            "type": {
+                                              "enum": [
+                                                "user",
+                                                "role"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "type",
+                                            "id"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "maxItems": 100,
+                                        "type": "array"
+                                      },
+                                      "templateId": {
+                                        "const": "workflow_transition",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "recipients",
+                                      "templateId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "executeOn": {
+                                    "enum": [
+                                      "before",
+                                      "after"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "maxLength": 100,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "const": "send_notification",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "type",
+                                  "executeOn",
+                                  "config"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "properties": {
+                                  "config": {
+                                    "properties": {
+                                      "fieldName": {
+                                        "maxLength": 100,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "value": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 1000,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "fieldName",
+                                      "value"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "executeOn": {
+                                    "enum": [
+                                      "before",
+                                      "after"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "maxLength": 100,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "const": "update_field",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "type",
+                                  "executeOn",
+                                  "config"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "maxItems": 50,
+                          "type": "array"
+                        },
+                        "approvalRequirement": {
+                          "properties": {
+                            "requiredCount": {
+                              "maximum": 100,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "requiredCount"
+                          ],
+                          "type": "object"
+                        },
+                        "description": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "fromStateId": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "guards": {
+                          "items": {
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "config": {
+                                    "properties": {
+                                      "fieldName": {
+                                        "maxLength": 100,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "operator": {
+                                        "enum": [
+                                          "equals",
+                                          "not_equals",
+                                          "contains",
+                                          "is_empty",
+                                          "is_not_empty",
+                                          "greater_than",
+                                          "less_than",
+                                          "greater_or_equal",
+                                          "less_or_equal"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "value": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 1000,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "fieldName",
+                                      "operator"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "errorMessage": {
+                                    "maxLength": 1000,
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "maxLength": 100,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "const": "field_value",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "type",
+                                  "config"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "properties": {
+                                  "config": {
+                                    "properties": {
+                                      "requireAll": {
+                                        "type": "boolean"
+                                      },
+                                      "requiredRoles": {
+                                        "items": {
+                                          "maxLength": 200,
+                                          "type": "string"
+                                        },
+                                        "maxItems": 100,
+                                        "type": "array"
+                                      }
+                                    },
+                                    "required": [
+                                      "requiredRoles"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "errorMessage": {
+                                    "maxLength": 1000,
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "maxLength": 100,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "const": "user_role",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "type",
+                                  "config"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "maxItems": 50,
+                          "type": "array"
+                        },
+                        "id": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "labelPosition": {
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "type": "object"
+                        },
+                        "name": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "toStateId": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "fromStateId",
+                        "toStateId"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 500,
+                    "type": "array"
+                  },
+                  "workflowType": {
+                    "enum": [
+                      "strict",
+                      "flexible"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Create a lifecycle definition",
+        "tags": [
+          "Lifecycles"
+        ]
+      }
+    },
     "/api/v1/lifecycles/by-item-type/{itemType}": {
       "get": {
         "operationId": "getApiV1LifecyclesByItemTypeByItemType",
@@ -15308,6 +16241,1218 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "tags": [
+          "Lifecycles"
+        ]
+      }
+    },
+    "/api/v1/lifecycles/{id}": {
+      "delete": {
+        "operationId": "deleteApiV1LifecyclesById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Delete a lifecycle definition",
+        "tags": [
+          "Lifecycles"
+        ]
+      },
+      "get": {
+        "operationId": "getApiV1LifecyclesById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Get a lifecycle definition",
+        "tags": [
+          "Lifecycles"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1LifecyclesById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "applicableItemTypes": {
+                    "items": {
+                      "maxLength": 100,
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "changeActionMappings": {
+                    "properties": {
+                      "obsolete": {
+                        "properties": {
+                          "assignsRevision": {
+                            "type": "boolean"
+                          },
+                          "fromState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "toState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "toState",
+                          "assignsRevision"
+                        ],
+                        "type": "object"
+                      },
+                      "promote": {
+                        "properties": {
+                          "assignsRevision": {
+                            "type": "boolean"
+                          },
+                          "fromState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "resetRevision": {
+                            "type": "boolean"
+                          },
+                          "toState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "toState",
+                          "assignsRevision"
+                        ],
+                        "type": "object"
+                      },
+                      "release": {
+                        "properties": {
+                          "assignsRevision": {
+                            "type": "boolean"
+                          },
+                          "fromState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "toState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "toState",
+                          "assignsRevision"
+                        ],
+                        "type": "object"
+                      },
+                      "revise": {
+                        "properties": {
+                          "assignsRevision": {
+                            "const": true,
+                            "type": "boolean"
+                          },
+                          "fromState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "newVersionState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "oldVersionState": {
+                            "maxLength": 100,
+                            "minLength": 1,
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "fromState",
+                          "newVersionState",
+                          "oldVersionState",
+                          "assignsRevision"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "description": {
+                    "maxLength": 5000,
+                    "type": "string"
+                  },
+                  "drivers": {
+                    "items": {
+                      "maxLength": 100,
+                      "type": "string"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "isActive": {
+                    "type": "boolean"
+                  },
+                  "lifecycleType": {
+                    "enum": [
+                      "Free",
+                      "Driven",
+                      "Driving"
+                    ],
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 200,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "phases": {
+                    "items": {
+                      "properties": {
+                        "color": {
+                          "maxLength": 50,
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "order": {
+                          "maximum": 1000,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "resetRevisionOnEntry": {
+                          "type": "boolean"
+                        },
+                        "revisionScheme": {
+                          "oneOf": [
+                            {
+                              "properties": {
+                                "type": {
+                                  "const": "alpha",
+                                  "type": "string"
+                                },
+                                "uppercase": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "type": {
+                                  "const": "numeric",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "prefix": {
+                                  "maxLength": 20,
+                                  "type": "string"
+                                },
+                                "type": {
+                                  "const": "prefixed-numeric",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "prefix"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "properties": {
+                                "type": {
+                                  "const": "none",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "type"
+                              ],
+                              "type": "object"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "order"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  },
+                  "revisionScheme": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "alpha",
+                            "type": "string"
+                          },
+                          "uppercase": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "numeric",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "prefix": {
+                            "maxLength": 20,
+                            "type": "string"
+                          },
+                          "type": {
+                            "const": "prefixed-numeric",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "prefix"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "type": {
+                            "const": "none",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "states": {
+                    "items": {
+                      "properties": {
+                        "color": {
+                          "maxLength": 50,
+                          "type": "string"
+                        },
+                        "description": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "finalKind": {
+                          "enum": [
+                            "release",
+                            "cancel",
+                            "complete"
+                          ],
+                          "type": "string"
+                        },
+                        "id": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "instructions": {
+                          "maxLength": 5000,
+                          "type": "string"
+                        },
+                        "isFinal": {
+                          "type": "boolean"
+                        },
+                        "isInitial": {
+                          "type": "boolean"
+                        },
+                        "name": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "phaseId": {
+                          "maxLength": 100,
+                          "type": "string"
+                        },
+                        "position": {
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 500,
+                    "type": "array"
+                  },
+                  "transitions": {
+                    "items": {
+                      "properties": {
+                        "actions": {
+                          "items": {
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "config": {
+                                    "properties": {
+                                      "recipients": {
+                                        "items": {
+                                          "properties": {
+                                            "id": {
+                                              "maxLength": 200,
+                                              "type": "string"
+                                            },
+                                            "type": {
+                                              "enum": [
+                                                "user",
+                                                "role"
+                                              ],
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "type",
+                                            "id"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "maxItems": 100,
+                                        "type": "array"
+                                      },
+                                      "templateId": {
+                                        "const": "workflow_transition",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "recipients",
+                                      "templateId"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "executeOn": {
+                                    "enum": [
+                                      "before",
+                                      "after"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "maxLength": 100,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "const": "send_notification",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "type",
+                                  "executeOn",
+                                  "config"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "properties": {
+                                  "config": {
+                                    "properties": {
+                                      "fieldName": {
+                                        "maxLength": 100,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "value": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 1000,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "fieldName",
+                                      "value"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "executeOn": {
+                                    "enum": [
+                                      "before",
+                                      "after"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "maxLength": 100,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "const": "update_field",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "type",
+                                  "executeOn",
+                                  "config"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "maxItems": 50,
+                          "type": "array"
+                        },
+                        "approvalRequirement": {
+                          "properties": {
+                            "requiredCount": {
+                              "maximum": 100,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "requiredCount"
+                          ],
+                          "type": "object"
+                        },
+                        "description": {
+                          "maxLength": 2000,
+                          "type": "string"
+                        },
+                        "fromStateId": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "guards": {
+                          "items": {
+                            "oneOf": [
+                              {
+                                "properties": {
+                                  "config": {
+                                    "properties": {
+                                      "fieldName": {
+                                        "maxLength": 100,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      "operator": {
+                                        "enum": [
+                                          "equals",
+                                          "not_equals",
+                                          "contains",
+                                          "is_empty",
+                                          "is_not_empty",
+                                          "greater_than",
+                                          "less_than",
+                                          "greater_or_equal",
+                                          "less_or_equal"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "value": {
+                                        "anyOf": [
+                                          {
+                                            "maxLength": 1000,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "number"
+                                          },
+                                          {
+                                            "type": "boolean"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "fieldName",
+                                      "operator"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "errorMessage": {
+                                    "maxLength": 1000,
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "maxLength": 100,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "const": "field_value",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "type",
+                                  "config"
+                                ],
+                                "type": "object"
+                              },
+                              {
+                                "properties": {
+                                  "config": {
+                                    "properties": {
+                                      "requireAll": {
+                                        "type": "boolean"
+                                      },
+                                      "requiredRoles": {
+                                        "items": {
+                                          "maxLength": 200,
+                                          "type": "string"
+                                        },
+                                        "maxItems": 100,
+                                        "type": "array"
+                                      }
+                                    },
+                                    "required": [
+                                      "requiredRoles"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "errorMessage": {
+                                    "maxLength": 1000,
+                                    "type": "string"
+                                  },
+                                  "id": {
+                                    "maxLength": 100,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "maxLength": 200,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  "type": {
+                                    "const": "user_role",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "name",
+                                  "type",
+                                  "config"
+                                ],
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          "maxItems": 50,
+                          "type": "array"
+                        },
+                        "id": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "labelPosition": {
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "type": "object"
+                        },
+                        "name": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "toStateId": {
+                          "maxLength": 100,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "fromStateId",
+                        "toStateId"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 500,
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Update a lifecycle definition",
+        "tags": [
+          "Lifecycles"
+        ]
+      }
+    },
+    "/api/v1/lifecycles/{id}/approvers": {
+      "get": {
+        "operationId": "getApiV1LifecyclesByIdApprovers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "List the approvers of every state of a definition",
+        "tags": [
+          "Lifecycles"
+        ]
+      }
+    },
+    "/api/v1/lifecycles/{id}/states/{stateId}/approvers": {
+      "get": {
+        "operationId": "getApiV1LifecyclesByIdStatesByStateIdApprovers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "stateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "List the approvers of a state",
+        "tags": [
+          "Lifecycles"
+        ]
+      },
+      "post": {
+        "operationId": "postApiV1LifecyclesByIdStatesByStateIdApprovers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "stateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "id": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "isRequired": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "type": {
+                    "enum": [
+                      "user",
+                      "role"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Add an approver to a state",
+        "tags": [
+          "Lifecycles"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1LifecyclesByIdStatesByStateIdApprovers",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "stateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "approvers": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "isRequired": {
+                          "default": true,
+                          "type": "boolean"
+                        },
+                        "type": {
+                          "enum": [
+                            "user",
+                            "role"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "id"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 100,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "approvers"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Replace the approvers of a state",
+        "tags": [
+          "Lifecycles"
+        ]
+      }
+    },
+    "/api/v1/lifecycles/{id}/states/{stateId}/approvers/{approverId}": {
+      "delete": {
+        "operationId": "deleteApiV1LifecyclesByIdStatesByStateIdApproversByApproverId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "stateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "approverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Remove a state approver",
+        "tags": [
+          "Lifecycles"
+        ]
+      },
+      "patch": {
+        "operationId": "patchApiV1LifecyclesByIdStatesByStateIdApproversByApproverId",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "stateId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "approverId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "isRequired": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "isRequired"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Update a state approver",
+        "tags": [
+          "Lifecycles"
+        ]
+      }
+    },
+    "/api/v1/lifecycles/{id}/validate": {
+      "post": {
+        "operationId": "postApiV1LifecyclesByIdValidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Validate a lifecycle definition",
         "tags": [
           "Lifecycles"
         ]
@@ -17281,8 +19426,15 @@
                     "type": "string"
                   },
                   "startDate": {
-                    "format": "date-time",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "status": {
                     "enum": [
@@ -17294,8 +19446,15 @@
                     "type": "string"
                   },
                   "targetEndDate": {
-                    "format": "date-time",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -17487,8 +19646,15 @@
                     "type": "string"
                   },
                   "startDate": {
-                    "format": "date-time",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "status": {
                     "enum": [
@@ -17500,8 +19666,15 @@
                     "type": "string"
                   },
                   "targetEndDate": {
-                    "format": "date-time",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "type": "object"
@@ -19359,51 +21532,104 @@
               "schema": {
                 "properties": {
                   "acceptanceCriteria": {
-                    "maxLength": 10000,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 10000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "attributes": {
+                    "additionalProperties": {},
+                    "type": "object"
                   },
                   "commitMessage": {
                     "maxLength": 500,
                     "type": "string"
                   },
                   "description": {
-                    "maxLength": 10000,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 10000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "name": {
-                    "maxLength": 500,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "priority": {
-                    "enum": [
-                      "low",
-                      "medium",
-                      "high",
-                      "critical"
-                    ],
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "critical"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "requirementType": {
-                    "maxLength": 50,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 50,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "state": {
                     "maxLength": 50,
                     "type": "string"
                   },
                   "type": {
-                    "maxLength": 50,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 50,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "verificationMethod": {
-                    "enum": [
-                      "inspection",
-                      "analysis",
-                      "demonstration",
-                      "test",
-                      "documentation"
-                    ],
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "inspection",
+                          "analysis",
+                          "demonstration",
+                          "test",
+                          "documentation"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "type": "object"
@@ -21678,34 +23904,73 @@
               "schema": {
                 "properties": {
                   "assignee": {
-                    "format": "uuid",
-                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "attributes": {
+                    "additionalProperties": {},
+                    "type": "object"
                   },
                   "commitMessage": {
                     "maxLength": 500,
                     "type": "string"
                   },
                   "description": {
-                    "maxLength": 10000,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 10000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "dueDate": {
-                    "format": "date-time",
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "format": "date-time",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "name": {
-                    "maxLength": 500,
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "priority": {
-                    "enum": [
-                      "low",
-                      "medium",
-                      "high",
-                      "critical"
-                    ],
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "low",
+                          "medium",
+                          "high",
+                          "critical"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "state": {
                     "maxLength": 50,
@@ -26477,6 +28742,7 @@
     },
     "/api/v1/workflows": {
       "get": {
+        "deprecated": true,
         "operationId": "getApiV1Workflows",
         "responses": {
           "400": {
@@ -26495,11 +28761,13 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "List lifecycle definitions",
         "tags": [
           "Workflows"
         ]
       },
       "post": {
+        "deprecated": true,
         "operationId": "postApiV1Workflows",
         "requestBody": {
           "content": {
@@ -27240,6 +29508,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Create a lifecycle definition",
         "tags": [
           "Workflows"
         ]
@@ -27247,6 +29516,7 @@
     },
     "/api/v1/workflows/{id}": {
       "delete": {
+        "deprecated": true,
         "operationId": "deleteApiV1WorkflowsById",
         "parameters": [
           {
@@ -27275,11 +29545,13 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Delete a lifecycle definition",
         "tags": [
           "Workflows"
         ]
       },
       "get": {
+        "deprecated": true,
         "operationId": "getApiV1WorkflowsById",
         "parameters": [
           {
@@ -27308,11 +29580,13 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Get a lifecycle definition",
         "tags": [
           "Workflows"
         ]
       },
       "put": {
+        "deprecated": true,
         "operationId": "putApiV1WorkflowsById",
         "parameters": [
           {
@@ -28053,6 +30327,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Update a lifecycle definition",
         "tags": [
           "Workflows"
         ]
@@ -28060,6 +30335,7 @@
     },
     "/api/v1/workflows/{id}/approvers": {
       "get": {
+        "deprecated": true,
         "operationId": "getApiV1WorkflowsByIdApprovers",
         "parameters": [
           {
@@ -28088,6 +30364,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "List the approvers of every state of a definition",
         "tags": [
           "Workflows"
         ]
@@ -28095,6 +30372,7 @@
     },
     "/api/v1/workflows/{id}/states/{stateId}/approvers": {
       "get": {
+        "deprecated": true,
         "operationId": "getApiV1WorkflowsByIdStatesByStateIdApprovers",
         "parameters": [
           {
@@ -28131,11 +30409,13 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "List the approvers of a state",
         "tags": [
           "Workflows"
         ]
       },
       "post": {
+        "deprecated": true,
         "operationId": "postApiV1WorkflowsByIdStatesByStateIdApprovers",
         "parameters": [
           {
@@ -28204,11 +30484,13 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Add an approver to a state",
         "tags": [
           "Workflows"
         ]
       },
       "put": {
+        "deprecated": true,
         "operationId": "putApiV1WorkflowsByIdStatesByStateIdApprovers",
         "parameters": [
           {
@@ -28289,6 +30571,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Replace the approvers of a state",
         "tags": [
           "Workflows"
         ]
@@ -28296,6 +30579,7 @@
     },
     "/api/v1/workflows/{id}/states/{stateId}/approvers/{approverId}": {
       "delete": {
+        "deprecated": true,
         "operationId": "deleteApiV1WorkflowsByIdStatesByStateIdApproversByApproverId",
         "parameters": [
           {
@@ -28340,11 +30624,13 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Remove a state approver",
         "tags": [
           "Workflows"
         ]
       },
       "patch": {
+        "deprecated": true,
         "operationId": "patchApiV1WorkflowsByIdStatesByStateIdApproversByApproverId",
         "parameters": [
           {
@@ -28407,6 +30693,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Update a state approver",
         "tags": [
           "Workflows"
         ]
@@ -28414,6 +30701,7 @@
     },
     "/api/v1/workflows/{id}/validate": {
       "post": {
+        "deprecated": true,
         "operationId": "postApiV1WorkflowsByIdValidate",
         "parameters": [
           {
@@ -28442,6 +30730,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Validate a lifecycle definition",
         "tags": [
           "Workflows"
         ]
@@ -28716,8 +31005,86 @@
         ]
       }
     },
+    "/api/v1/workspaces/{id}/convert-to-change-order": {
+      "post": {
+        "operationId": "postApiV1WorkspacesByIdConvertToChangeOrder",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "changeType": {
+                    "default": "ECO",
+                    "enum": [
+                      "ECO",
+                      "ECN",
+                      "Deviation",
+                      "MCO",
+                      "XCO"
+                    ],
+                    "type": "string"
+                  },
+                  "deleteWorkspace": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "ecoDescription": {
+                    "maxLength": 10000,
+                    "type": "string"
+                  },
+                  "ecoTitle": {
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ecoTitle"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Create a new change order carrying this workspace’s content",
+        "tags": [
+          "Workspaces"
+        ]
+      }
+    },
     "/api/v1/workspaces/{id}/convert-to-eco": {
       "post": {
+        "deprecated": true,
         "operationId": "postApiV1WorkspacesByIdConvertToEco",
         "parameters": [
           {
@@ -28787,7 +31154,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
-        "summary": "Create a new ECO carrying this workspace’s content",
+        "summary": "Create a new change order carrying this workspace’s content",
         "tags": [
           "Workspaces"
         ]
@@ -28879,8 +31246,71 @@
         ]
       }
     },
+    "/api/v1/workspaces/{id}/merge-to-change-order": {
+      "post": {
+        "operationId": "postApiV1WorkspacesByIdMergeToChangeOrder",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "deleteWorkspace": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "ecoId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "ecoId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Move this workspace’s content into an existing change order",
+        "tags": [
+          "Workspaces"
+        ]
+      }
+    },
     "/api/v1/workspaces/{id}/merge-to-eco": {
       "post": {
+        "deprecated": true,
         "operationId": "postApiV1WorkspacesByIdMergeToEco",
         "parameters": [
           {
@@ -28935,7 +31365,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
-        "summary": "Move this workspace’s content into an existing ECO",
+        "summary": "Move this workspace’s content into an existing change order",
         "tags": [
           "Workspaces"
         ]

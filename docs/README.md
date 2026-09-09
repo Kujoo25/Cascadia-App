@@ -8,11 +8,11 @@ This documentation covers the Cascadia PLM application architecture, features, A
 
 ## Getting Started
 
-| Document                                            | Description                                                |
-| --------------------------------------------------- | ---------------------------------------------------------- |
-| [Installation](./getting-started/installation.md)   | Local development setup (Node.js, PostgreSQL, environment) |
-| [Configuration](./getting-started/configuration.md) | Environment variables, runtime config, provider setup      |
-| [Quick Start](./getting-started/quick-start.md)     | First run, seed data, create your first items and ECO      |
+| Document                                            | Description                                                    |
+| --------------------------------------------------- | -------------------------------------------------------------- |
+| [Installation](./getting-started/installation.md)   | Local development setup (Node.js, PostgreSQL, environment)     |
+| [Configuration](./getting-started/configuration.md) | Environment variables, runtime config, provider setup          |
+| [Quick Start](./getting-started/quick-start.md)     | First run, seed data, create your first items and change order |
 
 ## Architecture
 
@@ -29,10 +29,10 @@ This documentation covers the Cascadia PLM application architecture, features, A
 | Document                                                                       | Description                                                                                                                                                  |
 | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [Item Types](./features/item-types.md)                                         | All 13 item types: Part, Document, Change Order, Requirement, Task, Work Instruction, Issue, Test Plan, Test Case, Software, Tool, Physical Part, Work Order |
-| [Change Management](./features/change-management.md)                           | ECO workflow, change actions, impact analysis, conflict detection                                                                                            |
+| [Change Management](./features/change-management.md)                           | Change-order lifecycle, change actions, impact analysis, conflict detection                                                                                  |
 | [BOM Management](./features/bom-management.md)                                 | Bill of Materials hierarchies, where-used, cross-design references                                                                                           |
 | [File Vault](./features/file-vault.md)                                         | Document control, check-in/out, vault storage, lock hierarchy                                                                                                |
-| [Workflow Engine](./features/workflow-engine.md)                               | Lifecycle management, workflow definitions, approval voting                                                                                                  |
+| [Lifecycle Engine](./features/workflow-engine.md)                              | Lifecycle definitions, instances, transitions, approval voting                                                                                               |
 | [Versioning](./features/versioning.md)                                         | Git-style versioning, branches, commits, tags, revision schemes                                                                                              |
 | [Programs & Designs](./features/programs-and-designs.md)                       | Organizational hierarchy, program membership, design cloning                                                                                                 |
 | [Search](./features/search.md)                                                 | Enterprise search, type-specific search, filtering                                                                                                           |
@@ -54,17 +54,17 @@ Separately-licensed functionality, enabled per instance via `CASCADIA_PACKAGES`.
 
 | Document                                               | Description                                                                              |
 | ------------------------------------------------------ | ---------------------------------------------------------------------------------------- |
-| [Advanced Auditing](./features/advanced-auditing.md)   | CAC/PIV digital signatures on workflow approvals, hash-chained audit trail               |
+| [Advanced Auditing](./features/advanced-auditing.md)   | CAC/PIV digital signatures on approvals, hash-chained audit trail                        |
 | [Odoo ERP Integration](./features/odoo-integration.md) | Pushes released parts and BOMs into an Odoo 19+ ERP on release, plus manual/dry-run sync |
 
 ## Administration
 
-| Document                                      | Description                                                    |
-| --------------------------------------------- | -------------------------------------------------------------- |
-| [User Management](./admin/user-management.md) | Users, roles, authentication, sessions, account lockout        |
-| [Access Control](./admin/access-control.md)   | RBAC, program isolation, permission model                      |
-| [System Settings](./admin/system-settings.md) | Runtime configuration, lifecycle, workflow, AI, vault settings |
-| [Background Jobs](./admin/background-jobs.md) | RabbitMQ job system, job types, monitoring, troubleshooting    |
+| Document                                      | Description                                                 |
+| --------------------------------------------- | ----------------------------------------------------------- |
+| [User Management](./admin/user-management.md) | Users, roles, authentication, sessions, account lockout     |
+| [Access Control](./admin/access-control.md)   | RBAC, program isolation, permission model                   |
+| [System Settings](./admin/system-settings.md) | Runtime configuration, lifecycle, AI, vault settings        |
+| [Background Jobs](./admin/background-jobs.md) | RabbitMQ job system, job types, monitoring, troubleshooting |
 
 ## API Reference
 
@@ -77,8 +77,8 @@ All routes are mounted under `/api/v1/`.
 | [Items](./api/items.md)                  | Items CRUD, batch operations, version-context retrieval          |
 | [Relationships](./api/relationships.md)  | BOM/relationship CRUD, batch create, where-used                  |
 | [Files](./api/files.md)                  | File upload/download, check-in/out, lock hierarchy               |
-| [Change Orders](./api/change-orders.md)  | ECO lifecycle, workflow transitions, impact assessment           |
-| [Workflows](./api/workflows.md)          | Workflow definitions, transitions, approval voting               |
+| [Change Orders](./api/change-orders.md)  | Change-order lifecycle, transitions, impact assessment           |
+| [Lifecycles](./api/workflows.md)         | Lifecycle definitions and state approvers (`/api/v1/lifecycles`) |
 | [Search](./api/search.md)                | Enterprise search and type-specific search endpoints             |
 | [Import](./api/import.md)                | Bulk import API (parts, documents, issues, BOM)                  |
 | [SysML v2](./api/sysml.md)               | Standards-based SysML v2 interoperability API                    |

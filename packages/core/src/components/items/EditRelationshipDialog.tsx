@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/Input'
 import { Label } from '@/components/ui/Label'
 import { BOM_RELATIONSHIP_TYPE } from '@/components/items/bom-target-scope'
 import { isValidQuantity } from '@/components/items/bom-quantity'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 import { useInvalidateResources } from '@/lib/query'
 import { cn } from '@/lib/utils'
@@ -55,7 +55,7 @@ export function EditRelationshipDialog({
   relationship,
   onSuccess,
 }: EditRelationshipDialogProps) {
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   const [quantity, setQuantity] = useState(relationship.quantity ?? '')
   const [referenceDesignator, setReferenceDesignator] = useState(
@@ -90,14 +90,7 @@ export function EditRelationshipDialog({
       onOpenChange(false)
       onSuccess?.()
     } catch (error) {
-      alert({
-        title: 'Failed to update relationship',
-        description:
-          error instanceof Error
-            ? error.message
-            : 'Failed to update relationship',
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Failed to update relationship' })
     } finally {
       setSaving(false)
     }

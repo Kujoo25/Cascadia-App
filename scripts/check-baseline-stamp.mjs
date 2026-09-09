@@ -35,7 +35,15 @@
  * Running it for *every* prefix is also what keeps the placement honest as
  * migrations accumulate: a new migration that `db:baseline` cannot tell apart
  * from the one before it would be identified as its predecessor, stamp one row
- * short, and fail the comparison here.
+ * short, and fail the comparison here — unless the dump cannot tell them apart
+ * either. A migration that changes rows and nothing else leaves no trace in
+ * the schema for either reading to find, so placing the database at its
+ * predecessor, saying so, and leaving it for `db:migrate` *is* the honest
+ * answer: the prefix scenarios expect exactly that, and `db:check-backfills`
+ * proves such a migration survives being applied to a database that already
+ * carries its effect. The dump is the judge of which case a migration is. It
+ * renders the types, defaults and definitions `db:baseline` does not compare,
+ * so a migration invisible to `db:baseline` but visible here still fails.
  *
  * The refusals are asserted too — an already-corrupted journal, a schema ahead
  * of its journal, an empty database — because a check that only proves the
@@ -251,6 +259,11 @@ try {
   )
 
   console.log('Push-to-M, baseline, migrate — for every prefix:')
+  // Where the stamp must stop for the prefix under test: the newest migration
+  // in it that changed the schema. A migration whose dump equals the previous
+  // prefix's changed rows only, and the schema cannot vouch for it (header).
+  let previousDump = ''
+  let placement = 0
   for (let m = 0; m < migrations.length; m += 1) {
     const upTo = migrations.slice(0, m + 1)
     const tag = migrations[m].tag
@@ -258,6 +271,12 @@ try {
     await scenario(`at ${tag} (${m + 1}/${migrations.length})`, async () => {
       await resetDatabase(sql)
       for (const migration of upTo) await applyMigrationSql(sql, migration)
+      const current = dump()
+      const rowsOnly = m > 0 && current === previousDump
+      previousDump = current
+      if (!rowsOnly) placement = m
+      const placedAt = migrations[placement].tag
+      const satisfied = placement + 1
 
       // --check reports the right position and writes nothing.
       const checked = baseline(['--check'])
@@ -265,13 +284,26 @@ try {
         checked.status === 0,
         `db:baseline --check exited ${checked.status}:\n${checked.output}`,
       )
-      expectIncludes(checked.output, `Live schema matches ${tag}`, '--check')
+      expectIncludes(
+        checked.output,
+        `Live schema matches ${placedAt}`,
+        '--check',
+      )
+      if (rowsOnly) {
+        // The operator is told why the stamp stops short of a migration whose
+        // SQL has, in this scenario, actually run.
+        expectIncludes(
+          checked.output,
+          `${tag} changes rows, not the schema`,
+          '--check on a rows-only migration',
+        )
+      }
       expect(
         (await journalRows(sql)) === null,
         '--check created the journal table; it must write nothing.',
       )
 
-      // The stamp records exactly the prefix the database satisfies.
+      // The stamp records exactly the prefix the schema vouches for.
       const stamped = baseline()
       expect(
         stamped.status === 0,
@@ -280,12 +312,12 @@ try {
       const rows = await journalRows(sql)
       expect(rows !== null, 'db:baseline recorded no journal at all.')
       expect(
-        rows.length === m + 1,
-        `db:baseline recorded ${rows.length} row(s); the database satisfies ` +
-          `${m + 1}. Stamping past what a database contains is the bug this ` +
-          'check exists for.',
+        rows.length === satisfied,
+        `db:baseline recorded ${rows.length} row(s); the schema vouches for ` +
+          `${satisfied}. Stamping past what a database contains is the bug ` +
+          'this check exists for.',
       )
-      const wanted = upTo.map((migration) => migration.hash)
+      const wanted = upTo.slice(0, satisfied).map((migration) => migration.hash)
       expect(
         rows.every((row, i) => row.hash === wanted[i]),
         'db:baseline recorded the wrong migrations for this prefix.',
@@ -299,7 +331,7 @@ try {
       )
       expectIncludes(again.output, 'Already recorded through', 're-run')
       expect(
-        (await journalRows(sql)).length === m + 1,
+        (await journalRows(sql)).length === satisfied,
         're-running db:baseline changed the journal.',
       )
 
@@ -347,8 +379,8 @@ try {
       expectIncludes(result.output, 'left alone', 'the stamp')
       const rows = await journalRows(sql)
       expect(
-        rows.length === migrations.length,
-        `recorded ${rows.length} row(s); expected ${migrations.length}.`,
+        rows.length === placement + 1,
+        `recorded ${rows.length} row(s); expected ${placement + 1}.`,
       )
     },
   )

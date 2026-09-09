@@ -105,8 +105,8 @@ const confirmationResponseSchema = z.object({
   // Error message if operation failed
   error: z.string().optional(),
   // Suggests creating an ECO when one is required
-  suggestCreateEco: z.boolean().optional(),
-  suggestEcoMessage: z.string().optional(),
+  suggestCreateChangeOrder: z.boolean().optional(),
+  suggestChangeOrderMessage: z.string().optional(),
 })
 
 // ============================================================================

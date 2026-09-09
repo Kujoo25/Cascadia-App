@@ -10,8 +10,21 @@ export type ErrorSeverity = 'silent' | 'warning' | 'error' | 'critical'
 
 /**
  * How an error should be presented to the user.
+ *
+ * `'none'` means `handleError` shows nothing — either because the error is
+ * genuinely not worth interrupting for, or because the caller renders it
+ * itself from the `ApiError` that `handleError` returns (its `fieldErrors`
+ * carry the per-field detail a form needs).
+ *
+ * There used to be a fourth, `'inline'`, which every validation code mapped
+ * to. It meant "the form component renders this" — and no form component ever
+ * did, so `handleError`'s branch for it only wrote to the console and every
+ * server-side validation failure in the app was silent: the save did nothing
+ * and said nothing. It is gone rather than fixed, because `'none'` plus the
+ * returned error already expresses "the caller presents this" without a
+ * branch that looks handled and is not.
  */
-export type ErrorPresentation = 'none' | 'inline' | 'toast' | 'dialog'
+export type ErrorPresentation = 'none' | 'toast' | 'dialog'
 
 /**
  * Strategy for handling a specific error type.
@@ -37,22 +50,23 @@ const defaultStrategies: Partial<Record<ErrorCode, ErrorHandlingStrategy>> = {
     maxRetries: 3,
   },
 
-  // Warning - inline indicator, non-blocking
+  // Warning - non-blocking toast. `handleError` names the offending fields in
+  // it, so "Validation failed" alone never reaches the user.
   [ErrorCode.VALIDATION_FAILED]: {
     severity: 'warning',
-    presentation: 'inline',
+    presentation: 'toast',
   },
   [ErrorCode.VALIDATION_FIELD_REQUIRED]: {
     severity: 'warning',
-    presentation: 'inline',
+    presentation: 'toast',
   },
   [ErrorCode.VALIDATION_FIELD_INVALID]: {
     severity: 'warning',
-    presentation: 'inline',
+    presentation: 'toast',
   },
   [ErrorCode.VALIDATION_SCHEMA_MISMATCH]: {
     severity: 'warning',
-    presentation: 'inline',
+    presentation: 'toast',
   },
 
   // Error - toast notification
@@ -126,9 +140,13 @@ const defaultStrategies: Partial<Record<ErrorCode, ErrorHandlingStrategy>> = {
     severity: 'critical',
     presentation: 'dialog',
   },
+  // The login form parses the response itself and renders the message under
+  // the password field, never reaching `handleError`. This strategy is for
+  // everywhere else a credential check can fail — re-authenticating to sign,
+  // for one — where a toast is the whole of the report.
   [ErrorCode.AUTH_INVALID_CREDENTIALS]: {
     severity: 'warning',
-    presentation: 'inline',
+    presentation: 'toast',
   },
   [ErrorCode.AUTH_SESSION_EXPIRED]: {
     severity: 'critical',

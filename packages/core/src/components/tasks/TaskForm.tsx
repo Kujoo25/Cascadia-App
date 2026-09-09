@@ -228,7 +228,7 @@ export function TaskForm({
                 value={
                   field.state.value instanceof Date
                     ? field.state.value.toISOString().slice(0, 16)
-                    : field.state.value
+                    : (field.state.value ?? '')
                 }
                 onChange={(e) => field.handleChange(e.target.value)}
                 onBlur={field.handleBlur}

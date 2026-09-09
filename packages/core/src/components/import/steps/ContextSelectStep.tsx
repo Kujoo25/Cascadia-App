@@ -20,6 +20,7 @@ import {
   designStatusQuery,
   programListQuery,
 } from '@/lib/query'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 interface Design {
   id: string
@@ -289,7 +290,7 @@ export function ContextSelectStep({
                 {availableBranches.map((branch) => (
                   <SelectItem key={branch.id} value={branch.id}>
                     <div className="flex items-center gap-2">
-                      {branch.branchType === 'eco' && (
+                      {branch.branchType === BRANCH_TYPES.changeOrder && (
                         <Badge variant="default" className="text-xs">
                           ECO
                         </Badge>
@@ -336,7 +337,7 @@ export function ContextSelectStep({
                 className={`text-xs ${isPostRelease ? 'text-amber-700 dark:text-amber-300' : 'text-green-700 dark:text-green-300'}`}
               >
                 {isPostRelease
-                  ? 'New parts must be imported through an ECO or workspace branch.'
+                  ? 'New parts must be imported through a change-order or workspace branch.'
                   : 'Parts can be imported directly to this design.'}
               </p>
             </div>

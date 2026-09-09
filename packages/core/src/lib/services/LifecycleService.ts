@@ -5,28 +5,23 @@
  * Service for lifecycle-specific operations.
  *
  * Unified Lifecycle Model:
- * - Free lifecycles: Self-controlled with manual transitions (Programs, Projects, Designs)
- * - Driven lifecycles: ECO-controlled, declares states only (Parts, Documents, Requirements)
- * - Driving lifecycles: Controls Driven lifecycles via TransitionDrivenItem actions (Change Orders)
+ * - Free: self-controlled, with manual transitions (Issues, Tools)
+ * - Driven: change-order-controlled; declares its states and the
+ *   changeActionMappings the merge applies at release (Parts, Documents,
+ *   Requirements)
+ * - Driving: a change-order approval workflow whose completion in a
+ *   `finalKind: 'release'` state triggers the release (ECO workflows)
  *
- * Legacy Support:
- * Also handles changeActionMappings for backward compatibility with existing lifecycles.
+ * changeActionMappings are the one mechanism by which a change order moves an
+ * item's state; this service resolves them.
  */
 
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
-import { workflowDefinitions } from '../db/schema/workflows'
+import { lifecycleDefinitions } from '../db/schema/lifecycles'
 import { ItemTypeRegistry } from '../items/registry'
-import {
-  AlreadyExistsError,
-  InternalError,
-  NotFoundError,
-  ValidationError,
-} from '../errors'
-import {
-  resolveLifecycleType,
-  resolveStoredLifecycleType,
-} from '../workflows/normalize'
+import { InternalError, ValidationError } from '../errors'
+import { resolveLifecycleType } from '../lifecycles/normalize'
 import { RevisionService } from './RevisionService'
 import type {
   ActionValidationResult,
@@ -39,12 +34,12 @@ import type {
   StateChangeActionMapping,
 } from '../types/lifecycle'
 import type {
-  FinalKind,
+  InstanceTransition,
+  LifecycleDefinition,
+  LifecycleState,
+  LifecycleTransition,
   LifecycleType,
-  WorkflowDefinition,
-  WorkflowState,
-  WorkflowTransition,
-} from '../workflows/types'
+} from '../lifecycles/types'
 import { serviceLogger } from '@/lib/logging/logger'
 
 /**
@@ -68,11 +63,27 @@ export interface ResolvedActionStates {
 export interface ResolvedLifecycle {
   id: string
   name: string
-  states: Array<WorkflowState>
-  transitions?: Array<WorkflowTransition>
+  states: Array<LifecycleState>
+  transitions?: Array<LifecycleTransition>
   changeActionMappings: ChangeActionMappings
   revisionScheme?: RevisionScheme
   phases?: Array<LifecyclePhaseConfig>
+}
+
+/**
+ * What governs one item: `getGoverningDefinitionForItem`'s answer. The
+ * transitions may be instance-level ones when the item runs a flexible
+ * workflow with a structure of its own.
+ */
+export interface ItemGoverningDefinition {
+  id: string
+  name: string
+  lifecycleType: LifecycleType
+  states: Array<LifecycleState>
+  transitions: Array<LifecycleTransition | InstanceTransition>
+  phases: Array<LifecyclePhaseConfig>
+  revisionScheme: RevisionScheme | null
+  changeActionMappings: ChangeActionMappings
 }
 
 export class LifecycleService {
@@ -544,29 +555,17 @@ export class LifecycleService {
    * initial state — there is deliberately no literal fallback.
    */
   /**
-   * The state list governing items of this type: the item lifecycle's states,
-   * or — for Driving-governed types (ChangeOrder), which
-   * `getLifecycleForType` deliberately never resolves as an item lifecycle —
-   * the raw assigned Driving definition's states, since a ChangeOrder item's
-   * state mirrors its workflow instance.
+   * The state list governing items of this type: the assigned definition's
+   * states whatever its kind. For Driving-governed types (ChangeOrder), which
+   * `getLifecycleForType` deliberately never resolves as an item lifecycle,
+   * that is the raw Driving definition, since a ChangeOrder item's state
+   * mirrors its workflow instance.
    */
   private static async getGoverningStates(
     itemType: string,
   ): Promise<Array<{ id: string; isInitial?: boolean }> | undefined> {
-    const lifecycle = await ItemTypeRegistry.getLifecycleForType(itemType)
-    if (lifecycle?.states) return lifecycle.states
-
-    const definitionId = ItemTypeRegistry.getLifecycleDefinitionId(itemType)
-    if (!definitionId) return undefined
-    const [row] = await db
-      .select({ definition: workflowDefinitions.definition })
-      .from(workflowDefinitions)
-      .where(eq(workflowDefinitions.id, definitionId))
-      .limit(1)
-    return (
-      row?.definition as
-        { states?: Array<{ id: string; isInitial?: boolean }> } | undefined
-    )?.states
+    return (await ItemTypeRegistry.getAssignedDefinitionForType(itemType))
+      ?.states
   }
 
   /**
@@ -590,30 +589,14 @@ export class LifecycleService {
     id: string
     name: string
     lifecycleType: LifecycleType
-    states: Array<WorkflowState>
-    transitions: Array<WorkflowTransition>
+    states: Array<LifecycleState>
+    transitions: Array<LifecycleTransition>
     phases: Array<LifecyclePhaseConfig>
     revisionScheme: RevisionScheme | null
     changeActionMappings: ChangeActionMappings
   } | null> {
-    const lifecycle = await this.getLifecycleForItemType(itemType)
-    if (lifecycle) {
-      return {
-        id: lifecycle.id,
-        name: lifecycle.name,
-        lifecycleType: await this.getLifecycleType(itemType),
-        states: lifecycle.states,
-        transitions: lifecycle.transitions ?? [],
-        phases: lifecycle.phases ?? [],
-        revisionScheme: lifecycle.revisionScheme ?? null,
-        changeActionMappings: lifecycle.changeActionMappings,
-      }
-    }
-
-    const definitionId = ItemTypeRegistry.getLifecycleDefinitionId(itemType)
-    if (!definitionId) return null
-    const { WorkflowService } = await import('../workflows/WorkflowService')
-    const definition = await WorkflowService.getById(definitionId)
+    const definition =
+      await ItemTypeRegistry.getAssignedDefinitionForType(itemType)
     if (!definition) return null
     return {
       id: definition.id,
@@ -640,8 +623,10 @@ export class LifecycleService {
     itemType: string,
     state: string,
   ): Promise<void> {
-    const states = await this.getGoverningStates(itemType)
-    if (!states) return // no governing definition to validate against
+    // Every state the type can hold, not only the governing definition's: a
+    // change order runs whichever definition its change type maps to
+    const states = await this.getRenderableStates(itemType)
+    if (states.length === 0) return // no governing definition to validate against
     if (!states.some((s) => s.id === state)) {
       throw new ValidationError(
         `'${state}' is not a state of the ${itemType} lifecycle. Valid states: ${states
@@ -664,6 +649,81 @@ export class LifecycleService {
     return initialState.id
   }
 
+  /**
+   * The definition governing one item, for presentation and for reading a
+   * state's own flags: the workflow instance the item is actually running
+   * when it has one — with the instance's own states and transitions for a
+   * flexible workflow — otherwise the type's governing definition.
+   *
+   * The type-level answer is wrong for a change order whose change type maps
+   * to a definition other than the type's `lifecycleDefinitionId`
+   * (`lifecyclesByChangeType`; XCO runs the flexible definition): its `state`
+   * mirrors its instance, and the type's definition need not contain the id.
+   */
+  static async getGoverningDefinitionForItem(item: {
+    id: string
+    itemType: string
+  }): Promise<ItemGoverningDefinition | null> {
+    const { LifecycleInstanceService } =
+      await import('../lifecycles/LifecycleInstanceService')
+    const instance = await LifecycleInstanceService.getInstanceByItemId(item.id)
+    if (!instance) return this.getGoverningDefinition(item.itemType)
+
+    const structure = await LifecycleInstanceService.getEffectiveStructure(
+      instance.id,
+    )
+    const definition = structure.definition
+    return {
+      id: definition.id,
+      name: definition.name,
+      lifecycleType: resolveLifecycleType(definition),
+      states: structure.states,
+      transitions: structure.transitions,
+      phases:
+        (definition as { phases?: Array<LifecyclePhaseConfig> }).phases ?? [],
+      revisionScheme:
+        (definition as { revisionScheme?: RevisionScheme }).revisionScheme ??
+        null,
+      changeActionMappings: definition.changeActionMappings ?? {},
+    }
+  }
+
+  /**
+   * Every state an item of this type can hold, for rendering: the governing
+   * definition's states plus, for a type whose change types map to further
+   * Driving definitions (`lifecyclesByChangeType`), those definitions' states.
+   * A list of change orders spans all of them, and a badge that knew only the
+   * type's `lifecycleDefinitionId` could not name an XCO's states at all.
+   * First seen wins on id, so the governing definition's colours and flags
+   * take precedence.
+   */
+  static async getRenderableStates(
+    itemType: string,
+  ): Promise<Array<LifecycleState>> {
+    const governing = await this.getGoverningDefinition(itemType)
+    const states: Array<LifecycleState> = governing ? [...governing.states] : []
+    const seen = new Set(states.map((s) => s.id))
+
+    const mapped =
+      ItemTypeRegistry.getRuntimeConfig(itemType)?.lifecyclesByChangeType
+    if (!mapped) return states
+
+    const { LifecycleDefinitionService } =
+      await import('../lifecycles/LifecycleDefinitionService')
+    const definitionIds = [...new Set(Object.values(mapped))].filter(
+      (id): id is string => typeof id === 'string' && id !== governing?.id,
+    )
+    for (const definitionId of definitionIds) {
+      const definition = await LifecycleDefinitionService.getById(definitionId)
+      for (const state of definition?.states ?? []) {
+        if (seen.has(state.id)) continue
+        seen.add(state.id)
+        states.push(state)
+      }
+    }
+    return states
+  }
+
   // ============================================
   // Phase Resolution Methods
   // ============================================
@@ -673,7 +733,7 @@ export class LifecycleService {
    * Uses the state's phaseId to look up the phase definition.
    */
   static getPhaseForState(
-    lifecycle: ResolvedLifecycle | WorkflowDefinition,
+    lifecycle: ResolvedLifecycle | LifecycleDefinition,
     stateId: string,
   ): LifecyclePhaseConfig | undefined {
     const phases = lifecycle.phases
@@ -692,7 +752,7 @@ export class LifecycleService {
    * Resolution order: phase override > lifecycle default > undefined (alpha fallback)
    */
   static getRevisionSchemeForState(
-    lifecycle: ResolvedLifecycle | WorkflowDefinition,
+    lifecycle: ResolvedLifecycle | LifecycleDefinition,
     stateId: string,
   ): RevisionScheme | undefined {
     // Check phase-level override
@@ -710,7 +770,7 @@ export class LifecycleService {
    * Returns info about the from/to phases if they differ.
    */
   static crossesPhase(
-    lifecycle: ResolvedLifecycle | WorkflowDefinition,
+    lifecycle: ResolvedLifecycle | LifecycleDefinition,
     fromStateId: string,
     toStateId: string,
   ): {
@@ -738,18 +798,25 @@ export class LifecycleService {
   // ============================================
 
   /**
-   * Get the lifecycle type for an item type.
-   * Returns the lifecycleType from the assigned lifecycle definition.
+   * The lifecycle kind of an item type — Free, Driven or Driving — read from
+   * the definition assigned to it, whatever that definition is. `null` when
+   * the type has nothing assigned or the assignment matches no row: callers
+   * decide what an unknown kind means, and the one guarding released data
+   * (`isBranchProtectionExempt`) treats it as ECO-controlled.
    *
-   * @param itemType - The type of item (Part, Document, etc.)
-   * @returns The lifecycle type (Free, Driven, Driving), or 'Free' as fallback
+   * This used to answer 'Free' for anything the registry did not resolve as
+   * an item lifecycle, which covered three different situations — nothing
+   * assigned, a Driving assignment (deliberately not an item lifecycle), and
+   * a failed lookup — and 'Free' is the kind branch protection exempts. A
+   * failed lookup now propagates from the registry; the other two are told
+   * apart here.
    */
-  static async getLifecycleType(itemType: string): Promise<LifecycleType> {
-    const lifecycle = await ItemTypeRegistry.getLifecycleForType(itemType)
-    if (!lifecycle) {
-      return 'Free'
-    }
-    return resolveLifecycleType(lifecycle)
+  static async getLifecycleType(
+    itemType: string,
+  ): Promise<LifecycleType | null> {
+    const definition =
+      await ItemTypeRegistry.getAssignedDefinitionForType(itemType)
+    return definition ? resolveLifecycleType(definition) : null
   }
 
   /**
@@ -761,10 +828,10 @@ export class LifecycleService {
   static async getDrivers(lifecycleId: string): Promise<Array<string>> {
     const result = await db
       .select({
-        drivers: workflowDefinitions.drivers,
+        drivers: lifecycleDefinitions.drivers,
       })
-      .from(workflowDefinitions)
-      .where(eq(workflowDefinitions.id, lifecycleId))
+      .from(lifecycleDefinitions)
+      .where(eq(lifecycleDefinitions.id, lifecycleId))
       .limit(1)
 
     const row = result.at(0)
@@ -802,13 +869,13 @@ export class LifecycleService {
     id: string
     name: string
     lifecycleType: LifecycleType
-    states: Array<WorkflowState>
+    states: Array<LifecycleState>
     drivers: Array<string>
   } | null> {
     const result = await db
       .select()
-      .from(workflowDefinitions)
-      .where(eq(workflowDefinitions.id, lifecycleId))
+      .from(lifecycleDefinitions)
+      .where(eq(lifecycleDefinitions.id, lifecycleId))
       .limit(1)
 
     const row = result.at(0)
@@ -816,291 +883,15 @@ export class LifecycleService {
       return null
     }
 
-    const def = row.definition as {
-      states?: Array<WorkflowState>
-      definitionType?: string
-      lifecycleType?: LifecycleType
-    }
-
-    // JSONB speaks first; the column only when the JSONB is silent — its
-    // ADD-COLUMN default lied about legacy rows (normalize.ts has the rule)
-    const lifecycleType = resolveStoredLifecycleType(row.lifecycleType, def)
+    const def = row.definition as { states?: Array<LifecycleState> }
 
     return {
       id: row.id,
       name: row.name,
-      lifecycleType,
+      // The column is the one source of truth (migration 0006)
+      lifecycleType: row.lifecycleType,
       states: def.states ?? [],
       drivers: row.drivers ?? [],
     }
-  }
-
-  // ============================================
-  // Free-Lifecycle Transitions (remediation WI-2.2)
-  // ============================================
-
-  /**
-   * Transition a Free-lifecycle item (Issue, Tool, ...) to a new state.
-   *
-   * This is the only sanctioned write path for Free-lifecycle item state:
-   * the generic item update rejects state changes (WI-2.1), Driven items
-   * change state at ECO release, and change orders go through their own
-   * workflow endpoint. Lazily creates a workflow instance for the item (D6)
-   * and delegates to WorkflowService.transition(), so transition validation,
-   * guards, approvals, history, and the Phase 1 hardening all apply.
-   *
-   * Accepts the target state by id or display name.
-   *
-   * Goal-idempotent, deliberately: the operation names a target STATE, not a
-   * particular edge. When the item already sits in the target state — because
-   * it always did, or because a concurrent caller made exactly this move while
-   * this one was reading — the call succeeds as a no-op with zero writes
-   * rather than raising a ValidationError the caller can do nothing about.
-   * Only the eligibility rules above (unknown state, released lineage, change
-   * orders, an unfinished work-order traveler) reject, and they run before
-   * the idempotent return. A lost race that landed somewhere ELSE still
-   * fails, and absorption is keyed on the instance's observed state, never
-   * on an error message.
-   */
-  static async transitionFreeItem(
-    itemId: string,
-    toState: string,
-    userId: string,
-    comments?: string,
-  ): Promise<{ fromStateId: string; toStateId: string; toStateName: string }> {
-    const { ItemService } = await import('../items/services/ItemService')
-    const { WorkflowService } = await import('../workflows/WorkflowService')
-
-    const item = await ItemService.findById(itemId)
-    if (!item) {
-      throw new NotFoundError('Item', itemId)
-    }
-
-    if (item.itemType === 'ChangeOrder') {
-      throw new ValidationError(
-        'Change orders transition through their workflow endpoint, not the item transition endpoint',
-      )
-    }
-
-    const lifecycle = await ItemTypeRegistry.getLifecycleForType(item.itemType)
-    if (!lifecycle) {
-      throw new ValidationError(
-        `Item type "${item.itemType}" has no lifecycle assigned; its state cannot be transitioned`,
-      )
-    }
-
-    // Input tolerance at the API boundary only: callers may name the target
-    // by ID or display name, and it resolves to the ID immediately — every
-    // comparison and write below uses targetState.id
-    const states = lifecycle.states
-    const targetState = states.find(
-      (s) => s.id === toState || s.name === toState,
-    )
-    if (!targetState) {
-      throw new ValidationError(
-        `Unknown state "${toState}" for ${item.itemType}`,
-      )
-    }
-
-    // A Driven lifecycle may declare manual transitions among its
-    // pre-release states (review progress: Draft → Proposed → Approved). What
-    // it may never do manually is enter or leave released lineage — those
-    // states are entered only by a change-order release, and once there the
-    // version is immutable. Derived from the mappings, never from a name.
-    if (resolveLifecycleType(lifecycle) === 'Driven') {
-      const family = await this.getReleasedFamilyStates(item.itemType)
-      if (family.includes(targetState.id)) {
-        throw new ValidationError(
-          `${item.itemType} enters "${targetState.name}" only through a change-order release: add the item to a change order instead of transitioning it directly`,
-        )
-      }
-      if (item.state && family.includes(item.state)) {
-        throw new ValidationError(
-          `${item.itemType} is released lineage in "${item.state}" and cannot be transitioned directly; revise it through a change order`,
-        )
-      }
-    }
-
-    // Work orders carry completion semantics no other Free type has, and
-    // both halves live here rather than in the caller: the traveler gates
-    // entry into a `finalKind: 'complete'` state, and completedAt is stamped
-    // on the way in. Held as an unconditional arm beside the ChangeOrder one
-    // — a registry would let this vanish for any caller that had not
-    // imported the registration, which is the shape of the defect it would
-    // be guarding. Read off the resolved target's own flags — the
-    // same pair getFinalKind derives from — so a caller naming the state
-    // rather than its id is gated identically, and there is no second
-    // lookup to fall out of step with the transition's.
-    const completing =
-      item.itemType === 'WorkOrder' &&
-      targetState.isFinal === true &&
-      targetState.finalKind === 'complete'
-    if (completing) {
-      const { WorkOrderInstructionService } =
-        await import('./WorkOrderInstructionService')
-      await WorkOrderInstructionService.assertReadyForCompletion(itemId)
-    }
-
-    // Every success path reports through here, so no one of them can return
-    // an order that reached a complete state without its stamp. Entering the
-    // state stamps it; re-asserting a goal the order already holds writes
-    // only to repair a stamp that is missing, never to slide the completion
-    // time of a record that is already closed. completedAt is a work_orders
-    // type field, not lifecycle-controlled, which is why it is its own write.
-    const settle = async (fromStateId: string, alreadyThere = false) => {
-      const stamped = (item as { completedAt?: Date | null }).completedAt
-      if (completing && !(alreadyThere && stamped)) {
-        await ItemService.update(
-          itemId,
-          { completedAt: new Date() } as never,
-          userId,
-        )
-      }
-      return {
-        fromStateId,
-        toStateId: targetState.id,
-        toStateName: targetState.name,
-      }
-    }
-
-    // Lazily create the instance: Free-lifecycle items get the workflow
-    // machinery on their first transition
-    let instance = await WorkflowService.getInstanceByItemId(itemId)
-    if (!instance) {
-      try {
-        instance = await WorkflowService.startInstance(lifecycle.id, itemId, {
-          actorId: userId,
-        })
-      } catch (error) {
-        // `workflow_instances_one_active_per_item` makes the loser of a
-        // concurrent lazy create fail. Adopt the winner's instance and carry
-        // on — the PhysicalPartService.register shape. Matched on error
-        // class, never on a message.
-        if (!(error instanceof AlreadyExistsError)) throw error
-        instance = await WorkflowService.getInstanceByItemId(itemId)
-        if (!instance) throw error
-      }
-    }
-
-    // The goal already holds: another writer put the item where this call
-    // wanted it (or it never left). Return success without moving it — and
-    // before the adopt below, which would otherwise roll the instance
-    // BACKWARD onto this caller's stale item read and record a
-    // `state_adopted` regression that never happened.
-    if (instance.currentState === targetState.id) {
-      return settle(instance.currentState, true)
-    }
-
-    // Adopt the item's stored state if the instance diverges (items whose
-    // state was written before this endpoint existed start out of sync).
-    // Stored state is an ID (WI-5.2 normalized the data) — no name fallback.
-    const currentState = states.find((s) => s.id === item.state)
-    if (currentState && instance.currentState !== currentState.id) {
-      await WorkflowService.adoptInstanceState(
-        instance.id,
-        currentState.id,
-        userId,
-      )
-      instance = { ...instance, currentState: currentState.id }
-    }
-
-    const result = await WorkflowService.transition(
-      instance.id,
-      targetState.id,
-      userId,
-      comments,
-    )
-    if (!result.success) {
-      // A concurrent writer may have made exactly this move between the read
-      // above and the compare-and-swap inside transition(). Ask the instance
-      // where it actually is rather than parsing why the attempt failed: if
-      // it is in the target state, the goal is met and this call succeeded;
-      // anything else is a genuine rejection and still throws.
-      const settled = await WorkflowService.getInstance(instance.id)
-      if (settled && settled.currentState === targetState.id) {
-        return settle(result.fromState)
-      }
-      throw new ValidationError(result.error || 'Transition not allowed')
-    }
-
-    return settle(result.fromState)
-  }
-
-  /**
-   * List the manual transitions available to an item from its current state:
-   * every transition its Free lifecycle declares, or — for a Driven
-   * lifecycle — the declared pre-release edges (review progress), never one
-   * into released lineage, and nothing at all once the item is released
-   * lineage. Read-only — does not create a workflow instance, and guards are
-   * evaluated on the actual transition, so this is a UI hint, not a promise.
-   * Empty (with the lifecycleType) when there is nothing to offer, so the UI
-   * can hide the control.
-   */
-  static async getAvailableFreeTransitions(itemId: string): Promise<{
-    lifecycleType: LifecycleType | null
-    currentStateId: string | null
-    transitions: Array<{
-      id: string
-      name: string
-      toStateId: string
-      toStateName: string
-      toStateColor?: string
-      /** Whether the target ends the flow, and what that means there */
-      toStateIsFinal: boolean
-      toStateFinalKind: FinalKind | null
-    }>
-  }> {
-    const { ItemService } = await import('../items/services/ItemService')
-
-    const item = await ItemService.findById(itemId)
-    if (!item) {
-      throw new NotFoundError('Item', itemId)
-    }
-
-    const lifecycle = await ItemTypeRegistry.getLifecycleForType(item.itemType)
-    if (!lifecycle) {
-      return { lifecycleType: null, currentStateId: null, transitions: [] }
-    }
-
-    const lifecycleType = resolveLifecycleType(lifecycle)
-    if (lifecycleType === 'Driving') {
-      return { lifecycleType, currentStateId: null, transitions: [] }
-    }
-
-    // Stored state is an ID (WI-5.2) — no name fallback
-    const states = lifecycle.states
-    const currentState = states.find((s) => s.id === item.state)
-    if (!currentState) {
-      return { lifecycleType, currentStateId: null, transitions: [] }
-    }
-
-    // Released lineage is entered and left only by change-order release
-    const family =
-      lifecycleType === 'Driven'
-        ? await this.getReleasedFamilyStates(item.itemType)
-        : []
-    if (family.includes(currentState.id)) {
-      return { lifecycleType, currentStateId: currentState.id, transitions: [] }
-    }
-
-    const transitions = (lifecycle.transitions ?? [])
-      .filter(
-        (t) =>
-          t.fromStateId === currentState.id && !family.includes(t.toStateId),
-      )
-      .map((t) => {
-        const target = states.find((s) => s.id === t.toStateId)
-        return {
-          id: t.id,
-          name: t.name,
-          toStateId: t.toStateId,
-          toStateName: target?.name ?? t.toStateId,
-          toStateColor: target?.color,
-          toStateIsFinal: target?.isFinal ?? false,
-          toStateFinalKind: target?.isFinal ? (target.finalKind ?? null) : null,
-        }
-      })
-
-    return { lifecycleType, currentStateId: currentState.id, transitions }
   }
 }

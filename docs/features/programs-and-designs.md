@@ -567,8 +567,22 @@ GET /api/v1/designs/:id/structure
 
 ### How Roots and Orphans Are Determined
 
-- **Roots**: Part-type items with `inDesignStructure=true` that have no parent BOM relationship, plus cross-design reference items.
-- **Orphans**: Non-Part items (Documents, Requirements) and Parts with `inDesignStructure=false`. Child parts that have a parent are NOT orphans.
+- **Roots**: Parts that are _designated_ top-level parts of the design (`inDesignStructure=true`) and that no BOM line in the design points at, plus cross-design reference items.
+- **Orphans** (the Structure tab's "Non-Structure Items"): every non-Part item (Documents, Requirements, …), and every Part that is neither a root nor a child of one.
+
+A part is a top-level part only because something designated it:
+
+| Gesture                                                              | Effect on `inDesignStructure`                             |
+| -------------------------------------------------------------------- | --------------------------------------------------------- |
+| Creating a Part in a design (`POST /api/v1/items` with `designId`)   | set — the new part is a root until something nests it     |
+| Adding a part from another design (`POST /api/v1/designs/:id/items`) | set on the copied subtree's root, cleared on its children |
+| "Add to Structure" (`PATCH /api/v1/designs/:id/items`)               | set                                                       |
+| "Remove from Structure" (`DELETE /api/v1/designs/:id/items`)         | cleared                                                   |
+| Nesting the part under a parent in its own design (a BOM line)       | cleared                                                   |
+
+Nesting clears the designation so that removing the line later does not promote the child: a part whose only parent dropped it is listed with the non-structure items, where "Add to Structure" makes it a root on purpose. The column defaults to `false`, so a row minted by a path that never considered the structure is not silently a top-level part.
+
+On a change-order branch the clearing is confined to the branch: nesting a main row under a branch's working copy leaves main's row alone (main has not changed), and the release clears it when the line is merged. A child removed from an assembly's working copy on the branch therefore shows as a non-structure item on that branch, and stays one on main after the release.
 
 ### ECO Branch Resolution
 

@@ -30,6 +30,7 @@ import { CreateWorkspaceDialog } from '@/components/workspaces/CreateWorkspaceDi
 import { useInvalidateResources } from '@/lib/query'
 import { designBranchesQuery } from '@/lib/query/options/designs'
 import { itemCheckoutQuery } from '@/lib/query/options/checkout'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 interface Branch {
   id: string
@@ -110,7 +111,9 @@ export function CheckoutDialog({
     : undefined
 
   // Group branches by type
-  const ecoBranches = branches.filter((b) => b.branchType === 'eco')
+  const changeOrderBranches = branches.filter(
+    (b) => b.branchType === BRANCH_TYPES.changeOrder,
+  )
   const workspaceBranches = branches.filter((b) => b.branchType === 'workspace')
 
   // Handle checkout
@@ -219,7 +222,7 @@ export function CheckoutDialog({
                 </label>
 
                 {/* Option: Existing ECO */}
-                {ecoBranches.length > 0 && (
+                {changeOrderBranches.length > 0 && (
                   <div
                     data-testid="checkout-option-eco"
                     className={`p-3 border rounded-lg cursor-pointer transition-colors ${
@@ -246,14 +249,14 @@ export function CheckoutDialog({
                           className="w-full mt-2"
                           data-testid="checkout-eco-branch-select"
                         >
-                          <SelectValue placeholder="Select ECO branch">
+                          <SelectValue placeholder="Select change-order branch">
                             {getSelectedBranchDisplay()}
                           </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectGroup>
-                            <SelectLabel>Active ECOs</SelectLabel>
-                            {ecoBranches.map((branch) => {
+                            <SelectLabel>Active change orders</SelectLabel>
+                            {changeOrderBranches.map((branch) => {
                               const status = branchStatuses.get(branch.id)
                               return (
                                 <SelectItem
@@ -391,15 +394,16 @@ export function CheckoutDialog({
                 )}
 
                 {/* No branches available */}
-                {ecoBranches.length === 0 && workspaceBranches.length === 0 && (
-                  <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-                    <p className="text-sm text-amber-800 dark:text-amber-200">
-                      No active ECO or workspace branches available for this
-                      design. Create a Change Order first, then check out items
-                      to it.
-                    </p>
-                  </div>
-                )}
+                {changeOrderBranches.length === 0 &&
+                  workspaceBranches.length === 0 && (
+                    <div className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                      <p className="text-sm text-amber-800 dark:text-amber-200">
+                        No active ECO or workspace branches available for this
+                        design. Create a Change Order first, then check out
+                        items to it.
+                      </p>
+                    </div>
+                  )}
               </div>
             </>
           )}

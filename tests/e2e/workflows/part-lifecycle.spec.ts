@@ -4,7 +4,7 @@
 /**
  * Part Lifecycle E2E Journey
  *
- * One journey, end to end, in the eco-workflow/bom-management style: create a
+ * One journey, end to end, in the change-order-workflow/bom-management style: create a
  * part through the UI, edit it through the UI, and read the server back after
  * each mutation. A page agreeing with itself proves nothing, so every UI step
  * here is checked against `/api/v1/parts/:id`, and the last one against the

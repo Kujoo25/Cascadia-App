@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { and, desc, eq, inArray, isNotNull, ne } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm'
 import { db } from '../db'
 import { withSerializableRetry } from '../db/retry'
 import {
   branchItems,
   changeOrderDesigns,
+  changeOrders,
   itemRelationships,
   items,
+  lifecycleInstances,
   software,
-  workflowInstances,
 } from '../db/schema'
 import {
   InternalError,
@@ -41,6 +42,7 @@ import type { UpstreamChangeItem, commits } from '../db/schema'
 import type { ChangeAction, ChangeOrder } from '../items/types/change-order'
 import { serviceLogger } from '@/lib/logging/logger'
 import { takeFirst } from '@/lib/db/take-first'
+import { BRANCH_TYPES, TAG_TYPES } from '@/lib/versioning/branch-types'
 
 // ============================================
 // Types
@@ -127,9 +129,25 @@ function isKnownChangeAction(action: string): action is ChangeAction {
   return changeActionSchema.safeParse(action).success
 }
 
-/** A change order's association with one design, as `getEcoDesigns` returns it. */
-type EcoDesignRecord = Awaited<
-  ReturnType<typeof ChangeOrderService.getEcoDesigns>
+/**
+ * The change order named with its kind — "MCO-001 (MCO)" — for the text a
+ * release leaves behind: the release and merge commits, the baseline tag,
+ * the superseded-PDF watermark. Every one of them said "ECO" for every kind
+ * of change order; existing rows keep their text.
+ */
+function releaseLabel(changeOrder: {
+  itemNumber?: string | null
+  changeType?: string | null
+}): string {
+  const number = changeOrder.itemNumber ?? 'change order'
+  return changeOrder.changeType
+    ? `${number} (${changeOrder.changeType})`
+    : number
+}
+
+/** A change order's association with one design, as `getChangeOrderDesigns` returns it. */
+type ChangeOrderDesignRecord = Awaited<
+  ReturnType<typeof ChangeOrderService.getChangeOrderDesigns>
 >[number]
 
 /** One item a release recorded, for the design's release commit. */
@@ -150,23 +168,43 @@ interface ReleasedItemsForDesign {
 // ============================================
 
 /**
- * Narrow a nullable action-target state at a site that already validated the
- * action via `canApplyAction`. A null here means the lifecycle stopped
- * defining the action between intake and merge — surface that as the
- * validation failure it is rather than writing a null state.
+ * The item a change action acts on: the fields the action reads. Both
+ * release passes hold one from `ItemService.findById`, the preview holds the
+ * raw row `getAffectedItems` attaches.
  */
-function requireActionState(
-  value: string | null,
-  itemType: string,
-  action: string,
-): string {
-  if (value === null) {
-    throw new ValidationError(
-      `The ${itemType} lifecycle no longer defines a "${action}" action; remove the affected item or restore the mapping`,
-    )
-  }
-  return value
+interface ActionableItem {
+  id: string
+  masterId: string
+  itemNumber: string
+  itemType: string
+  state: string
+  revision: string
+  designId?: string | null
 }
+
+/**
+ * What one change action does to one affected item — or, on a dry run,
+ * would do. `applyChangeAction` is the single authority: both release passes
+ * act through it and `previewMerge` reports through it, so the preview a
+ * reviewer approves from and the release that follows cannot disagree.
+ */
+type ChangeActionOutcome =
+  /** The lifecycle refuses the action from the item's current state */
+  | { kind: 'invalid'; error: string }
+  /** Already done, or the mapping resolves to nothing: no write, nothing to report */
+  | { kind: 'noop' }
+  | {
+      kind: 'applied'
+      /** The row current for the master afterwards — a new row for `revise` */
+      itemId: string
+      itemNumber: string
+      /** The revision acted on: for a `revise`, main's current, not the pinned row's */
+      currentRevision: string
+      newRevision: string
+      changeType: 'added' | 'modified' | 'deleted'
+      /** Counted in the release's `totalRevisionsAssigned` */
+      assignedRevision: boolean
+    }
 
 /**
  * Service for change order merge/release workflow.
@@ -187,11 +225,11 @@ export class ChangeOrderMergeService {
     const instance = (
       await db
         .select({
-          workflowDefinitionId: workflowInstances.workflowDefinitionId,
+          workflowDefinitionId: lifecycleInstances.workflowDefinitionId,
         })
-        .from(workflowInstances)
-        .where(eq(workflowInstances.itemId, changeOrderId))
-        .orderBy(desc(workflowInstances.startedAt))
+        .from(lifecycleInstances)
+        .where(eq(lifecycleInstances.itemId, changeOrderId))
+        .orderBy(desc(lifecycleInstances.startedAt))
         .limit(1)
     )[0]
     const drivingLifecycleId = instance?.workflowDefinitionId
@@ -288,7 +326,8 @@ export class ChangeOrderMergeService {
   private static async findUnlistedBranchContent(
     changeOrderId: string,
   ): Promise<Array<{ itemMasterId: string; identifier: string }>> {
-    const ecoDesigns = await ChangeOrderService.getEcoDesigns(changeOrderId)
+    const ecoDesigns =
+      await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
     const branchIds = ecoDesigns
       .map((d) => d.branchId)
       .filter((id): id is string => id !== null)
@@ -454,75 +493,59 @@ export class ChangeOrderMergeService {
   }
 
   /**
-   * The revision a `revise` bumps from when there is no branch content to
-   * release — the counterpart to `resolveModifiedRevision` above.
+   * The version of a master in service — what an affected-item action acts
+   * on — or the listed row itself when the master has no current version.
    *
    * `change_order_affected_items.affected_item_id` pins the item *row* that
    * was current when the item was added to the change order, which can be
-   * months old: another change order may have released the master since. The
-   * three passes that act on affected items rather than branch content
-   * (`applyAffectedItems`, `applyRemainingActions`, and the affected-items arm
-   * of `previewMerge`) each bumped that pinned revision, so an ECO listing a
-   * master pinned at A while main had reached B minted B a second time and hit
-   * the `(itemNumber, revision, designId, itemType)` unique constraint. Pinned
-   * further behind it minted a letter *below* main's current one, which
-   * collides only where the letters in between still exist — and where they do
-   * not, `ItemService.revise` made that lower letter current, walking the
-   * master's revision backwards.
-   *
-   * These passes are also what makes the stale pin reachable: only the branch
-   * merge and the branchless working-copy arm call `supersedePriorVersions`,
-   * so a `revise` released through `ItemService.revise` leaves the row it
-   * replaced in its old state. A prior revision still sitting in the released
-   * state passes `canApplyAction`, and a second change order that pinned it
-   * releases it again.
+   * months old: another change order may have released the master since.
+   * Acting on the pinned row minted a `revise` a letter main already held —
+   * or one below it — would have created the new version from content a
+   * later release replaced, and, once the replaced version is retired into
+   * the old-version state, refuses the action outright for a state the
+   * version in service is not in.
    *
    * `isCurrent` is what marks the released version of a master: every writer
    * maintains it (`supersedePriorVersions`, `ItemService.revise`, the branch
    * merge), a working copy is created with it false and only takes it at
-   * release, and this pass's own "ensure it's tracked on the main branch" step
-   * copies it *into* `branch_items` — so main's tracking row is derived from
-   * this, never the other way round.
-   *
+   * release, and `trackOnMain` copies it *into* main's `branch_items` — so
+   * main's tracking row is derived from this, never the other way round.
    * That is why this asks the row and `resolveModifiedRevision` asks main's
    * `branch_items`: the branch path holds a branch row and needs main's
-   * counterpart to compare it against, while these passes hold no branch row
-   * and want only "the current version of this master". Asking directly is
-   * also the fresher answer — an item that has never been through a release
-   * has no main `branch_items` row at all. The two never answer for the same
-   * master anyway: `applyRemainingActions` skips what the branch merge
-   * handled, and the preview dedupes on `seenMasterIds`.
-   *
-   * Unlike `resolveModifiedRevision` there is no working-copy short-circuit:
-   * that arm exists because a non-working branch row *is* the row being
-   * released, and these passes have no branch row at all.
+   * counterpart to compare it against, while the affected-item path holds no
+   * branch row and wants only "the current version of this master". The two
+   * never answer for the same master: `applyRemainingActions` skips what the
+   * branch merge handled, and the preview dedupes on `seenMasterIds`.
    *
    * Call it before anything that clears `isCurrent` for the master —
    * `supersedePriorVersions`, `ItemService.revise` — or it reads the state
-   * this release is in the middle of writing. The pinned row is the last
-   * resort, and is what all three sites used unconditionally before.
+   * this release is in the middle of writing.
    */
-  private static async resolveAffectedRevision(
-    item: { masterId: string; revision: string },
-    scheme: RevisionScheme | undefined,
+  private static async currentVersion(
+    item: ActionableItem,
     tx?: TransactionClient,
-  ): Promise<{ baseRevision: string; newRevision: string }> {
-    const currentRevision = await (tx ?? db)
-      .select({ revision: items.revision })
+  ): Promise<ActionableItem> {
+    const current = await (tx ?? db)
+      .select({
+        id: items.id,
+        masterId: items.masterId,
+        itemNumber: items.itemNumber,
+        itemType: items.itemType,
+        state: items.state,
+        revision: items.revision,
+        designId: items.designId,
+      })
       .from(items)
       .where(and(eq(items.masterId, item.masterId), eq(items.isCurrent, true)))
       .limit(1)
-      .then((r) => r.at(0)?.revision)
+      .then((r) => r.at(0))
 
-    const baseRevision = currentRevision ?? item.revision
-    return {
-      baseRevision,
-      newRevision: RevisionService.getNextRevision(baseRevision, scheme),
-    }
+    return current ?? item
   }
 
   /**
-   * Retire the versions of a master that are currently in service, keeping one.
+   * Retire the versions of a master that are currently in service — keeping
+   * one, or none when the replacement does not exist yet.
    *
    * Scoped to `isCurrent = true` rather than every row of the master. An
    * unscoped update rewrote historical Obsolete revisions back to Superseded,
@@ -541,7 +564,7 @@ export class ChangeOrderMergeService {
    */
   private static async supersedePriorVersions(
     itemMasterId: string,
-    keepItemId: string,
+    keepItemId: string | null,
     supersededState: string | null,
     tx: TransactionClient,
   ): Promise<void> {
@@ -555,9 +578,306 @@ export class ChangeOrderMergeService {
         and(
           eq(items.masterId, itemMasterId),
           eq(items.isCurrent, true),
-          ne(items.id, keepItemId),
+          ...(keepItemId ? [ne(items.id, keepItemId)] : []),
         ),
       )
+  }
+
+  /**
+   * Apply one affected item's change action — or, on a dry run, work out
+   * what applying it would do — and say what happened.
+   *
+   * The one authority for release, revise, obsolete and promote. Both release
+   * passes act through it and `previewMerge` reports through it. Before, the
+   * two passes and the preview each implemented the four actions, and
+   * disagreed: a branchless `revise` stamped the version it replaced with the
+   * revise mapping's old-version state on one pass and not the other, and the
+   * preview left out the revisions and promotions the second pass applies.
+   *
+   * Idempotent by construction, because the release is retryable and a
+   * concurrent release of the same master is retried from a fresh snapshot:
+   * an item already in the action's target state is a noop, except that a
+   * `release` still owes a working-revision item its letter.
+   *
+   * Every action acts on the master's *current* version (`currentVersion`),
+   * not on the row pinned when the item was added to the change order. A
+   * `revise` with no branch content retires that version into the old-version
+   * state, the way the branch merge does, and creates the new version from it.
+   *
+   * ECO release is the one writer allowed to set lifecycle-controlled fields
+   * (state/revision/isCurrent) through ItemService.update, and it bypasses
+   * branch protection: the approval process already validated and authorized
+   * the changes. It also skips the per-item design-access check —
+   * authorization for a release is decided once, on the ECO, and a legitimate
+   * releaser may reach only a subset of a multi-design ECO's designs
+   * (resolveChangeOrderDesignScope), so re-asking per item would fail releases that
+   * are entirely valid.
+   *
+   * Every write takes `tx`; a dry run writes nothing.
+   */
+  private static async applyChangeAction(
+    action: ChangeAction,
+    pinned: ActionableItem,
+    states: ResolvedActionStates,
+    run:
+      | { dryRun: true }
+      | { dryRun?: false; userId: string; tx: TransactionClient },
+  ): Promise<ChangeActionOutcome> {
+    const write = run.dryRun ? null : run
+    // The version in service is what the action acts on — not the row pinned
+    // when the item was added, which a later release may have replaced
+    const item = await this.currentVersion(pinned, write?.tx)
+    const writeOptions = (tx: TransactionClient) => ({
+      bypassBranchProtection: true,
+      allowLifecycleFields: true,
+      skipAccessCheck: true,
+      tx,
+    })
+    // A null here means the lifecycle stopped defining the action between
+    // intake and release — surface that as the validation failure it is
+    // rather than writing a null state
+    const undefinedAction = (): ChangeActionOutcome => ({
+      kind: 'invalid',
+      error: `The ${item.itemType} lifecycle no longer defines a "${action}" action; remove the affected item or restore the mapping`,
+    })
+
+    const validation = await LifecycleService.canApplyAction(
+      item.itemType,
+      item.state,
+      action,
+    )
+    const targetState = await LifecycleService.getTargetState(
+      item.itemType,
+      action,
+    )
+    const alreadyInTarget = targetState !== null && item.state === targetState
+    if (!validation.valid) {
+      if (!alreadyInTarget) {
+        return {
+          kind: 'invalid',
+          error:
+            validation.error ??
+            `Cannot apply "${action}" to an item in "${item.state}"`,
+        }
+      }
+      // Already where the action would put it: nothing to redo — unless it
+      // is a release that still owes the item its revision letter
+      if (
+        action !== 'release' ||
+        !RevisionService.isWorkingRevision(item.revision)
+      ) {
+        return { kind: 'noop' }
+      }
+    }
+
+    const outcome = await (async (): Promise<ChangeActionOutcome> => {
+      switch (action) {
+        case 'release': {
+          const toState = states.releaseState
+          if (toState === null) return undefinedAction()
+          // The initial letter if the item has never carried a real revision
+          const needsRevision = RevisionService.isWorkingRevision(item.revision)
+          const newRevision = needsRevision
+            ? RevisionService.getInitialRevision(states.revisionScheme)
+            : item.revision
+          const updates: { state?: string; revision?: string } = {}
+          if (item.state !== toState) updates.state = toState
+          if (needsRevision) updates.revision = newRevision
+          if (Object.keys(updates).length === 0) return { kind: 'noop' }
+
+          if (write) {
+            await ItemService.update(
+              item.id,
+              updates,
+              write.userId,
+              writeOptions(write.tx),
+            )
+          }
+          return {
+            kind: 'applied',
+            itemId: item.id,
+            itemNumber: item.itemNumber,
+            currentRevision: item.revision,
+            newRevision,
+            changeType: 'added',
+            assignedRevision: true,
+          }
+        }
+
+        case 'revise': {
+          const newVersionState = states.reviseState
+          if (newVersionState === null) return undefinedAction()
+          const baseRevision = item.revision
+          const newRevision = RevisionService.getNextRevision(
+            baseRevision,
+            states.revisionScheme,
+          )
+          if (!write) {
+            return {
+              kind: 'applied',
+              itemId: item.id,
+              itemNumber: item.itemNumber,
+              currentRevision: baseRevision,
+              newRevision,
+              changeType: 'modified',
+              assignedRevision: true,
+            }
+          }
+
+          // Retire the version in service into the old-version state, then
+          // create the new version from it — from main's current content, so
+          // a revise pinned a release behind cannot revive what that release
+          // replaced
+          await this.supersedePriorVersions(
+            item.masterId,
+            null,
+            states.supersededState,
+            write.tx,
+          )
+          const newVersion = await ItemService.revise(
+            item.id,
+            newRevision,
+            write.userId,
+            write.tx,
+          )
+          if (!newVersion.id) {
+            throw new InternalError('ItemService.revise returned no row id')
+          }
+          await ItemService.update(
+            newVersion.id,
+            { state: newVersionState },
+            write.userId,
+            writeOptions(write.tx),
+          )
+          return {
+            kind: 'applied',
+            itemId: newVersion.id,
+            itemNumber: newVersion.itemNumber ?? item.itemNumber,
+            currentRevision: baseRevision,
+            newRevision,
+            changeType: 'modified',
+            assignedRevision: true,
+          }
+        }
+
+        case 'obsolete': {
+          const toState = states.obsoleteState
+          if (toState === null) return undefinedAction()
+          if (item.state === toState) return { kind: 'noop' }
+
+          if (write) {
+            await ItemService.update(
+              item.id,
+              { state: toState },
+              write.userId,
+              writeOptions(write.tx),
+            )
+          }
+          // Obsoleting keeps whatever revision the item already has
+          return {
+            kind: 'applied',
+            itemId: item.id,
+            itemNumber: item.itemNumber,
+            currentRevision: item.revision,
+            newRevision: item.revision,
+            changeType: 'deleted',
+            assignedRevision: false,
+          }
+        }
+
+        case 'promote': {
+          // The lifecycle authority; when it resolves to nothing there is
+          // nothing to do, and nothing to list
+          const promotion = await this.resolvePromote(item)
+          if (!promotion) return { kind: 'noop' }
+          const updates: { state: string; revision?: string } = {
+            state: promotion.toState,
+          }
+          if (promotion.revision !== item.revision) {
+            updates.revision = promotion.revision
+          }
+
+          if (write) {
+            await ItemService.update(
+              item.id,
+              updates,
+              write.userId,
+              writeOptions(write.tx),
+            )
+          }
+          return {
+            kind: 'applied',
+            itemId: item.id,
+            itemNumber: item.itemNumber,
+            currentRevision: item.revision,
+            newRevision: promotion.revision,
+            changeType: 'modified',
+            assignedRevision: promotion.assignedRevision,
+          }
+        }
+      }
+    })()
+
+    // Whatever happened to the master, main's structure must resolve to the
+    // version now in service
+    if (write && outcome.kind !== 'invalid') {
+      await this.trackOnMain(item, write.tx)
+    }
+    return outcome
+  }
+
+  /**
+   * Point main's tracking row for the master at its current version, creating
+   * the row when the item has never been through a release. The design
+   * structure on main resolves through `branch_items`, so a version minted by
+   * an affected-item action without this step is invisible there: main keeps
+   * pointing at the version it replaced.
+   */
+  private static async trackOnMain(
+    item: { masterId: string; designId?: string | null },
+    tx: TransactionClient,
+  ): Promise<void> {
+    if (!item.designId) return
+    const mainBranch = await BranchService.getMainBranch(item.designId)
+    if (!mainBranch) return
+
+    const current = await tx
+      .select({ id: items.id })
+      .from(items)
+      .where(and(eq(items.masterId, item.masterId), eq(items.isCurrent, true)))
+      .limit(1)
+      .then((r) => r.at(0))
+    if (!current) return
+
+    const tracking = await tx
+      .select({ id: branchItems.id })
+      .from(branchItems)
+      .where(
+        and(
+          eq(branchItems.branchId, mainBranch.id),
+          eq(branchItems.itemMasterId, item.masterId),
+        ),
+      )
+      .limit(1)
+      .then((r) => r.at(0))
+
+    if (tracking) {
+      await tx
+        .update(branchItems)
+        .set({ currentItemId: current.id })
+        .where(eq(branchItems.id, tracking.id))
+    } else {
+      await tx
+        .insert(branchItems)
+        .values({
+          branchId: mainBranch.id,
+          itemMasterId: item.masterId,
+          currentItemId: current.id,
+          baseItemId: current.id,
+          changeType: null,
+        })
+        .onConflictDoNothing()
+    }
   }
 
   /**
@@ -573,20 +893,20 @@ export class ChangeOrderMergeService {
   private static async mergeBranches(
     changeOrderId: string,
     userId: string,
-    designsWithBranches: Array<EcoDesignRecord>,
+    designsWithBranches: Array<ChangeOrderDesignRecord>,
     results: ChangeOrderMergeResult,
   ): Promise<number> {
     let branchesMerged = 0
-    for (const ecoDesign of designsWithBranches) {
-      if (!ecoDesign.branchId) continue
+    for (const changeOrderDesign of designsWithBranches) {
+      if (!changeOrderDesign.branchId) continue
 
       // Already merged on an earlier attempt. The release is retryable by
       // design (a failure leaves the change order pre-final), and this loop
       // is not one transaction — so without this guard a retry after design B
       // failed re-merged design A and bumped its revisions a second time.
-      if (ecoDesign.mergeStatus === 'merged') {
+      if (changeOrderDesign.mergeStatus === 'merged') {
         serviceLogger.info(
-          { changeOrderId, designId: ecoDesign.designId },
+          { changeOrderId, designId: changeOrderDesign.designId },
           'Skipping design already merged by an earlier release attempt',
         )
         branchesMerged++
@@ -595,10 +915,10 @@ export class ChangeOrderMergeService {
 
       // Auto-checkin all items on this branch before merge
       // This releases checkout locks since the ECO is being released
-      await this.autoCheckinBranchItems(ecoDesign.branchId)
+      await this.autoCheckinBranchItems(changeOrderDesign.branchId)
 
       // Validate merge before proceeding
-      const validation = await this.validateMerge(ecoDesign.branchId)
+      const validation = await this.validateMerge(changeOrderDesign.branchId)
 
       // Check if this is a "no changes" situation vs a real conflict.
       // Keyed on conflictType rather than the reason text, which is a
@@ -616,7 +936,7 @@ export class ChangeOrderMergeService {
           `Cannot merge: ${realConflicts.map((c) => c.reason).join(', ')}`,
           {
             changeOrderId,
-            branchId: ecoDesign.branchId,
+            branchId: changeOrderDesign.branchId,
             conflicts: realConflicts,
           },
         )
@@ -631,16 +951,16 @@ export class ChangeOrderMergeService {
             mergeStatus: 'skipped',
             updatedAt: new Date(),
           })
-          .where(eq(changeOrderDesigns.id, ecoDesign.id))
+          .where(eq(changeOrderDesigns.id, changeOrderDesign.id))
         continue
       }
 
       // Get design details
-      const design = await DesignService.getById(ecoDesign.designId)
+      const design = await DesignService.getById(changeOrderDesign.designId)
 
       // Merge branch to main
       const mergeResult = await this.mergeBranchToMain(
-        ecoDesign.branchId,
+        changeOrderDesign.branchId,
         changeOrderId,
         userId,
       )
@@ -649,7 +969,7 @@ export class ChangeOrderMergeService {
       // commits with the release it records
 
       results.designs.push({
-        designId: ecoDesign.designId,
+        designId: changeOrderDesign.designId,
         designName: design?.name || 'Unknown',
         mergeResult,
       })
@@ -661,14 +981,14 @@ export class ChangeOrderMergeService {
       if (mergeResult.changedItems.length > 0) {
         try {
           const notified = await MbomService.notifyDerivedMboms(
-            ecoDesign.designId,
+            changeOrderDesign.designId,
             mergeResult.mergeCommit.id,
             changeOrderId,
             mergeResult.changedItems,
           )
           if (notified > 0) {
             serviceLogger.info(
-              { designId: ecoDesign.designId, notified, changeOrderId },
+              { designId: changeOrderDesign.designId, notified, changeOrderId },
               'Notified derived MBOMs of upstream change',
             )
           }
@@ -676,7 +996,7 @@ export class ChangeOrderMergeService {
           // A derived-MBOM notification must never block the release it
           // describes — the change is already merged and valid.
           serviceLogger.warn(
-            { err: error, designId: ecoDesign.designId, changeOrderId },
+            { err: error, designId: changeOrderDesign.designId, changeOrderId },
             'Failed to notify derived MBOMs of upstream change',
           )
         }
@@ -696,12 +1016,15 @@ export class ChangeOrderMergeService {
    * Runs only when no branch merged: either the change order never had one, or
    * every branch it had turned out to hold no changes. Both cases leave the
    * affected-items list as the only record of what the change order does.
+   * Each item goes through `applyChangeAction`; this pass adds what a release
+   * with no merge commit still owes the design: a release commit on main per
+   * design, and the change order's branches archived.
    */
   private static async applyAffectedItems(
     changeOrderId: string,
     userId: string,
-    changeOrderNumber: string,
-    ecoDesigns: Array<EcoDesignRecord>,
+    label: string,
+    ecoDesigns: Array<ChangeOrderDesignRecord>,
     results: ChangeOrderMergeResult,
   ): Promise<void> {
     const affectedItems =
@@ -709,24 +1032,8 @@ export class ChangeOrderMergeService {
 
     if (affectedItems.length === 0) {
       throw new ValidationError(
-        'No affected items or designs associated with this ECO',
+        'No affected items or designs associated with this change order',
       )
-    }
-
-    // Implement each affected item based on its action
-    // ECO releases bypass branch protection since the ECO approval process
-    // already validates and authorizes the changes
-    // ECO release is the one writer allowed to set lifecycle-controlled
-    // fields (state/revision/isCurrent) through ItemService.update
-    //
-    // It also skips the per-item design-access check: authorization for a
-    // release is decided once, on the ECO, and a legitimate releaser may reach
-    // only a subset of a multi-design ECO's designs (resolveEcoDesignScope),
-    // so re-asking per item would fail releases that are entirely valid.
-    const bypassOptions = {
-      bypassBranchProtection: true,
-      allowLifecycleFields: true,
-      skipAccessCheck: true,
     }
 
     // Genuinely atomic: every nested service call below takes `tx` and runs
@@ -737,9 +1044,9 @@ export class ChangeOrderMergeService {
     // written directly against `tx`.)
     //
     // SERIALIZABLE with the same retry as the branch merge, and for the same
-    // reason. Every action below is a check-then-act — read the item's state
-    // and revision, decide from them, write both back — and at READ COMMITTED
-    // two change orders listing the same master each read the pre-release row
+    // reason. Every action is a check-then-act — read the item's state and
+    // revision, decide from them, write both back — and at READ COMMITTED two
+    // change orders listing the same master each read the pre-release row
     // and each act on it: the same revision letter minted twice, or a
     // transition stamped onto a version the other has already superseded. A
     // change order cannot race *itself* — the workflow claim CAS serializes
@@ -760,12 +1067,7 @@ export class ChangeOrderMergeService {
         // Track released items by design for creating release commits
         const releasedItemsByDesign = new Map<string, ReleasedItemsForDesign>()
 
-        /**
-         * Record an item this pass released, for its design's release commit.
-         * Written six times inline before this, once per action branch, which
-         * is how one of them came to test `item.designId && item.id` and the
-         * next only `item.designId`.
-         */
+        /** Record an item this pass released, for its design's release commit. */
         const trackReleased = (
           designId: string | null | undefined,
           entry: ReleasedItem,
@@ -781,12 +1083,6 @@ export class ChangeOrderMergeService {
             for (const affected of affectedItems) {
               if (!affected.affectedItemId) continue
 
-              const item = await ItemService.findById(
-                affected.affectedItemId,
-                tx,
-              )
-              if (!item) continue
-
               const action = affected.changeAction
               if (!isKnownChangeAction(action)) {
                 serviceLogger.warn(
@@ -796,361 +1092,32 @@ export class ChangeOrderMergeService {
                 continue
               }
 
-              // For release/revise/obsolete actions, check if item is already in target state
-              // This makes the release operation idempotent (safe to call multiple times)
-              // NOTE: Even when skipping the state transition, we still need to create branchItems
-              // (lifecycle effects from workflow transitions may have already updated the state)
-              // The same five values the branch path resolves, from the same place,
-              // so both paths release into identical states
-              const states = await LifecycleService.resolveActionStates(
-                item.itemType,
+              const item = await ItemService.findById(
+                affected.affectedItemId,
+                tx,
               )
+              if (!item) continue
 
-              let skippedStateChange = false
-              if (action === 'release') {
-                if (item.state === states.releaseState) {
-                  // Item already in target state (lifecycle effects set it during workflow transition)
-                  // Still need to assign revision since lifecycle effects only set state, not revision
-                  skippedStateChange = true
-
-                  const needsRevision = RevisionService.isWorkingRevision(
-                    item.revision,
-                  )
-                  const finalRevision = needsRevision
-                    ? RevisionService.getInitialRevision(states.revisionScheme)
-                    : item.revision
-
-                  if (needsRevision) {
-                    await ItemService.update(
-                      affected.affectedItemId,
-                      { revision: finalRevision },
-                      userId,
-                      {
-                        bypassBranchProtection: true,
-                        allowLifecycleFields: true,
-                        skipAccessCheck: true,
-                        tx,
-                      },
-                    )
-                    assignedThisAttempt++
-                  }
-
-                  // Tracked even though the state was already set
-                  trackReleased(item.designId, {
-                    itemId: item.id,
-                    itemNumber: item.itemNumber,
-                    changeType: 'added',
-                    newRevision: finalRevision,
-                  })
-                }
-              }
-
-              if (!skippedStateChange) {
-                const validation = await LifecycleService.canApplyAction(
-                  item.itemType,
-                  item.state,
-                  action,
+              const outcome = await this.applyChangeAction(
+                action,
+                item,
+                await LifecycleService.resolveActionStates(item.itemType),
+                { userId, tx },
+              )
+              if (outcome.kind === 'invalid') {
+                throw new ValidationError(
+                  `Cannot apply "${action}" to ${item.itemNumber}: ${outcome.error}`,
                 )
-                if (!validation.valid) {
-                  throw new ValidationError(
-                    `Cannot apply "${action}" to ${item.itemNumber}: ${validation.error}`,
-                  )
-                }
-
-                switch (action) {
-                  case 'release': {
-                    const targetState = requireActionState(
-                      states.releaseState,
-                      item.itemType,
-                      'release',
-                    )
-                    const releaseScheme = states.revisionScheme
-                    // Assign initial revision if item has no real revision yet
-                    const needsRevision = RevisionService.isWorkingRevision(
-                      item.revision,
-                    )
-                    const finalRevision = needsRevision
-                      ? RevisionService.getInitialRevision(releaseScheme)
-                      : item.revision
-
-                    const updates: Record<string, unknown> = {}
-                    if (item.state !== targetState) {
-                      updates.state = targetState
-                    }
-                    if (needsRevision) {
-                      updates.revision = finalRevision
-                    }
-
-                    if (Object.keys(updates).length > 0) {
-                      await ItemService.update(
-                        affected.affectedItemId,
-                        updates,
-                        userId,
-                        { ...bypassOptions, tx },
-                      )
-                      assignedThisAttempt++
-
-                      trackReleased(item.designId, {
-                        itemId: item.id,
-                        itemNumber: item.itemNumber,
-                        changeType: 'added',
-                        newRevision: finalRevision,
-                      })
-                    }
-                    break
-                  }
-
-                  case 'revise': {
-                    const newVersionState = requireActionState(
-                      states.reviseState,
-                      item.itemType,
-                      'revise',
-                    )
-                    const oldVersionState = states.supersededState
-
-                    // Check for existing working copy (created when affected item was added)
-                    let workingCopy: typeof items.$inferSelect | null = null
-
-                    // First, check if workingCopyId was stored on the affected item record
-                    if ((affected as any).workingCopyId) {
-                      const found = await ItemService.findById(
-                        (affected as any).workingCopyId,
-                        tx,
-                      )
-                      workingCopy = found as typeof items.$inferSelect | null
-                    }
-
-                    // Fallback: Check ECO branch for working copy (backward compatibility)
-                    if (
-                      !workingCopy &&
-                      item.designId &&
-                      affected.affectedItemMasterId
-                    ) {
-                      const ecoDesign = await tx
-                        .select()
-                        .from(changeOrderDesigns)
-                        .where(
-                          and(
-                            eq(changeOrderDesigns.changeOrderId, changeOrderId),
-                            eq(changeOrderDesigns.designId, item.designId),
-                          ),
-                        )
-                        .limit(1)
-                        .then((r) => r.at(0))
-
-                      if (ecoDesign?.branchId) {
-                        workingCopy = await this.findWorkingCopyOnBranch(
-                          affected.affectedItemMasterId,
-                          ecoDesign.branchId,
-                        )
-                      }
-                    }
-
-                    if (workingCopy) {
-                      // Calculate final revision - if placeholder (starts with
-                      // "-"), the letter comes from main's current revision,
-                      // not from `item`, which is the row pinned when this
-                      // item was added to the change order.
-                      //
-                      // Resolved before `supersedePriorVersions` below, which
-                      // clears `isCurrent` across the master - one of the
-                      // bases `resolveAffectedRevision` reads.
-                      const reviseScheme = states.revisionScheme
-                      let finalRevision = workingCopy.revision
-                      if (
-                        RevisionService.isWorkingRevision(workingCopy.revision)
-                      ) {
-                        finalRevision = (
-                          await this.resolveAffectedRevision(
-                            item,
-                            reviseScheme,
-                            tx,
-                          )
-                        ).newRevision
-                      }
-
-                      // Working copy exists - transition it to new version state
-                      await this.supersedePriorVersions(
-                        item.masterId,
-                        workingCopy.id,
-                        oldVersionState,
-                        tx,
-                      )
-
-                      // Now transition working copy with final revision and mark as current
-                      await ItemService.update(
-                        workingCopy.id,
-                        {
-                          revision: finalRevision,
-                          state: newVersionState,
-                          isCurrent: true,
-                        },
-                        userId,
-                        { ...bypassOptions, tx },
-                      )
-
-                      assignedThisAttempt++
-
-                      trackReleased(item.designId, {
-                        itemId: workingCopy.id,
-                        itemNumber: workingCopy.itemNumber,
-                        changeType: 'modified',
-                        newRevision: finalRevision,
-                      })
-                    } else {
-                      // No working copy - fallback to old behavior (create revision at release time).
-                      // Always computed here, never read from
-                      // `affected.targetRevision`: that column is a prediction
-                      // made when the item was added, and preferring it meant a
-                      // stale (or, while the dialogs guessed client-side, an
-                      // outright invalid) value became the released revision.
-                      // `item.revision` is a prediction of the same vintage -
-                      // the base comes from main's current revision instead.
-                      const { newRevision: targetRevision } =
-                        await this.resolveAffectedRevision(
-                          item,
-                          states.revisionScheme,
-                          tx,
-                        )
-                      const newRev = await ItemService.revise(
-                        affected.affectedItemId,
-                        targetRevision,
-                        userId,
-                        tx,
-                      )
-                      if (newRev.id) {
-                        await ItemService.update(
-                          newRev.id,
-                          { state: newVersionState },
-                          userId,
-                          { ...bypassOptions, tx },
-                        )
-
-                        trackReleased(item.designId, {
-                          itemId: newRev.id,
-                          itemNumber: newRev.itemNumber,
-                          changeType: 'modified',
-                          newRevision: targetRevision,
-                        })
-                      }
-                      assignedThisAttempt++
-                    }
-                    break
-                  }
-
-                  case 'obsolete': {
-                    await ItemService.update(
-                      affected.affectedItemId,
-                      {
-                        state: requireActionState(
-                          states.obsoleteState,
-                          item.itemType,
-                          'obsolete',
-                        ),
-                      },
-                      userId,
-                      { ...bypassOptions, tx },
-                    )
-
-                    trackReleased(item.designId, {
-                      itemId: item.id,
-                      itemNumber: item.itemNumber,
-                      changeType: 'deleted',
-                      newRevision: item.revision,
-                    })
-                    break
-                  }
-
-                  case 'promote': {
-                    const promotion = await this.resolvePromote(item)
-
-                    if (promotion) {
-                      const promoteUpdates: Record<string, unknown> = {
-                        state: promotion.toState,
-                      }
-                      if (promotion.revision !== item.revision) {
-                        promoteUpdates.revision = promotion.revision
-                      }
-
-                      await ItemService.update(
-                        affected.affectedItemId,
-                        promoteUpdates,
-                        userId,
-                        { ...bypassOptions, tx },
-                      )
-
-                      if (promotion.assignedRevision) {
-                        assignedThisAttempt++
-                      }
-
-                      trackReleased(item.designId, {
-                        itemId: item.id,
-                        itemNumber: item.itemNumber,
-                        changeType: 'modified',
-                        newRevision: promotion.revision,
-                      })
-                    }
-                    break
-                  }
-                }
-              } // end if (!skippedStateChange)
-
-              // After processing each affected item, ensure it's tracked on the main branch
-              // This is critical for the Design Structure view to work correctly
-              if (item.designId && item.masterId) {
-                const mainBranch = await BranchService.getMainBranch(
-                  item.designId,
-                )
-                if (mainBranch) {
-                  // Get the current version of this item (the one we just released or the existing released one)
-                  const currentItem = await tx
-                    .select()
-                    .from(items)
-                    .where(
-                      and(
-                        eq(items.masterId, item.masterId),
-                        eq(items.isCurrent, true),
-                      ),
-                    )
-                    .limit(1)
-                    .then((r) => r.at(0))
-
-                  if (currentItem) {
-                    // Check if branchItem already exists
-                    const existingBranchItem = await tx
-                      .select()
-                      .from(branchItems)
-                      .where(
-                        and(
-                          eq(branchItems.branchId, mainBranch.id),
-                          eq(branchItems.itemMasterId, item.masterId),
-                        ),
-                      )
-                      .limit(1)
-                      .then((r) => r.at(0))
-
-                    if (existingBranchItem) {
-                      // Update to point to current item
-                      await tx
-                        .update(branchItems)
-                        .set({ currentItemId: currentItem.id })
-                        .where(eq(branchItems.id, existingBranchItem.id))
-                    } else {
-                      // Create new branchItem
-                      await tx
-                        .insert(branchItems)
-                        .values({
-                          branchId: mainBranch.id,
-                          itemMasterId: item.masterId,
-                          currentItemId: currentItem.id,
-                          baseItemId: currentItem.id,
-                          changeType: null,
-                        })
-                        .onConflictDoNothing()
-                    }
-                  }
-                }
               }
+              if (outcome.kind === 'noop') continue
+
+              if (outcome.assignedRevision) assignedThisAttempt++
+              trackReleased(item.designId, {
+                itemId: outcome.itemId,
+                itemNumber: outcome.itemNumber,
+                changeType: outcome.changeType,
+                newRevision: outcome.newRevision,
+              })
             }
 
             // Create release commits for each design that had items released
@@ -1173,7 +1140,7 @@ export class ChangeOrderMergeService {
               await CommitService.create(
                 {
                   branchId: mainBranch.id,
-                  message: `Released via ECO: ${changeOrderNumber}`,
+                  message: `Released via ${label}`,
                   changeOrderItemId: changeOrderId,
                   revisionsAssigned,
                   itemChanges: designData.items.map((item) => ({
@@ -1187,11 +1154,17 @@ export class ChangeOrderMergeService {
             }
 
             // Archive any ECO branches associated with this change order
-            for (const ecoDesign of ecoDesigns) {
-              if (ecoDesign.branchId) {
-                await BranchService.archiveBranch(ecoDesign.branchId, tx)
+            for (const changeOrderDesign of ecoDesigns) {
+              if (changeOrderDesign.branchId) {
+                await BranchService.archiveBranch(
+                  changeOrderDesign.branchId,
+                  tx,
+                )
               }
             }
+
+            // In the same transaction as the work it vouches for
+            await this.markImplemented(changeOrderId, tx)
 
             return assignedThisAttempt
           },
@@ -1235,12 +1208,13 @@ export class ChangeOrderMergeService {
    * Gating this pass on an action allow-list silently dropped 'promote'
    * entirely, so an ECO that both edited a BOM on its branch and promoted a part
    * completed "successfully" having never promoted it. The rule is structural
-   * instead: whatever the branch merge did not handle, this does.
+   * instead: whatever the branch merge did not handle, this does — through the
+   * same `applyChangeAction` as the branchless pass, so the two cannot drift.
    */
   private static async applyRemainingActions(
     changeOrderId: string,
     userId: string,
-    designsWithBranches: Array<EcoDesignRecord>,
+    designsWithBranches: Array<ChangeOrderDesignRecord>,
     results: ChangeOrderMergeResult,
   ): Promise<void> {
     const affectedItems =
@@ -1289,6 +1263,13 @@ export class ChangeOrderMergeService {
               if (!affected.affectedItemId) continue
 
               const action = affected.changeAction
+              if (!isKnownChangeAction(action)) {
+                serviceLogger.warn(
+                  { changeOrderId, action },
+                  'Skipping affected item with a change action this build no longer knows',
+                )
+                continue
+              }
 
               // The branch merge owns items it actually released
               if (
@@ -1304,152 +1285,24 @@ export class ChangeOrderMergeService {
               )
               if (!item) continue
 
-              // Same validation the branchless path applies. Without it, an action
-              // that became invalid after it was added (or was never validated at
-              // intake) was applied here unchecked.
-              const validation = await LifecycleService.canApplyAction(
-                item.itemType,
-                item.state,
+              const outcome = await this.applyChangeAction(
                 action,
+                item,
+                await LifecycleService.resolveActionStates(item.itemType),
+                { userId, tx },
               )
-              if (!validation.valid) {
-                // Already in the target state is not a failure - it makes a retry
-                // after a partial release idempotent.
-                const already = await LifecycleService.getTargetState(
-                  item.itemType,
-                  action,
-                )
-                if (already && item.state === already) continue
+              if (outcome.kind === 'invalid') {
                 throw new ValidationError(
-                  `Cannot apply "${action}" to ${item.itemNumber}: ${validation.error}`,
+                  `Cannot apply "${action}" to ${item.itemNumber}: ${outcome.error}`,
                 )
               }
-
-              const states = await LifecycleService.resolveActionStates(
-                item.itemType,
-              )
-
-              if (action === 'promote') {
-                const promotion = await this.resolvePromote(item)
-                if (!promotion) continue
-
-                const promoteUpdates: Record<string, unknown> = {
-                  state: promotion.toState,
-                }
-                if (promotion.revision !== item.revision) {
-                  promoteUpdates.revision = promotion.revision
-                }
-                await ItemService.update(
-                  affected.affectedItemId,
-                  promoteUpdates,
-                  userId,
-                  {
-                    bypassBranchProtection: true,
-                    allowLifecycleFields: true,
-                    skipAccessCheck: true,
-                    tx,
-                  },
-                )
-                if (promotion.assignedRevision) {
-                  assignedThisAttempt++
-                }
-                continue
-              }
-
-              if (action === 'revise') {
-                // Listed as a revision but with no branch content to release -
-                // create the new version the way the branchless path does,
-                // including basing the letter on main's current revision
-                // rather than on the row pinned in the affected-items list.
-                const { newRevision: targetRevision } =
-                  await this.resolveAffectedRevision(
-                    item,
-                    states.revisionScheme,
-                    tx,
-                  )
-                const newRev = await ItemService.revise(
-                  affected.affectedItemId,
-                  targetRevision,
-                  userId,
-                  tx,
-                )
-                if (newRev.id) {
-                  await ItemService.update(
-                    newRev.id,
-                    {
-                      state: requireActionState(
-                        states.reviseState,
-                        item.itemType,
-                        'revise',
-                      ),
-                    },
-                    userId,
-                    {
-                      bypassBranchProtection: true,
-                      allowLifecycleFields: true,
-                      skipAccessCheck: true,
-                      tx,
-                    },
-                  )
-                  if (states.supersededState) {
-                    await ItemService.update(
-                      affected.affectedItemId,
-                      { state: states.supersededState },
-                      userId,
-                      {
-                        bypassBranchProtection: true,
-                        allowLifecycleFields: true,
-                        skipAccessCheck: true,
-                        tx,
-                      },
-                    )
-                  }
-                }
+              if (outcome.kind === 'applied' && outcome.assignedRevision) {
                 assignedThisAttempt++
-                continue
               }
-
-              // release | obsolete - state-only
-              const resolvedState = requireActionState(
-                action === 'obsolete'
-                  ? states.obsoleteState
-                  : states.releaseState,
-                item.itemType,
-                action,
-              )
-
-              if (item.state === resolvedState) continue
-
-              const updates: { state: string; revision?: string } = {
-                state: resolvedState,
-              }
-
-              // Releasing a version that never carried one still needs a revision;
-              // obsoleting keeps whatever revision the item already has.
-              if (action === 'release') {
-                const needsRevision = RevisionService.isWorkingRevision(
-                  item.revision,
-                )
-                if (needsRevision) {
-                  updates.revision = RevisionService.getInitialRevision(
-                    states.revisionScheme,
-                  )
-                  assignedThisAttempt++
-                }
-              }
-
-              await ItemService.update(
-                affected.affectedItemId,
-                updates,
-                userId,
-                {
-                  bypassBranchProtection: true,
-                  allowLifecycleFields: true,
-                  skipAccessCheck: true,
-                  tx,
-                },
-              )
             }
+
+            // In the same transaction as the work it vouches for
+            await this.markImplemented(changeOrderId, tx)
 
             return assignedThisAttempt
           },
@@ -1469,6 +1322,27 @@ export class ChangeOrderMergeService {
   }
 
   /**
+   * Record that this change order's affected-item pass committed:
+   * `change_orders.implemented_at`, written inside that pass's transaction so
+   * it is exactly as true as the revisions it vouches for. `merge()` reads it
+   * to skip a retry; nothing else writes it. First completion wins.
+   */
+  private static async markImplemented(
+    changeOrderId: string,
+    tx: TransactionClient,
+  ): Promise<void> {
+    await tx
+      .update(changeOrders)
+      .set({ implementedAt: new Date() })
+      .where(
+        and(
+          eq(changeOrders.itemId, changeOrderId),
+          isNull(changeOrders.implementedAt),
+        ),
+      )
+  }
+
+  /**
    * Phase 4 — stamp a baseline tag on every affected design.
    *
    * A tag that fails to create must not fail the release it describes: the
@@ -1484,24 +1358,27 @@ export class ChangeOrderMergeService {
     if (!changeOrderData.isBaseline || !changeOrderData.baselineName) return
 
     const baselineName = changeOrderData.baselineName
-    const ecoDesignsForTags =
-      await ChangeOrderService.getEcoDesigns(changeOrderId)
+    const changeOrderDesignsForTags =
+      await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
 
-    for (const ecoDesign of ecoDesignsForTags) {
+    for (const changeOrderDesign of changeOrderDesignsForTags) {
       try {
         await DesignService.createTag(
-          ecoDesign.designId,
+          changeOrderDesign.designId,
           {
             name: baselineName,
-            description: `Baseline created by ECO release: ${changeOrderNumber}`,
-            tagType: 'eco-release',
+            description: `Baseline created by the release of ${releaseLabel({
+              itemNumber: changeOrderNumber,
+              changeType: changeOrderData.changeType,
+            })}`,
+            tagType: TAG_TYPES.changeOrderRelease,
           },
           userId,
         )
       } catch (error) {
         // Log but don't fail the release if tag creation fails (e.g., duplicate name)
         serviceLogger.warn(
-          { err: error, baselineName, designId: ecoDesign.designId },
+          { err: error, baselineName, designId: changeOrderDesign.designId },
           'Failed to create baseline tag',
         )
       }
@@ -1534,6 +1411,36 @@ export class ChangeOrderMergeService {
     // This runs inside the transition's beforeFinalize hook, so the final
     // state is written only after this method has succeeded.
 
+    // A release whose work already ran to completion is not run again. The
+    // affected-item pass stamps `implementedAt` inside its final transaction
+    // (`markImplemented`), so it is set exactly when the revisions it vouches
+    // for are committed. This is the retry after the transition's own state
+    // write failed: the branches are merged and archived, the letters are
+    // assigned, and a second pass would mint a branchless `revise` its next
+    // letter on top of the one the first pass created. `cancel()` never sets
+    // it, so a cancel that failed the same way cannot be mistaken for this.
+    const implementedAt = await db
+      .select({ implementedAt: changeOrders.implementedAt })
+      .from(changeOrders)
+      .where(eq(changeOrders.itemId, changeOrderId))
+      .then((rows) => rows.at(0)?.implementedAt ?? null)
+    if (implementedAt) {
+      // The baseline tag is the one step outside that transaction. Creating
+      // it is idempotent (a duplicate name is logged and skipped), so a retry
+      // still gets one if the first attempt died between the pass and the tag.
+      await this.createBaselineTags(
+        changeOrderId,
+        userId,
+        changeOrder.itemNumber,
+        changeOrder as unknown as ChangeOrder,
+      )
+      return {
+        changeOrder: changeOrder as unknown as typeof items.$inferSelect,
+        designs: [],
+        totalRevisionsAssigned: 0,
+      }
+    }
+
     // Drivers allow-list (WI-4.4): the ECO's Driving lifecycle must be
     // authorized by every Driven lifecycle it is about to act on. Checked
     // once up front so no merge path (branch or affected-items) can act
@@ -1551,7 +1458,8 @@ export class ChangeOrderMergeService {
     }
 
     // Every design this change order touches, and the subset with branches
-    const ecoDesigns = await ChangeOrderService.getEcoDesigns(changeOrderId)
+    const ecoDesigns =
+      await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
     const designsWithBranches = ecoDesigns.filter((d) => d.branchId)
 
     const branchesMerged = await this.mergeBranches(
@@ -1565,7 +1473,7 @@ export class ChangeOrderMergeService {
       await this.applyAffectedItems(
         changeOrderId,
         userId,
-        changeOrder.itemNumber,
+        releaseLabel(changeOrder),
         ecoDesigns,
         results,
       )
@@ -1598,29 +1506,6 @@ export class ChangeOrderMergeService {
   }
 
   /**
-   * Find an existing working copy for an item master on a specific branch.
-   * Used during ECO release to check if a working copy was created at add-time.
-   */
-  private static async findWorkingCopyOnBranch(
-    itemMasterId: string,
-    branchId: string,
-  ): Promise<typeof items.$inferSelect | null> {
-    const result = await db
-      .select({ item: items })
-      .from(branchItems)
-      .innerJoin(items, eq(branchItems.currentItemId, items.id))
-      .where(
-        and(
-          eq(branchItems.branchId, branchId),
-          eq(branchItems.itemMasterId, itemMasterId),
-        ),
-      )
-      .limit(1)
-
-    return result.at(0)?.item || null
-  }
-
-  /**
    * Merge a single ECO branch to main branch
    * Handles revision letter assignment
    */
@@ -1634,9 +1519,14 @@ export class ChangeOrderMergeService {
     if (!branch) {
       throw new NotFoundError('Branch', branchId)
     }
-    if (branch.branchType !== 'eco') {
-      throw new ValidationError('Only ECO branches can be merged to main')
+    if (branch.branchType !== BRANCH_TYPES.changeOrder) {
+      throw new ValidationError(
+        'Only change-order branches can be merged to main',
+      )
     }
+    // For the text this merge leaves behind
+    const changeOrder = await ItemService.findById(changeOrderId)
+    const label = changeOrder ? releaseLabel(changeOrder) : changeOrderId
 
     // 2. Get main branch for design
     const mainBranch = await BranchService.getMainBranch(branch.designId)
@@ -2057,6 +1947,7 @@ export class ChangeOrderMergeService {
             // 5b. Copy BOM relationships for all modified/added items
             // This is done after all items are processed so we can resolve child references
             // to their new released versions when both parent and child are revised
+            const nestedOnRelease = new Set<string>()
             for (const bi of changedItems) {
               if (!bi.currentItemId || bi.changeType === 'deleted') continue
 
@@ -2132,6 +2023,10 @@ export class ChangeOrderMergeService {
                   }
                 }
 
+                if (rel.relationshipType === 'BOM') {
+                  nestedOnRelease.add(resolvedTargetId)
+                }
+
                 if (releasedItemId === sourceItemId) {
                   // The working copy was released in place, so its rows already
                   // hang off the released item — only re-point a child that was
@@ -2158,6 +2053,25 @@ export class ChangeOrderMergeService {
                 }
               }
             }
+            // 5b'. A part that a released line now nests is a child of main's
+            // structure, not a top-level part of it. Nesting on the branch
+            // left a main row's designation alone — main had not changed —
+            // so this is where it is cleared; a part revised in the same
+            // change order resolved to its released row above, so that is
+            // the row named here.
+            if (nestedOnRelease.size > 0) {
+              await tx
+                .update(items)
+                .set({ inDesignStructure: false })
+                .where(
+                  and(
+                    inArray(items.id, [...nestedOnRelease]),
+                    eq(items.itemType, 'Part'),
+                    eq(items.designId, branch.designId),
+                  ),
+                )
+            }
+
             // 5c. Merge cross-design references (promote added, remove deleted)
             await CrossDesignReferenceService.mergeReferencesOnRelease(
               branch.designId,
@@ -2170,7 +2084,7 @@ export class ChangeOrderMergeService {
               {
                 targetBranchId: mainBranch.id,
                 sourceBranchId: branchId,
-                message: `Merged ECO branch: ${branch.name}`,
+                message: `Merged ${branch.name} for ${label}`,
                 changeOrderItemId: changeOrderId,
                 revisionsAssigned,
                 itemChanges,
@@ -2187,7 +2101,7 @@ export class ChangeOrderMergeService {
             if (filesPromoted > 0) {
               serviceLogger.info(
                 { filesPromoted },
-                'Promoted files from ECO branch to main',
+                'Promoted files from the change-order branch to main',
               )
             }
 
@@ -2307,7 +2221,7 @@ export class ChangeOrderMergeService {
         await JobService.submit(
           'notification.workinstruction.partchanged',
           {
-            ecoId: changeOrderId,
+            changeOrderId,
             changedPartIds,
             userId,
           },
@@ -2330,7 +2244,11 @@ export class ChangeOrderMergeService {
     // every superseded revision, and a failure there must be retried on its
     // own rather than rolling back a release that has already happened.
     try {
-      await this.submitSupersededWatermarkJobs(released.itemChanges, userId)
+      await this.submitSupersededWatermarkJobs(
+        released.itemChanges,
+        userId,
+        label,
+      )
     } catch (error) {
       serviceLogger.warn({ error }, 'Failed to submit superseded watermark job')
     }
@@ -2404,6 +2322,7 @@ export class ChangeOrderMergeService {
       previousItemId?: string
     }>,
     userId: string,
+    label: string,
   ): Promise<void> {
     const superseded = itemChanges.filter(
       (change) => change.changeType === 'modified' && change.previousItemId,
@@ -2448,7 +2367,7 @@ export class ChangeOrderMergeService {
           position: 'diagonal',
           color: '#dc2626',
           opacity: 0.25,
-          reason: 'Superseded by ECO release',
+          reason: `Superseded by the release of ${label}`,
           userId,
         },
         userId,
@@ -2754,7 +2673,8 @@ export class ChangeOrderMergeService {
       throw new NotFoundError('Change order', changeOrderId)
     }
 
-    const ecoDesigns = await ChangeOrderService.getEcoDesigns(changeOrderId)
+    const ecoDesigns =
+      await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
 
     // A change order that has finished has nothing left to preview, and
     // walking its branches anyway described the release it already did as a
@@ -2797,16 +2717,13 @@ export class ChangeOrderMergeService {
     // by master listed a checked-out item twice: once as the branch working
     // copy and once as the released row it is based on.
     const seenMasterIds = new Set<string>()
-    // A design already merged still counts as a branch carrying changes, the
-    // way `mergeBranches` counts one it skips.
-    let mergedDesignCount = 0
 
-    for (const ecoDesign of ecoDesigns) {
-      if (!ecoDesign.branchId) {
+    for (const changeOrderDesign of ecoDesigns) {
+      if (!changeOrderDesign.branchId) {
         continue
       }
 
-      const design = await DesignService.getById(ecoDesign.designId)
+      const design = await DesignService.getById(changeOrderDesign.designId)
 
       // Get changed items on this branch
       const changedItems = await db
@@ -2818,7 +2735,7 @@ export class ChangeOrderMergeService {
         .leftJoin(items, eq(branchItems.currentItemId, items.id))
         .where(
           and(
-            eq(branchItems.branchId, ecoDesign.branchId),
+            eq(branchItems.branchId, changeOrderDesign.branchId),
             isNotNull(branchItems.changeType),
           ),
         )
@@ -2830,12 +2747,11 @@ export class ChangeOrderMergeService {
       // Mirrors the retry guard in `mergeBranches`: a design recorded merged
       // is not merged again, so a release that failed part way through must
       // not preview the designs it already released as another revision bump.
-      if (ecoDesign.mergeStatus === 'merged') {
-        mergedDesignCount++
-        continue
-      }
+      if (changeOrderDesign.mergeStatus === 'merged') continue
 
-      const mainBranch = await BranchService.getMainBranch(ecoDesign.designId)
+      const mainBranch = await BranchService.getMainBranch(
+        changeOrderDesign.designId,
+      )
       const previewItems: Array<ReleasePreviewItem> = []
 
       for (const { branchItem, item } of changedItems) {
@@ -2879,7 +2795,7 @@ export class ChangeOrderMergeService {
       }
 
       // Validate this branch (includes conflict detection)
-      const validation = await this.validateMerge(ecoDesign.branchId)
+      const validation = await this.validateMerge(changeOrderDesign.branchId)
 
       // Collect conflicts for this design
       const designConflicts = validation.conflicts.map((c) => ({
@@ -2903,7 +2819,7 @@ export class ChangeOrderMergeService {
       )
 
       designs.push({
-        designId: ecoDesign.designId,
+        designId: changeOrderDesign.designId,
         designName: design?.name || 'Unknown',
         items: previewItems,
         conflicts: validation.conflicts,
@@ -2912,15 +2828,13 @@ export class ChangeOrderMergeService {
       totalItems += previewItems.length
     }
 
-    // The merge has two more paths this preview must mirror — without them
-    // an initial-release ECO whose parts carry no branch content previews
-    // as "0 items" and then releases them anyway:
-    // - when no branch has changes, every state-changing affected item is
-    //   applied directly (release/revise/obsolete/promote)
-    // - when branches do merge, 'release' and 'obsolete' affected items are
-    //   still applied afterward (the state-only pass)
-    const branchesWithChanges =
-      designs.filter((d) => d.items.length > 0).length + mergedDesignCount
+    // The merge has one more path this preview must mirror — without it an
+    // initial-release ECO whose parts carry no branch content previews as
+    // "0 items" and then releases them anyway: the affected-item actions,
+    // applied to every listed master the branch merge does not release
+    // (`applyAffectedItems` when no branch had changes, `applyRemainingActions`
+    // after one did; the same actions either way). Each is a dry run of
+    // `applyChangeAction`, the implementation the release will use.
     const affectedItems =
       await ChangeOrderService.getAffectedItems(changeOrderId)
     const designEntryById = new Map(designs.map((d) => [d.designId, d]))
@@ -2931,72 +2845,30 @@ export class ChangeOrderMergeService {
 
       const action = affected.changeAction
       if (!isKnownChangeAction(action)) continue
-      if (
-        branchesWithChanges > 0 &&
-        action !== 'release' &&
-        action !== 'obsolete'
-      ) {
-        continue
-      }
       // By master, not by item id: the branch holds a different row of the
       // same item, and matching on ids reported both.
       const masterId = affected.affectedItemMasterId ?? item.masterId
       if (seenMasterIds.has(masterId)) continue
 
-      const validation = await LifecycleService.canApplyAction(
-        item.itemType,
-        item.state,
+      const outcome = await this.applyChangeAction(
         action,
+        item,
+        await LifecycleService.resolveActionStates(item.itemType),
+        { dryRun: true },
       )
-      const targetState = await LifecycleService.getTargetState(
-        item.itemType,
-        action,
-      )
-      const alreadyInTarget = targetState !== null && item.state === targetState
-
-      if (!validation.valid && !alreadyInTarget) {
-        validationIssues.push(`${item.itemNumber}: ${validation.error}`)
+      if (outcome.kind === 'invalid') {
+        validationIssues.push(`${item.itemNumber}: ${outcome.error}`)
         continue
       }
-
-      const scheme = await LifecycleService.getRevisionScheme(item.itemType)
-      const needsRevision = RevisionService.isWorkingRevision(item.revision)
-
-      let currentRevision = item.revision
-      let newRevision = item.revision
-      if (action === 'release') {
-        newRevision = needsRevision
-          ? RevisionService.getInitialRevision(scheme)
-          : item.revision
-      } else if (action === 'revise') {
-        // Always computed, never read from `affected.targetRevision` — the
-        // merge pointedly ignores that column (a prediction stamped at
-        // add-time, stale the moment another release moves the item), so a
-        // preview that preferred it promised letters the release would not
-        // assign. `item.revision` is a prediction of the same vintage, so the
-        // base comes from the helper the merge's own affected-items passes
-        // use — reporting main's current revision as "current" the way the
-        // branch arm above does, rather than the row pinned at add-time.
-        const resolved = await this.resolveAffectedRevision(item, scheme)
-        currentRevision = resolved.baseRevision
-        newRevision = resolved.newRevision
-      } else if (action === 'promote') {
-        // The same authority the merge uses. When it resolves to nothing the
-        // merge skips the item entirely, so the preview lists nothing too.
-        const promotion = await this.resolvePromote(item)
-        if (!promotion) continue
-        newRevision = promotion.revision
-      }
-
-      // Nothing observable would change — mirrors the merge's idempotent skip
-      if (alreadyInTarget && newRevision === item.revision) continue
+      // Nothing observable would change — the merge's idempotent skip
+      if (outcome.kind === 'noop') continue
 
       seenMasterIds.add(masterId)
       const previewItem: ReleasePreviewItem = {
         itemId: item.id,
         itemNumber: item.itemNumber,
-        currentRevision,
-        newRevision,
+        currentRevision: outcome.currentRevision,
+        newRevision: outcome.newRevision,
         changeType: 'modified',
       }
 

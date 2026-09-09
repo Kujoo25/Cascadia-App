@@ -33,7 +33,7 @@ describe('holdersOf', () => {
     // 'create'. hasPermission() still admits it, so this check must too —
     // deciding satisfiability by set membership would report a live route
     // dead.
-    expect(holdersOf('workflows', 'create')).toContain('Power User')
+    expect(holdersOf('lifecycles', 'create')).toContain('Power User')
   })
 
   it('finds nobody for an action no role grants on that resource', () => {

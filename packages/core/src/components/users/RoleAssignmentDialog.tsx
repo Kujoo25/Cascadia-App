@@ -13,7 +13,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 
 interface RoleAssignmentDialogProps {
   user: UserWithRoles | null
@@ -30,7 +30,7 @@ export function RoleAssignmentDialog({
   onClose,
   onSave,
 }: RoleAssignmentDialogProps) {
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [selectedRoles, setSelectedRoles] = useState<Set<string>>(new Set())
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -57,12 +57,8 @@ export function RoleAssignmentDialog({
     try {
       await onSave(user.id, Array.from(selectedRoles))
       onClose()
-    } catch {
-      alert({
-        title: 'Error',
-        description: 'Failed to assign roles',
-        variant: 'destructive',
-      })
+    } catch (error) {
+      handleError(error, { title: 'Failed to assign roles' })
     } finally {
       setIsSubmitting(false)
     }

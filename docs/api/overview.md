@@ -92,7 +92,7 @@ The first argument to `apiHandler()` controls authentication:
 
 Permissions reference one of these resource types:
 
-`parts`, `documents`, `change_orders`, `designs`, `requirements`, `tasks`, `work_instructions`, `work_orders`, `issues`, `workflows`, `users`, `roles`, `programs`, `reports`, `system`
+`parts`, `documents`, `change_orders`, `designs`, `requirements`, `tasks`, `work_instructions`, `work_orders`, `issues`, `lifecycles`, `users`, `roles`, `programs`, `reports`, `system`
 
 ### Permission Actions
 

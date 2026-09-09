@@ -15,6 +15,7 @@ import { branchItems, branches, items, users } from '../db/schema'
 import { takeFirst } from '../db/take-first'
 import { getTypeHandler } from '../items/type-handlers'
 import '../items/type-handlers/init'
+import { isBranchProtectionExempt } from '../items/branch-protection'
 import { NotFoundError, ResourceLockedError, ValidationError } from '../errors'
 import { BranchService } from './BranchService'
 import { CommitService } from './CommitService'
@@ -25,6 +26,7 @@ import { expandSourceFieldChanges } from './software-source-changes'
 import type { TransactionClient } from '../db'
 import type { commits } from '../db/schema'
 import type { FieldChange } from './CommitService'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 // Core fields that exist on all items
 const coreFields = ['name', 'state', 'revision', 'itemNumber']
@@ -283,16 +285,21 @@ async function getChangeOrderService() {
 async function assertBranchAcceptsNewItems(
   branch: typeof branches.$inferSelect,
 ): Promise<void> {
-  if (branch.branchType !== 'eco' || !branch.changeOrderItemId) return
+  if (
+    branch.branchType !== BRANCH_TYPES.changeOrder ||
+    !branch.changeOrderItemId
+  )
+    return
 
-  const { WorkflowService } = await import('../workflows/WorkflowService')
-  const instance = await WorkflowService.getInstanceByItemId(
+  const { LifecycleInstanceService } =
+    await import('../lifecycles/LifecycleInstanceService')
+  const instance = await LifecycleInstanceService.getInstanceByItemId(
     branch.changeOrderItemId,
   )
 
   if (instance?.scopeLocked) {
     throw new ValidationError(
-      'Cannot add items to this ECO branch: the change order scope is locked. ' +
+      'Cannot add items to this change-order branch: its scope is locked. ' +
         'Existing working copies can still be edited.',
     )
   }
@@ -401,6 +408,26 @@ export class CheckoutService {
     )
   }
 
+  /**
+   * Whether every version of this master belongs to a branch-protection
+   * exempt type.
+   *
+   * Keyed on the master rather than a single row because the caller has only
+   * a master id here; all versions of one master share an item type, so the
+   * first row answers for all of them. Fails closed twice over: a master with
+   * no rows is not exempt, and `isBranchProtectionExempt` itself propagates a
+   * lookup failure rather than answering "exempt".
+   */
+  private static async isExemptMaster(itemMasterId: string): Promise<boolean> {
+    const row = await db
+      .select({ itemType: items.itemType })
+      .from(items)
+      .where(eq(items.masterId, itemMasterId))
+      .limit(1)
+      .then((rows) => rows.at(0))
+    return row ? isBranchProtectionExempt(row.itemType) : false
+  }
+
   static async checkout(
     data: CheckoutInput,
     userId: string,
@@ -419,11 +446,22 @@ export class CheckoutService {
     // is protected (released items exist) all changes flow through ECO or
     // workspace branches. While unprotected, the checkout row on main is the
     // edit lock behind the UI's Edit button for draft items.
+    //
+    // Protection is a property of the design, but exemption is a property of
+    // the item type, so both have to be asked. `isMainBranchProtected` answers
+    // for the whole design — one released Part protects main for everything in
+    // it — while `ItemEditPolicy.requireContentEditable` lets an exempt type
+    // (a Free or Driving lifecycle: work instructions, test cases, the change
+    // order itself) write on that same protected main. Refusing those the lock
+    // therefore protected nothing: the write was going to be allowed either
+    // way, and all the refusal removed was the mutual exclusion the lock
+    // exists to provide. It also broke their Edit buttons outright, since the
+    // button acquires the lock before entering edit mode.
     if (branch.branchType === 'main') {
       const isProtected = await BranchService.isMainBranchProtected(
         branch.designId,
       )
-      if (isProtected) {
+      if (isProtected && !(await this.isExemptMaster(validated.itemMasterId))) {
         throw new ValidationError(
           'Cannot checkout items on the protected main branch. Use an ECO or workspace branch.',
         )
@@ -534,7 +572,7 @@ export class CheckoutService {
    * release preview refused the change order with nothing left for the user
    * but to re-add the item by hand. Minting and registering are one
    * transaction here, the same pairing `addAffectedItem`,
-   * `checkoutItemToEco` and the plain-checkout create path each guarantee.
+   * `checkoutItem` and the plain-checkout create path each guarantee.
    *
    * A master the branch does not track yet is new scope, so it runs the
    * same gate as `checkout` bringing a new item onto the branch: refused
@@ -1214,6 +1252,9 @@ export class CheckoutService {
           sysmlType: data.sysmlType,
           metamodel: data.metamodel,
           usageOf: data.usageOf,
+          // Same rule as ItemService.create: a part created in a design is a
+          // top-level part of its structure until something nests it.
+          inDesignStructure: data.itemType === 'Part' && Boolean(data.designId),
           createdBy: userId,
           modifiedBy: userId,
         })

@@ -313,6 +313,12 @@ export class ItemService {
               sysmlType: sysmlType,
               usageOf: (validatedData as unknown as { usageOf?: string })
                 .usageOf,
+              // A part created in a design starts as a top-level part of its
+              // structure. Nesting it under a parent later clears this — see
+              // ItemRelationshipService.clearDesignationOfNestedTargets — so
+              // a removed child does not come back as a root.
+              inDesignStructure:
+                type === 'Part' && Boolean(validatedData.designId),
               createdBy: userId,
               modifiedBy: userId,
             })
@@ -473,7 +479,7 @@ export class ItemService {
        * UI-facing services. Grep usages when auditing.
        *
        * The release needs it because a legitimate releaser may reach only a
-       * subset of a multi-design ECO's designs (see resolveEcoDesignScope):
+       * subset of a multi-design ECO's designs (see resolveChangeOrderDesignScope):
        * authorization for the release is decided once, on the ECO, and
        * re-checking it per item would fail releases that are entirely valid.
        */
@@ -743,9 +749,12 @@ export class ItemService {
       )
     }
 
-    const governing = await LifecycleService.getGoverningDefinition(
-      item.itemType,
-    )
+    // The item's own definition: a change order's instance may run a
+    // definition other than the type's, or carry per-instance states
+    const governing = await LifecycleService.getGoverningDefinitionForItem({
+      id,
+      itemType: item.itemType,
+    })
     if (!governing) return
 
     const state = governing.states.find((s) => s.id === item.state)

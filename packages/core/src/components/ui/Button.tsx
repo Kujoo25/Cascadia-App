@@ -27,8 +27,13 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ) => {
     const Comp = asChild ? Slot : 'button'
 
+    // `[&_svg]:shrink-0` keeps an icon at its declared size. `cn` is plain
+    // clsx, so a size variant's `px-*` and a caller's `p-0` both reach the
+    // DOM and Tailwind's source order lets the padding win; without this an
+    // icon-only button squeezes its glyph to the leftover width — to nothing
+    // at all once the padding exceeds the button.
     const baseStyles =
-      'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-95 hover:scale-[1.02] hover:shadow-md'
+      'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium ring-offset-background transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 active:scale-95 hover:scale-[1.02] hover:shadow-md [&_svg]:shrink-0'
 
     const variants = {
       default: 'bg-cyan-600 text-white hover:bg-cyan-700',

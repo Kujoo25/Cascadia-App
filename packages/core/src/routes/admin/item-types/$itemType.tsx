@@ -12,7 +12,7 @@ import {
   RotateCcw,
   Save,
 } from 'lucide-react'
-import type { ItemTypePermissions, WorkflowsByChangeType } from '@/lib/query'
+import type { ItemTypePermissions, LifecyclesByChangeType } from '@/lib/query'
 import { PageContainer } from '@/components/layout'
 import {
   Badge,
@@ -31,7 +31,7 @@ import {
   SelectValue,
 } from '@/components/ui'
 import { getNumberingInfo } from '@/lib/items/numbering/format'
-import { resolveLifecycleType } from '@/lib/workflows/normalize'
+import { resolveLifecycleType } from '@/lib/lifecycles/normalize'
 import {
   itemTypeConfigQuery,
   lifecycleListQuery,
@@ -85,8 +85,8 @@ function ItemTypeConfigEditPage() {
   >(null)
   const [permissions, setPermissions] =
     useState<ItemTypePermissions>(NO_PERMISSIONS)
-  const [workflowsByChangeType, setWorkflowsByChangeType] =
-    useState<WorkflowsByChangeType>({})
+  const [lifecyclesByChangeType, setLifecyclesByChangeType] =
+    useState<LifecyclesByChangeType>({})
 
   // Item lifecycles are the non-Driving kinds (Driven and Free);
   // Driving definitions are the change-order workflows
@@ -124,7 +124,7 @@ function ItemTypeConfigEditPage() {
         null,
     )
     setPermissions(base.permissions ?? detail.codeConfig.permissions)
-    setWorkflowsByChangeType(overrides?.workflowsByChangeType ?? {})
+    setLifecyclesByChangeType(overrides?.lifecyclesByChangeType ?? {})
     setSeededRevision(revision)
   }, [detail, revision, seededRevision])
 
@@ -145,9 +145,9 @@ function ItemTypeConfigEditPage() {
         permissions,
       }
 
-      // Include workflowsByChangeType for ChangeOrder
+      // Include lifecyclesByChangeType for ChangeOrder
       if (itemType === 'ChangeOrder') {
-        config.workflowsByChangeType = workflowsByChangeType
+        config.lifecyclesByChangeType = lifecyclesByChangeType
       }
 
       await apiFetch('/api/v1/admin/item-type-configs', {
@@ -597,9 +597,9 @@ function ItemTypeConfigEditPage() {
                   <div key={changeType} className="flex items-center gap-4">
                     <Label className="w-24 font-medium">{changeType}</Label>
                     <Select
-                      value={workflowsByChangeType[changeType] || undefined}
+                      value={lifecyclesByChangeType[changeType] || undefined}
                       onValueChange={(value) =>
-                        setWorkflowsByChangeType((prev) => ({
+                        setLifecyclesByChangeType((prev) => ({
                           ...prev,
                           [changeType]: value || undefined,
                         }))
@@ -616,10 +616,10 @@ function ItemTypeConfigEditPage() {
                         ))}
                       </SelectContent>
                     </Select>
-                    {workflowsByChangeType[changeType] && (
+                    {lifecyclesByChangeType[changeType] && (
                       <Link
                         to="/workflows/$id"
-                        params={{ id: workflowsByChangeType[changeType] }}
+                        params={{ id: lifecyclesByChangeType[changeType] }}
                       >
                         <Button variant="outline" size="sm">
                           <ExternalLink className="w-4 h-4" />
@@ -630,7 +630,7 @@ function ItemTypeConfigEditPage() {
                 ))}
                 {/* Warning if not all types are assigned */}
                 {CHANGE_ORDER_TYPES.some(
-                  (type) => !workflowsByChangeType[type],
+                  (type) => !lifecyclesByChangeType[type],
                 ) && (
                   <div className="p-3 bg-red-50 border border-red-200 rounded text-red-800 text-sm dark:bg-red-900/20 dark:border-red-800 dark:text-red-400">
                     <AlertCircle className="w-4 h-4 inline mr-2" />

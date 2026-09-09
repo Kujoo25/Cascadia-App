@@ -153,7 +153,7 @@ chokepoint the behavior flows through, and make the licensed path the stricter
 one:
 
 ```typescript
-// WorkflowApprovalService.submitApproval — every approval route goes through here
+// ApprovalService.submitApproval — every approval route goes through here
 const signatureRequired = PackageRegistry.isEnabled('advanced-auditing')
 if (signatureRequired && !signing) {
   throw new SignatureRequiredError('submit an approval')

@@ -6,6 +6,7 @@ import { db } from '../db'
 import {
   branchItems,
   branches,
+  changeOrderAffectedItems,
   commits,
   itemVersions,
   items,
@@ -19,6 +20,7 @@ import { notDeleted, notWorkingRevision } from '../db/filters'
 import { likeContains } from '../db/like-pattern'
 import { BranchService } from './BranchService'
 import { DesignService } from './DesignService'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 /**
  * Version context types for viewing items
@@ -1358,25 +1360,57 @@ export class VersionResolver {
             exists = item !== null
           }
           // If no HEAD commit on main, item cannot exist on main yet
-        } else if (branch.branchType === 'eco') {
-          // For ECO branches, only show if item is explicitly tracked on this branch
-          // (i.e., it's an affected item in the ECO). Don't fall back to base commit
-          // because that would show the ECO for ALL items in the design.
-          const branchItem = await db
-            .select()
-            .from(branchItems)
-            .where(
-              and(
-                eq(branchItems.branchId, branch.id),
-                eq(branchItems.itemMasterId, itemMasterId),
-              ),
-            )
-            .limit(1)
+        } else if (branch.branchType === BRANCH_TYPES.changeOrder) {
+          // An ECO branch is offered for the items in that ECO's scope, and
+          // only those. No fallback to the base commit here, unlike the
+          // workspace/release arm below: every item in the design descends
+          // from it, so that fallback would offer every open ECO on every
+          // item.
+          //
+          // Scope is two conditions, not one. A `branch_items` row is the
+          // stronger of them - a working copy, a checkout, or content
+          // authored on the branch - but an affected item does not always
+          // have one: `addAffectedItem` mints the working copy only for
+          // `revise` of a released item, so `release`, `obsolete` and
+          // `promote` rows sit in the ECO's scope with nothing tracking them
+          // on its branch yet. Reading only the branch row hid the ECO from
+          // exactly those items, and since the checkout that would create the
+          // row is taken *on* the branch the picker was refusing to offer,
+          // a protected main left them with nowhere they could be edited.
+          const branchItemRow = (
+            await db
+              .select()
+              .from(branchItems)
+              .where(
+                and(
+                  eq(branchItems.branchId, branch.id),
+                  eq(branchItems.itemMasterId, itemMasterId),
+                ),
+              )
+              .limit(1)
+          ).at(0)
 
-          const branchItemRow = branchItem[0]
-          exists =
-            branchItemRow !== undefined &&
-            branchItemRow.changeType !== 'deleted'
+          if (branchItemRow) {
+            exists = branchItemRow.changeType !== 'deleted'
+          } else if (branch.changeOrderItemId) {
+            const affected = await db
+              .select({ id: changeOrderAffectedItems.id })
+              .from(changeOrderAffectedItems)
+              .where(
+                and(
+                  eq(
+                    changeOrderAffectedItems.changeOrderId,
+                    branch.changeOrderItemId,
+                  ),
+                  eq(
+                    changeOrderAffectedItems.affectedItemMasterId,
+                    itemMasterId,
+                  ),
+                ),
+              )
+              .limit(1)
+            exists = affected.at(0) !== undefined
+          }
         } else {
           // For workspace/release branches, check branchItems or base commit
           // First check if item was added/modified on this branch
@@ -1445,13 +1479,13 @@ export class VersionResolver {
    *
    * @param targetVersionId - The specific item version ID from the relationship
    * @param context - The version context to resolve at
-   * @param ecoDesignContexts - Optional map of designId -> context for ECO-affected designs
+   * @param changeOrderDesignContexts - Optional map of designId -> context for ECO-affected designs
    * @returns The resolved item at context, or null if not found
    */
   static async resolveRelationshipTarget(
     targetVersionId: string,
     context: VersionContext,
-    ecoDesignContexts?: Map<string, VersionContext>,
+    changeOrderDesignContexts?: Map<string, VersionContext>,
   ): Promise<typeof items.$inferSelect | null> {
     // Get the target item to find its masterId and designId
     const targetItem = await db
@@ -1471,8 +1505,8 @@ export class VersionResolver {
     let targetContext: VersionContext
 
     // Check if this design has a specific context in the ECO
-    if (ecoDesignContexts?.has(designId)) {
-      targetContext = ecoDesignContexts.get(designId)!
+    if (changeOrderDesignContexts?.has(designId)) {
+      targetContext = changeOrderDesignContexts.get(designId)!
     } else if (context.type === 'released' && 'designId' in context) {
       // If primary context is released and target is in same design, use same context
       if (context.designId === designId) {
@@ -1502,7 +1536,7 @@ export class VersionResolver {
   static async resolveRelationshipTargets(
     targetVersionIds: Array<string>,
     context: VersionContext,
-    ecoDesignContexts?: Map<string, VersionContext>,
+    changeOrderDesignContexts?: Map<string, VersionContext>,
   ): Promise<Map<string, typeof items.$inferSelect>> {
     const result = new Map<string, typeof items.$inferSelect>()
 
@@ -1548,8 +1582,8 @@ export class VersionResolver {
 
       // Determine context for this design
       let targetContext: VersionContext
-      if (ecoDesignContexts?.has(designId)) {
-        targetContext = ecoDesignContexts.get(designId)!
+      if (changeOrderDesignContexts?.has(designId)) {
+        targetContext = changeOrderDesignContexts.get(designId)!
       } else if (
         context.type === 'released' &&
         'designId' in context &&

@@ -719,12 +719,12 @@ export class MbomService {
       // Get ECO item number if applicable
       let sourceEcoNumber: string | null = null
       if (change.sourceEcoId) {
-        const [eco] = await db
+        const [changeOrder] = await db
           .select({ itemNumber: items.itemNumber })
           .from(items)
           .where(eq(items.id, change.sourceEcoId))
           .limit(1)
-        sourceEcoNumber = eco?.itemNumber ?? null
+        sourceEcoNumber = changeOrder?.itemNumber ?? null
       }
 
       results.push({

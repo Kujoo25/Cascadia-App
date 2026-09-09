@@ -9,7 +9,7 @@
  * type-level RBAC in front of them, and none of the three services draws the
  * boundary itself: `ItemService.create` has no design gate (unlike `update`
  * and `delete`), `ItemService.addRelationship` writes the edge
- * unconditionally, and `LifecycleService.transitionFreeItem` validates the
+ * unconditionally, and `LifecycleInstanceService.transitionFreeItem` validates the
  * lifecycle but no program. So a chatbot user or an MCP agent holding ordinary
  * `parts` grants could plant an item in another program's design, hang two of
  * its parts together, or drive its items through their states — knowing only a
@@ -417,7 +417,7 @@ describe('AI write tools — program isolation', () => {
  * Security gate. `update_item` and `transition_item_state` are single entry
  * points onto every registered item type — the first writes whatever
  * `ItemService.findById` returns, the second drives every Free lifecycle
- * through `LifecycleService.transitionFreeItem` — yet each declared one fixed
+ * through `LifecycleInstanceService.transitionFreeItem` — yet each declared one fixed
  * RBAC tuple to the wrapper: `parts:update` and `change_orders:update`
  * respectively. Nothing below the wrapper re-checks RBAC, so those tuples were
  * the whole gate, and they were wrong in both directions. A grant on `parts`
@@ -455,7 +455,7 @@ describe('AI write tools — permission resource follows the target item type', 
   let partsUser: TestUser
   let documentsUser: TestUser
   let tasksUser: TestUser
-  let ecoUser: TestUser
+  let changeOrderUser: TestUser
 
   let documentId: string
   let taskId: string
@@ -530,7 +530,7 @@ describe('AI write tools — permission resource follows the target item type', 
     partsUser = byRole.parts!
     documentsUser = byRole.documents!
     tasksUser = byRole.tasks!
-    ecoUser = byRole.eco!
+    changeOrderUser = byRole.eco!
 
     const program = await ProgramService.create(
       {
@@ -539,7 +539,7 @@ describe('AI write tools — permission resource follows the target item type', 
       },
       partsUser.id,
     )
-    for (const user of [documentsUser, tasksUser, ecoUser]) {
+    for (const user of [documentsUser, tasksUser, changeOrderUser]) {
       await ProgramService.addMember(
         program.id,
         user.id,
@@ -581,14 +581,14 @@ describe('AI write tools — permission resource follows the target item type', 
         priority: 'medium',
         reasonForChange: 'Permission resource coverage',
       },
-      ecoUser.id,
+      changeOrderUser.id,
     )
     changeOrderId = changeOrder.id!
 
     // The released part lives in a design of its own: releasing it protects
     // that design's main branch, which would otherwise change how every other
     // item here is edited.
-    const ecoDesign = await DesignService.create(
+    const changeOrderDesign = await DesignService.create(
       {
         programId: program.id,
         name: 'AI2-4 Released Design',
@@ -601,7 +601,7 @@ describe('AI write tools — permission resource follows the target item type', 
       'Part',
       {
         itemType: 'Part',
-        designId: ecoDesign.id,
+        designId: changeOrderDesign.id,
         name: 'Released Bracket',
         partType: 'Manufacture',
         state: 'Released',
@@ -611,12 +611,12 @@ describe('AI write tools — permission resource follows the target item type', 
     )
     releasedPartId = releasedPart.id!
 
-    // `requireEcoAccess` reads the ECO's design links, so the ECO has to name
-    // one to be reachable at all. `checkoutItemToEco` would create this row
+    // `requireChangeOrderAccess` reads the ECO's design links, so the ECO has to name
+    // one to be reachable at all. `checkoutItem` would create this row
     // itself; seeding it keeps the ECO openable before any checkout happens.
     await testDb.db.insert(changeOrderDesigns).values({
       changeOrderId,
-      designId: ecoDesign.id,
+      designId: changeOrderDesign.id,
     })
   })
 
@@ -672,7 +672,7 @@ describe('AI write tools — permission resource follows the target item type', 
   }
 
   /** Working copies this ECO has taken, across its branches. */
-  async function branchItemsForEco(): Promise<number> {
+  async function branchItemsForChangeOrder(): Promise<number> {
     const rows = await testDb.db
       .select({ id: branchItems.id })
       .from(branchItems)
@@ -726,7 +726,7 @@ describe('AI write tools — permission resource follows the target item type', 
     // The ECO approver holds `change_orders:update` — the tuple this tool used
     // to declare whatever the item's type — and nothing on tasks.
     await expectRefusedByRbac(
-      transitionItemStateHandler(input, ctx(ecoUser)),
+      transitionItemStateHandler(input, ctx(changeOrderUser)),
       'transition Task as ECO approver',
     )
     expect(await stateOf(taskId)).toBe(before)
@@ -761,7 +761,7 @@ describe('AI write tools — permission resource follows the target item type', 
     // did — the wrapper runs strictly before the handler.
     const preview = (await transitionItemStateHandler(
       input,
-      ctx(ecoUser),
+      ctx(changeOrderUser),
     )) as WriteEnvelope
     expect(preview.requiresConfirmation, 'preview').toBe(true)
     expect(typeof preview.confirmationToken, 'preview token').toBe('string')
@@ -791,18 +791,18 @@ describe('AI write tools — permission resource follows the target item type', 
     expect(refused.success, 'execute without change_orders:update').toBe(false)
     expect(await nameOf(releasedPartId)).toBe(before)
     // Nothing was checked out either: the guard sits above the checkout.
-    expect(await branchItemsForEco()).toBe(0)
+    expect(await branchItemsForChangeOrder()).toBe(0)
 
-    const ecoPreview = (await updateItemHandler(
+    const changeOrderPreview = (await updateItemHandler(
       input,
-      ctx(ecoUser),
+      ctx(changeOrderUser),
     )) as WriteEnvelope
     const executed = (await updateItemHandler(
-      { ...input, confirmationToken: ecoPreview.confirmationToken! },
-      ctx(ecoUser),
+      { ...input, confirmationToken: changeOrderPreview.confirmationToken! },
+      ctx(changeOrderUser),
     )) as WriteEnvelope
     expect(executed.success, 'execute with change_orders:update').toBe(true)
-    expect(await branchItemsForEco()).toBe(1)
+    expect(await branchItemsForChangeOrder()).toBe(1)
   })
 
   it('refuses create_relationship from a Document to a parts-only grant, and serves a documents grant', async () => {

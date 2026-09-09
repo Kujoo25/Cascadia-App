@@ -19,7 +19,14 @@ import {
 } from '@/lib/query'
 import { apiFetch } from '@/lib/api/client'
 
+// Version-context params + tab. useVersionContext reads and writes
+// branch/tag/commit through the URL; validateSearch strips anything the
+// schema does not name, so without these a context switch (or a
+// revise-checkout navigation) silently lands back on main.
 const softwareDetailSearchSchema = z.object({
+  branch: z.string().uuid().optional(),
+  tag: z.string().uuid().optional(),
+  commit: z.string().uuid().optional(),
   tab: z.enum(SOFTWARE_DETAIL_TABS).optional().default('details'),
 })
 
@@ -94,6 +101,7 @@ function SoftwareDetailPage() {
       to: '/software/$id',
       params: { id: software.id ?? '' },
       search: {
+        ...search,
         tab,
       },
       replace: true,

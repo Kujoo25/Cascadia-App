@@ -123,3 +123,15 @@ npx openapi-typescript docs/api/openapi.v1.json -o api-types.d.ts
 ```
 
 Or use any OpenAPI-compatible toolchain (Kiota, openapi-generator, Stoplight, etc.).
+
+## v2 backlog
+
+v1 is frozen, so every rename in the change-management remediation is additive on the wire: new paths mount beside the old ones, response keys are never removed, and persisted values that appear in responses keep their spelling. What could not be done additively is collected here, to be taken up together when v2 is cut — after the lifecycle consolidation, as its own project.
+
+- **Persisted values that appear in responses.** `branchType: 'eco'` and `tagType: 'eco-release'`; the code reads them as `BRANCH_TYPES.changeOrder` and `TAG_TYPES.changeOrderRelease` (`packages/core/src/lib/versioning/branch-types.ts`), and the `eco/` branch-name prefix goes with them.
+- **Columns and the properties that mirror them.** `program_members.can_create_eco` / `can_approve_eco` (`canCreateEco`, `canApproveEco`); `conflict_reviews.their_eco_id` (`theirEcoId`, with `theirEcoNumber`); `work_instruction_change_alerts.eco_id`; `upstream_changes.source_eco_id` / `response_eco_id`.
+- **Request and response properties.** `ecoId`, `ecoTitle`, `ecoDescription`, `ecoNumber`, `ecoName`, `ecoBranches`, `ecoBranch`, `ecoDesign`, `ecos`, `isInEco`.
+- **Path aliases kept for v1.** `/designs/{id}/ecos` (now `/designs/{id}/change-orders`), `/workspaces/{id}/convert-to-eco` and `/merge-to-eco` (now `-change-order`), and `/workflows*`, now mounted canonically at `/lifecycles*` (whose responses keep the `lifecycles` / `workflow` keys for the same reason).
+- **`workflowType: 'strict' | 'flexible'`**, a response property and a `NOT NULL` column, becomes `structure: 'fixed' | 'per-instance'`.
+- **The `workflows` permission resource** became `lifecycles` in the lifecycle consolidation — the roles API enumerates no resource names, so it did not have to wait. Stored role and API-key maps were migrated; the server reads `workflows` as `lifecycles` for one release.
+- **Job payload keys.** `notification.workinstruction.partchanged` accepts `changeOrderId` and, for one release, the `ecoId` it shipped with; the old key is dropped after that.

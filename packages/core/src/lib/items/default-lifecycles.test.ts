@@ -26,12 +26,16 @@ import {
 } from './default-lifecycles'
 import { LIFECYCLE_IDS } from './lifecycle-ids'
 import { TestDatabase } from '@/__tests__/helpers/db'
-import { itemTypeConfigs, workflowDefinitions } from '@/lib/db/schema'
+import { itemTypeConfigs, lifecycleDefinitions } from '@/lib/db/schema'
 import { ItemTypeRegistry } from '@/lib/items/registry'
 import '@/lib/items/registerItemTypes.server'
 
 interface StoredDefinition {
-  states: Array<{ id: string; position?: { x: number; y: number } }>
+  states: Array<{
+    id: string
+    isInitial?: boolean
+    position?: { x: number; y: number }
+  }>
 }
 
 describe('seedDefaultLifecycles', () => {
@@ -56,12 +60,12 @@ describe('seedDefaultLifecycles', () => {
   async function readTool() {
     const [row] = await testDb.db
       .select({
-        version: workflowDefinitions.version,
-        definition: workflowDefinitions.definition,
-        drivers: workflowDefinitions.drivers,
+        version: lifecycleDefinitions.version,
+        definition: lifecycleDefinitions.definition,
+        drivers: lifecycleDefinitions.drivers,
       })
-      .from(workflowDefinitions)
-      .where(eq(workflowDefinitions.id, LIFECYCLE_IDS.tool))
+      .from(lifecycleDefinitions)
+      .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.tool))
     if (!row) throw new Error('Tool lifecycle missing')
     return { ...row, definition: row.definition as StoredDefinition }
   }
@@ -94,9 +98,30 @@ describe('seedDefaultLifecycles', () => {
     }
   })
 
+  /**
+   * `StateNode` connects bottom-to-top, so a shipped default only reads as a
+   * flow if its ranks run downward — the initial state at the top. Ranking
+   * left-to-right instead still produces non-overlapping boxes and still
+   * passes every other gate here, so nothing but this catches it; what it
+   * looked like was every edge leaving downward and looping back up, which is
+   * how the ECO lifecycle tab shipped until the layout moved to `rankdir: TB`.
+   */
+  it('lays every default out downward from its initial state', () => {
+    for (const lifecycle of DEFAULT_ITEM_LIFECYCLES) {
+      const states = (lifecycle.definition as unknown as StoredDefinition)
+        .states
+      const top = Math.min(...states.map((s) => s.position!.y))
+      for (const state of states.filter((s) => s.isInitial)) {
+        expect(`${lifecycle.name}/${state.id} y=${state.position!.y}`).toBe(
+          `${lifecycle.name}/${state.id} y=${top}`,
+        )
+      }
+    }
+  })
+
   it('upgrades a row that is behind the shipped version', async () => {
     await testDb.db
-      .update(workflowDefinitions)
+      .update(lifecycleDefinitions)
       .set({
         version: 0,
         definition: {
@@ -105,7 +130,7 @@ describe('seedDefaultLifecycles', () => {
           lifecycleType: 'Free',
         },
       })
-      .where(eq(workflowDefinitions.id, LIFECYCLE_IDS.tool))
+      .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.tool))
 
     await seedDefaultLifecycles(testDb.db)
 
@@ -125,9 +150,9 @@ describe('seedDefaultLifecycles', () => {
       lifecycleType: 'Free',
     }
     await testDb.db
-      .update(workflowDefinitions)
+      .update(lifecycleDefinitions)
       .set({ version: shippedTool.version + 1, definition: edited })
-      .where(eq(workflowDefinitions.id, LIFECYCLE_IDS.tool))
+      .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.tool))
 
     await seedDefaultLifecycles(testDb.db)
     await seedDefaultLifecycles(testDb.db)
@@ -139,9 +164,9 @@ describe('seedDefaultLifecycles', () => {
 
   it('leaves a configured drivers allow-list and a richer type config alone', async () => {
     await testDb.db
-      .update(workflowDefinitions)
+      .update(lifecycleDefinitions)
       .set({ drivers: [LIFECYCLE_IDS.changeOrder] })
-      .where(eq(workflowDefinitions.id, LIFECYCLE_IDS.tool))
+      .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.tool))
     const richer = {
       lifecycleDefinitionId: LIFECYCLE_IDS.tool,
       permissions: {

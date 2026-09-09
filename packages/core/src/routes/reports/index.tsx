@@ -15,6 +15,7 @@ import {
   CardTitle,
 } from '@/components/ui'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { reportListQuery, useInvalidateResources } from '@/lib/query'
 import { apiFetch } from '@/lib/api/client'
 import { ReportTable } from '@/components/reports/ReportTable'
@@ -26,7 +27,8 @@ export const Route = createFileRoute('/reports/')({
 })
 
 function ReportsListPage() {
-  const { confirm, alert } = useAlertDialog()
+  const { confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   const { data: reports = [] } = useQuery(reportListQuery())
 
@@ -47,12 +49,7 @@ function ReportsListPage() {
 
           await invalidate('reports')
         } catch (error) {
-          console.error('Error deleting report:', error)
-          alert({
-            title: 'Error',
-            description: 'Failed to delete report',
-            variant: 'destructive',
-          })
+          handleError(error, { title: 'Failed to delete report' })
         }
       },
     })

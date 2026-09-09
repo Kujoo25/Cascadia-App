@@ -91,7 +91,7 @@ Traditional PLM systems (Aras Innovator, Windchill, Teamcenter) rely on UI-based
 Cascadia takes the opposite approach:
 
 - **Item types are TypeScript interfaces** registered via `ItemTypeRegistry`. Adding a field means adding a Drizzle column and a Zod property.
-- **Workflows are code-defined state machines** stored in `workflow_definitions` with transitions validated by `WorkflowService`.
+- **Workflows are code-defined state machines** stored in `workflow_definitions` with transitions validated by `LifecycleDefinitionService` and run by `LifecycleInstanceService`.
 - **Permissions are declared in code** (`ROLE_DEFINITIONS` in `packages/core/src/lib/auth/permissions.ts`) and enforced via `apiHandler()`.
 - **All customization lives in the Git repository**, reviewed through PRs, tested with Vitest/Playwright.
 

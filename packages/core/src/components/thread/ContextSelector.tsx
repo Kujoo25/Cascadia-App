@@ -13,6 +13,7 @@ import {
 import type { VersionContext } from '@/lib/services/VersionResolver'
 import type { ComparisonTargets } from '@/lib/services/ThreadComparisonService'
 import { cn } from '@/lib/utils'
+import { TAG_TYPES } from '@/lib/versioning/branch-types'
 
 interface ContextSelectorProps {
   targets: ComparisonTargets
@@ -28,7 +29,7 @@ const tagTypeLabels: Record<string, string> = {
   baseline: 'Baselines',
   release: 'Releases',
   milestone: 'Milestones',
-  'eco-release': 'ECO Releases',
+  [TAG_TYPES.changeOrderRelease]: 'Change Order Releases',
 }
 
 /**

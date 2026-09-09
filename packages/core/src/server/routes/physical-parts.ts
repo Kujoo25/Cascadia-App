@@ -14,7 +14,6 @@ import {
   addEvidenceSchema,
 } from '@/lib/services/QualificationService'
 import { ItemService } from '@/lib/items/services/ItemService'
-import { LifecycleService } from '@/lib/services/LifecycleService'
 import { ThreadComparisonService } from '@/lib/services/ThreadComparisonService'
 import { NotFoundError } from '@/lib/errors'
 import { apiHandler, created } from '@/lib/api/handler'
@@ -23,6 +22,7 @@ import {
   requirePartMasterAccess,
   requirePhysicalPartAccess,
 } from '@/lib/auth/access'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
 import '@/lib/items/registerItemTypes.server'
 
 const adapt = tagged('PhysicalParts')
@@ -292,7 +292,11 @@ app.patch(
         // (WI-2.1); everything else through the generic item update.
         const { state, ...rest } = data
         if (state && state !== existing.state) {
-          await LifecycleService.transitionFreeItem(params.id, state, user.id)
+          await LifecycleInstanceService.transitionFreeItem(
+            params.id,
+            state,
+            user.id,
+          )
         }
         if (Object.keys(rest).length > 0) {
           await ItemService.update(params.id, rest, user.id)

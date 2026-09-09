@@ -341,6 +341,12 @@ export async function seedRobotArm(): Promise<DatasetResult> {
       partRow: typeof parts.$inferInsert
     }
 
+    // A part the BOM nests under another is not a top-level part of the
+    // design's structure; only the parts nothing points at are.
+    const nestedItemNumbers = new Set(
+      manifest.relationships.map((rel) => rel.child),
+    )
+
     const itemIdByNumber = new Map<string, string>()
     const masterIdByNumber = new Map<string, string>()
     const prepared: Array<PreparedItem> = sortedParts.map((p) => {
@@ -359,7 +365,7 @@ export async function seedRobotArm(): Promise<DatasetResult> {
           name: p.name,
           state: 'Draft',
           isCurrent: true,
-          inDesignStructure: true,
+          inDesignStructure: !nestedItemNumbers.has(p.itemNumber),
           createdBy: admin.id,
           modifiedBy: admin.id,
         },

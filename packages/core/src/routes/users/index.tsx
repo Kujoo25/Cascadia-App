@@ -19,6 +19,7 @@ import {
   CardTitle,
 } from '@/components/ui'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import {
   roleListQuery,
   useInvalidateResources,
@@ -38,6 +39,7 @@ export const Route = createFileRoute('/users/')({
 
 function UsersListPage() {
   const { alert, confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   const { data: users = [] } = useQuery(userListQuery())
   const { data: roles = [] } = useQuery(roleListQuery())
@@ -99,12 +101,7 @@ function UsersListPage() {
                 : `${user.email} is referenced by business records, so the account was preserved and deactivated. All sessions were revoked.`,
           })
         } catch (error) {
-          console.error('Error deleting user:', error)
-          alert({
-            title: 'Error',
-            description: 'Failed to delete user',
-            variant: 'destructive',
-          })
+          handleError(error, { title: 'Failed to delete user' })
         }
       },
     })

@@ -35,8 +35,11 @@ covers that case. For each migration whose outcome depends on rows it
 stages the journal to the tag before it, seeds the shape of data that tag's
 SQL exists to handle, applies just that one file, and asserts what it did —
 including the migrations that are supposed to fail, which must abort with
-the documented SQLSTATE and leave the database exactly where it was. It
-runs in the Migrations Apply job against its own scratch database.
+the documented SQLSTATE and leave the database exactly where it was. A
+migration with no DDL at all is applied a second time and asserted again,
+because that is what happens to it on a database `db:baseline` placed: the
+schema cannot show it has run, so the stamp stops before it. It runs in
+the Migrations Apply job against its own scratch database.
 
 "Depends on rows" is two families. The writes — `UPDATE`, `DELETE`,
 `INSERT` — are the obvious one. The other is DDL Postgres validates against
@@ -65,7 +68,10 @@ proved the happy path cannot let this regress into stamping whatever it was
 handed. It runs in the Migrations Apply job against its own scratch
 database. Running it for every prefix is also what keeps the placement
 honest as migrations accumulate: a new migration `db:baseline` could not
-tell apart from the one before it would stamp one row short and fail here.
+tell apart from the one before it would stamp one row short and fail here
+— unless it changes no schema at all, in which case stopping one row short
+and leaving it for `db:migrate` is the honest answer, and the check expects
+exactly that.
 
 If a statement genuinely cannot behave differently against rows — a
 constraint the database already enforced under another name, say — record
@@ -104,6 +110,17 @@ records **only the migrations that schema actually satisfies** — the rest stay
 pending, and step 4 applies them for real. A database pushed at v0.5.0 gets
 one migration recorded; one kept current with `db:push` against a later
 release gets all of them. Either is fine, and neither needs an old checkout.
+
+One kind of migration the schema cannot vouch for: a migration that changes
+rows and nothing else. `db:baseline` places the database at the migration
+before it, says so, and leaves it pending; step 4 applies it. Every such
+migration is written to be applied to a database that already carries its
+effect, and `db:check-backfills` proves it by applying each one twice.
+
+The tree ships none at the moment — the change-order vocabulary rename and the
+two that followed it were the first, and the fold described below put them in
+a file that also changes the schema. The mechanism stays because the next one
+will need it, and both checks still cover it.
 
 That precision is not decoration. Drizzle's migrator resumes from the newest
 row in the journal rather than checking each migration off, so a migration
@@ -265,6 +282,18 @@ one. Three things make that true, and all three have to hold:
    that null dangling pointers before validation, or the guards that abort on
    history corruption on purpose. Regenerating drops all of them, which is
    invisible on an empty database and destroys a populated upgrade.
+
+A fold can also change what kind of migration the wave **is**, which is worth
+checking rather than assuming. A run of data-only migrations concatenated with
+one that alters the schema produces a file that is no longer data-only:
+`db:baseline` can see this one in the schema, so it stamps the file instead of
+stopping before it, and `check-migration-backfills.mjs` stops applying it a
+second time of its own accord. The guards on the row statements are still what
+protects a database carrying their effect but not the schema mark, so the
+scenarios that proved them say `applyTwice` and go on proving them — losing
+that proof as a side effect of a fold is exactly the kind of silent gap these
+checks exist to close. `isDataOnly` in `scripts/migration-row-dependence.mjs`
+is what both behaviours read.
 
 Rule 2's first-versus-last distinction is not hypothetical; the rule reads
 the way it does because of this. The v0.5.1 fold first shipped carrying the

@@ -60,7 +60,6 @@ export const RESOURCES = [
   'users',
   'work-instructions',
   'work-orders',
-  'workflows',
   'workspaces',
 ] as const
 

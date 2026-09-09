@@ -14,18 +14,18 @@ import {
 } from '@/components/items/AttributesEditor'
 import { ItemHistoryTab } from '@/components/items/ItemHistoryTab'
 import { StateBadge } from '@/components/items/StateBadge'
-import { EcoHistoryGraphView } from '@/components/change-orders/EcoHistoryGraphView'
+import { ChangeOrderHistoryGraphView as ChangeOrderHistoryGraphView } from '@/components/change-orders/ChangeOrderHistoryGraphView'
 import { useVersionContext } from '@/lib/hooks/useVersionContext'
 import { useLifecyclePhases } from '@/lib/hooks/useLifecyclePhases'
 import { FileList, FileUploadZone } from '@/components/vault'
 import { GraphNavigator } from '@/components/items/GraphNavigator'
-import { EcoAffectedItemsPanel } from '@/components/change-orders/EcoAffectedItemsPanel'
+import { ChangeOrderAffectedItemsPanel } from '@/components/change-orders/ChangeOrderAffectedItemsPanel'
 import { ImpactAssessmentPanel } from '@/components/change-orders/ImpactAssessmentPanel'
-import { EcoSummaryDashboard } from '@/components/change-orders/EcoSummaryDashboard'
+import { ChangeOrderSummaryDashboard as ChangeOrderSummaryDashboard } from '@/components/change-orders/ChangeOrderSummaryDashboard'
 import { ConflictsList } from '@/components/change-orders/ConflictsList'
 import { ApprovalStatusPanel } from '@/components/change-orders/ApprovalStatusPanel'
-import { WorkflowTransitionActions } from '@/components/workflows/WorkflowTransitionActions'
-import { WorkflowInstanceEditor } from '@/components/change-orders/WorkflowInstanceEditor'
+import { TransitionActions } from '@/components/lifecycles/TransitionActions'
+import { LifecycleInstanceEditor } from '@/components/change-orders/LifecycleInstanceEditor'
 import {
   Badge,
   Button,
@@ -52,7 +52,8 @@ import {
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
 import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import {
-  changeOrderWorkflowStructureQuery,
+  changeOrderDesignsQuery,
+  changeOrderLifecycleStructureQuery,
   useInvalidateResources,
 } from '@/lib/query'
 import { designDetailQuery, designListQuery } from '@/lib/query/options/designs'
@@ -180,14 +181,26 @@ export function ChangeOrderDetail({
   )
 
   const { data: workflowStructure } = useQuery(
-    changeOrderWorkflowStructureQuery(
+    changeOrderLifecycleStructureQuery(
       changeOrder.id ?? '',
       !isCreateMode && !!changeOrder.id,
     ),
   )
 
+  // The branch-backed panels — the summary dashboard and the branch history —
+  // belong to any change order that carries branches, not to the ECO type
+  // value: an MCO's branches are identical to an ECO's, and gating on the
+  // type left its branch history invisible on its own page.
+  const { data: designScope } = useQuery({
+    ...changeOrderDesignsQuery(changeOrder.id ?? ''),
+    enabled: !isCreateMode && Boolean(changeOrder.id),
+  })
+  const hasBranches = (designScope?.designs ?? []).some(
+    (d) => d.branchId !== null,
+  )
+
   // Editable while the workflow has not reached a final state — the same rule
-  // the server enforces (`assertChangeOrderEditable`). Gating on the literal
+  // the server enforces (`ChangeOrderService.assertEditable`). Gating on the literal
   // state name 'Draft' made a change order uneditable and undeletable through
   // the UI whenever its workflow called the initial state anything else.
   const currentWorkflowState = workflowStructure?.states.find(
@@ -336,7 +349,9 @@ export function ChangeOrderDetail({
         { value: 'conflicts', label: 'Conflicts' },
         { value: 'impact', label: 'Impact' },
         { value: 'approvals', label: 'Approvals' },
-        { value: 'workflow', label: 'Workflow' },
+        // The value is the tab's search-param key and stays; the label
+        // matches the sidebar (remediation plan, Decision 8).
+        { value: 'workflow', label: 'Lifecycle' },
         { value: 'history', label: 'History' },
       ]
 
@@ -361,6 +376,10 @@ export function ChangeOrderDetail({
                 <StateBadge
                   itemType="ChangeOrder"
                   state={currentChangeOrder.state}
+                  // The instance's own states: a change order runs whichever
+                  // definition its change type maps to, and a flexible one
+                  // may carry states of its own
+                  states={workflowStructure?.states}
                   className="text-base"
                 />
               )}
@@ -383,7 +402,7 @@ export function ChangeOrderDetail({
 
         <div className="flex flex-wrap items-center gap-3">
           {!isCreateMode && !isEditing && currentChangeOrder.id && (
-            <WorkflowTransitionActions
+            <TransitionActions
               itemId={currentChangeOrder.id}
               itemNumber={currentChangeOrder.itemNumber ?? ''}
             />
@@ -705,12 +724,12 @@ export function ChangeOrderDetail({
                 </Card>
               )}
 
-              {/* ECO Summary Dashboard (only for existing ECOs) */}
-              {!isCreateMode &&
-                currentChangeOrder.id &&
-                currentChangeOrder.changeType === 'ECO' && (
-                  <EcoSummaryDashboard changeOrderId={currentChangeOrder.id} />
-                )}
+              {/* Summary dashboard: the branches and what they carry */}
+              {!isCreateMode && currentChangeOrder.id && hasBranches && (
+                <ChangeOrderSummaryDashboard
+                  changeOrderId={currentChangeOrder.id}
+                />
+              )}
             </div>
 
             {/* Sidebar - Right column */}
@@ -879,7 +898,7 @@ export function ChangeOrderDetail({
         {!isCreateMode && (
           <TabsContent value="affected-items" className="mt-6">
             {currentChangeOrder.id && (
-              <EcoAffectedItemsPanel
+              <ChangeOrderAffectedItemsPanel
                 changeOrderId={currentChangeOrder.id}
                 changeOrderState={currentChangeOrder.state ?? ''}
                 readOnly={isHistoricalView}
@@ -935,16 +954,11 @@ export function ChangeOrderDetail({
             {currentChangeOrder.id && workflowStructure ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>Workflow Editor</CardTitle>
-                  <CardDescription>
-                    {workflowStructure.canEdit
-                      ? 'Add, remove, or modify workflow states and transitions'
-                      : 'View the workflow structure'}
-                  </CardDescription>
+                  <CardTitle>Lifecycle</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="h-[600px] border rounded-lg overflow-hidden">
-                    <WorkflowInstanceEditor
+                    <LifecycleInstanceEditor
                       changeOrderId={currentChangeOrder.id}
                       instanceId={workflowStructure.instanceId}
                       states={workflowStructure.states}
@@ -971,8 +985,8 @@ export function ChangeOrderDetail({
         {/* History Tab */}
         {!isCreateMode && (
           <TabsContent value="history" className="mt-6">
-            {currentChangeOrder.changeType === 'ECO' ? (
-              <EcoHistoryGraphView
+            {hasBranches ? (
+              <ChangeOrderHistoryGraphView
                 changeOrderId={currentChangeOrder.id ?? ''}
               />
             ) : (

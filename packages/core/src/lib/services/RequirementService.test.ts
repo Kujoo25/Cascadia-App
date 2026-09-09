@@ -52,6 +52,7 @@ import { ItemRelationshipService } from '@/lib/items/services/ItemRelationshipSe
 import { resolveEdgeGuardEnd } from '@/lib/items/traceability-relationships'
 import { ChangeOrderService } from '@/lib/items/services/ChangeOrderService'
 import { takeFirst } from '@/lib/db/take-first'
+import { seedWorkOrderLifecycle } from '@/__tests__/fixtures/lifecycles'
 import '@/lib/items/registerItemTypes.server'
 
 describe('RequirementService', () => {
@@ -62,6 +63,10 @@ describe('RequirementService', () => {
 
   beforeAll(async () => {
     await testDb.setup()
+    // A Free lifecycle this suite can rely on for the exempt-source case: the
+    // shared default seed is first-writer-wins, and other suites re-link Task
+    // and Tool.
+    await seedWorkOrderLifecycle(testDb.db)
   })
 
   afterAll(async () => {
@@ -1231,7 +1236,7 @@ describe('RequirementService', () => {
 
   describe('branch protection on traceability links', () => {
     let changeOrderId: string
-    let ecoBranchId: string
+    let changeOrderBranchId: string
 
     async function createReleased(
       itemType: 'Requirement' | 'Part',
@@ -1284,14 +1289,14 @@ describe('RequirementService', () => {
           designId,
           name: 'Branch Test Case',
         },
-        ecoBranchId,
+        changeOrderBranchId,
         'Added test case',
         user.id,
       )
       const testCase = item as PersistedItem
 
       await CheckoutService.checkout(
-        { itemMasterId: testCase.masterId, branchId: ecoBranchId },
+        { itemMasterId: testCase.masterId, branchId: changeOrderBranchId },
         user.id,
       )
       return testCase
@@ -1304,7 +1309,7 @@ describe('RequirementService', () => {
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoBranchId),
+            eq(branchItems.branchId, changeOrderBranchId),
             eq(branchItems.itemMasterId, masterId),
           ),
         )
@@ -1327,12 +1332,12 @@ describe('RequirementService', () => {
       )
       changeOrderId = changeOrder.id
 
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrderId,
         user.id,
       )
-      ecoBranchId = branch.id
+      changeOrderBranchId = branch.id
     })
 
     it('refuses a verification link on a released requirement', async () => {
@@ -1374,7 +1379,7 @@ describe('RequirementService', () => {
       const testCase = await createBranchTestCase()
       const requirement = await createReleased('Requirement')
 
-      await ChangeOrderService.checkoutItemToEco(
+      await ChangeOrderService.checkoutItem(
         changeOrderId,
         requirement.id,
         user.id,
@@ -1386,7 +1391,7 @@ describe('RequirementService', () => {
         requirement.id,
         [testCase.id],
         user.id,
-        { branchId: ecoBranchId },
+        { branchId: changeOrderBranchId },
       )
 
       // The link lives on the branch, not on the released baseline.
@@ -1408,7 +1413,7 @@ describe('RequirementService', () => {
         part as unknown as Parameters<
           typeof ChangeOrderService.createRevisionWorkingCopy
         >[0],
-        ecoBranchId,
+        changeOrderBranchId,
         user.id,
       )
 
@@ -1417,24 +1422,28 @@ describe('RequirementService', () => {
           requirement.id,
           [part.id],
           user.id,
-          { branchId: ecoBranchId },
+          { branchId: changeOrderBranchId },
         ),
       ).rejects.toThrow(ItemCheckoutRequiredError)
     })
 
     it('sends the rule to the requirement end only for an exempt source', async () => {
-      // An item type with no lifecycle assigned resolves Free, so this says
-      // "exempt source" without depending on any configured lifecycle row.
-      const exempt = 'UnmappedType'
-
-      expect(await resolveEdgeGuardEnd(exempt, 'VERIFIED_BY')).toBe('target')
+      // WorkOrder runs the Free lifecycle seeded above, which is what makes a
+      // source exempt. A type with no lifecycle assigned is not exempt: an
+      // unresolvable kind fails closed, so the rule stays on the source.
+      expect(await resolveEdgeGuardEnd('WorkOrder', 'VERIFIED_BY')).toBe(
+        'target',
+      )
+      expect(await resolveEdgeGuardEnd('UnmappedType', 'VERIFIED_BY')).toBe(
+        'source',
+      )
       expect(await resolveEdgeGuardEnd('Part', 'SATISFIES')).toBe('source')
 
       // Scope management runs ChangeOrder -> Part and must keep answering to
       // its source: requiring the affected item to be checked out before it
       // could be added to the ECO would never terminate.
       expect(await resolveEdgeGuardEnd('ChangeOrder', 'Affects')).toBe('source')
-      expect(await resolveEdgeGuardEnd(exempt, 'BOM')).toBe('source')
+      expect(await resolveEdgeGuardEnd('WorkOrder', 'BOM')).toBe('source')
     })
 
     it('records satisfaction against the ECO part row, never the released one', async () => {
@@ -1445,18 +1454,14 @@ describe('RequirementService', () => {
         RequirementService.linkSatisfaction(requirement.id, [part.id], user.id),
       ).rejects.toThrow(BranchProtectionError)
 
-      await ChangeOrderService.checkoutItemToEco(
-        changeOrderId,
-        part.id,
-        user.id,
-      )
+      await ChangeOrderService.checkoutItem(changeOrderId, part.id, user.id)
       const partWorkingCopyId = await branchRowId(part.masterId)
 
       await RequirementService.linkSatisfaction(
         requirement.id,
         [part.id],
         user.id,
-        { branchId: ecoBranchId },
+        { branchId: changeOrderBranchId },
       )
 
       const edges = await testDb.db
@@ -1475,7 +1480,7 @@ describe('RequirementService', () => {
         RequirementService.allocateToDesign(requirement.id, part.id, user.id),
       ).rejects.toThrow(BranchProtectionError)
 
-      await ChangeOrderService.checkoutItemToEco(
+      await ChangeOrderService.checkoutItem(
         changeOrderId,
         requirement.id,
         user.id,
@@ -1486,7 +1491,7 @@ describe('RequirementService', () => {
         requirement.id,
         part.id,
         user.id,
-        { branchId: ecoBranchId },
+        { branchId: changeOrderBranchId },
       )
 
       const allocated = await RequirementService.getAllocatedItems(

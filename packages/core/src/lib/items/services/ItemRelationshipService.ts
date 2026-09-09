@@ -3,7 +3,13 @@
 
 import { and, eq, inArray } from 'drizzle-orm'
 import { db } from '../../db'
-import { branchItems, designs, itemRelationships, items } from '../../db/schema'
+import {
+  branchItems,
+  branches,
+  designs,
+  itemRelationships,
+  items,
+} from '../../db/schema'
 import {
   AlreadyExistsError,
   NotFoundError,
@@ -23,6 +29,7 @@ import type { TransactionClient } from '../../db'
 import type { PersistedItem } from '../types/base'
 import { itemLogger } from '@/lib/logging/logger'
 import { takeFirst } from '@/lib/db/take-first'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 /**
  * The 409 for an edge that is already there. One shape for every path that can
@@ -406,7 +413,7 @@ export class ItemRelationshipService {
       )
 
     // 5. Build ECO branchItems map for resolving target IDs to their ECO versions
-    const ecoBranchItemsResult = await db
+    const changeOrderBranchItemsResult = await db
       .select({
         currentItemId: branchItems.currentItemId,
         itemMasterId: branchItems.itemMasterId,
@@ -414,10 +421,10 @@ export class ItemRelationshipService {
       .from(branchItems)
       .where(eq(branchItems.branchId, branchId))
 
-    const ecoMasterToItemId = new Map<string, string>()
-    for (const bi of ecoBranchItemsResult) {
+    const changeOrderMasterToItemId = new Map<string, string>()
+    for (const bi of changeOrderBranchItemsResult) {
       if (bi.currentItemId && bi.itemMasterId) {
-        ecoMasterToItemId.set(bi.itemMasterId, bi.currentItemId)
+        changeOrderMasterToItemId.set(bi.itemMasterId, bi.currentItemId)
       }
     }
 
@@ -437,10 +444,10 @@ export class ItemRelationshipService {
     const enrichedRelationships = await Promise.all(
       visibleRelationships.map(async (rel) => {
         const targetMasterId = targetMasterById.get(rel.targetId)
-        const ecoTargetId = targetMasterId
-          ? ecoMasterToItemId.get(targetMasterId)
+        const changeOrderTargetId = targetMasterId
+          ? changeOrderMasterToItemId.get(targetMasterId)
           : undefined
-        const resolvedTargetId = ecoTargetId ?? rel.targetId
+        const resolvedTargetId = changeOrderTargetId ?? rel.targetId
 
         const targetItem = await ItemService.findById(resolvedTargetId)
         return {
@@ -529,6 +536,90 @@ export class ItemRelationshipService {
     if (targetItem) {
       await ItemService.requireContentEditable(targetItem, userId)
     }
+  }
+
+  /**
+   * A part that has just been nested under a parent in its own design is no
+   * longer a top-level part of that design's structure: clear its
+   * designation, so that removing the line later leaves it among the design's
+   * non-structure items instead of promoting it to a root nobody chose.
+   *
+   * Only rows the edit may reach are written. On main — the pre-release
+   * phase, where the parent is a main row — the target is a main row too and
+   * is cleared. On a change-order or workspace branch the target is cleared
+   * only when it is that branch's own working copy; a main row nested by a
+   * branch is left alone here, since main has not changed, and the merge
+   * clears it when the line is released (ChangeOrderMergeService, step 5b).
+   * A plain checkout tracks the shared main row with no change type, so a
+   * row counts as the branch's own only when its tracking row records one.
+   */
+  static async clearDesignationOfNestedTargets(
+    edges: Array<{
+      sourceId: string
+      targetId: string
+      relationshipType: string
+    }>,
+    tx?: TransactionClient,
+  ): Promise<void> {
+    const executor = tx ?? db
+    const bomEdges = edges.filter((e) => e.relationshipType === 'BOM')
+    if (bomEdges.length === 0) return
+
+    const ids = [...new Set(bomEdges.flatMap((e) => [e.sourceId, e.targetId]))]
+    const rows = await executor
+      .select({
+        id: items.id,
+        itemType: items.itemType,
+        designId: items.designId,
+        inDesignStructure: items.inDesignStructure,
+      })
+      .from(items)
+      .where(inArray(items.id, ids))
+    const byId = new Map(rows.map((r) => [r.id, r]))
+
+    const branchOf = new Map<string, string>()
+    const tracked = await executor
+      .select({
+        itemId: branchItems.currentItemId,
+        branchId: branchItems.branchId,
+        changeType: branchItems.changeType,
+      })
+      .from(branchItems)
+      .innerJoin(branches, eq(branchItems.branchId, branches.id))
+      .where(
+        and(
+          inArray(branchItems.currentItemId, ids),
+          inArray(branches.branchType, [
+            BRANCH_TYPES.changeOrder,
+            BRANCH_TYPES.workspace,
+          ]),
+          eq(branches.isArchived, false),
+        ),
+      )
+    for (const t of tracked) {
+      if (t.itemId && t.changeType !== null) branchOf.set(t.itemId, t.branchId)
+    }
+
+    const toClear = new Set<string>()
+    for (const edge of bomEdges) {
+      const source = byId.get(edge.sourceId)
+      const target = byId.get(edge.targetId)
+      if (!source || !target) continue
+      if (target.itemType !== 'Part' || !target.inDesignStructure) continue
+      if (!target.designId || target.designId !== source.designId) continue
+      const sourceBranch = branchOf.get(source.id)
+      const targetBranch = branchOf.get(target.id)
+      const writable = sourceBranch
+        ? targetBranch === sourceBranch
+        : targetBranch === undefined
+      if (writable) toClear.add(target.id)
+    }
+    if (toClear.size === 0) return
+
+    await executor
+      .update(items)
+      .set({ inDesignStructure: false })
+      .where(inArray(items.id, [...toClear]))
   }
 
   /**
@@ -629,20 +720,27 @@ export class ItemRelationshipService {
 
     let relationship: typeof itemRelationships.$inferSelect
     try {
-      relationship = takeFirst(
-        await db
-          .insert(itemRelationships)
-          .values({
-            sourceId,
-            targetId,
-            relationshipType,
-            quantity: data?.quantity,
-            referenceDesignator: data?.referenceDesignator,
-            findNumber: data?.findNumber,
-            createdBy: userId,
-          })
-          .returning(),
-      )
+      relationship = await db.transaction(async (tx) => {
+        const inserted = takeFirst(
+          await tx
+            .insert(itemRelationships)
+            .values({
+              sourceId,
+              targetId,
+              relationshipType,
+              quantity: data?.quantity,
+              referenceDesignator: data?.referenceDesignator,
+              findNumber: data?.findNumber,
+              createdBy: userId,
+            })
+            .returning(),
+        )
+        // In the same transaction as the line: a part nested by an edge that
+        // landed without this would keep its top-level designation, and
+        // resurface as a root the day the line is removed.
+        await this.clearDesignationOfNestedTargets([inserted], tx)
+        return inserted
+      })
     } catch (error) {
       // The check above is not a lock; a concurrent insert still lands here.
       if (isUniqueViolation(error, { table: 'item_relationships' })) {
@@ -836,7 +934,7 @@ export class ItemRelationshipService {
           }
         }
 
-        return tx
+        const rows = await tx
           .insert(itemRelationships)
           .values(
             relationships.map((r) => ({
@@ -851,6 +949,8 @@ export class ItemRelationshipService {
             })),
           )
           .returning()
+        await this.clearDesignationOfNestedTargets(rows, tx)
+        return rows
       })
     } catch (error) {
       // Which edge collided is in the driver's `detail`, but its `message` is

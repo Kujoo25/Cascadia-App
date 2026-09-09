@@ -44,7 +44,7 @@ import { insertTestUser } from '@/__tests__/fixtures/users'
 import { DesignService } from '@/lib/services/DesignService'
 import { BranchService } from '@/lib/services/BranchService'
 import { CommitGraphService } from '@/lib/services/CommitGraphService'
-import { EcoBranchHistoryService } from '@/lib/services/EcoBranchHistoryService'
+import { ChangeOrderBranchHistoryService as ChangeOrderBranchHistoryService } from '@/lib/services/ChangeOrderBranchHistoryService'
 import { ItemService } from '@/lib/items/services/ItemService'
 import {
   branchItems,
@@ -112,7 +112,7 @@ describe('versioning-graph foreign keys (DBI-6)', () => {
    * number.
    */
   async function createChangeOrder(): Promise<string> {
-    const eco = await ItemService.create<ChangeOrder>(
+    const changeOrder = await ItemService.create<ChangeOrder>(
       'ChangeOrder',
       {
         itemType: 'ChangeOrder',
@@ -124,7 +124,7 @@ describe('versioning-graph foreign keys (DBI-6)', () => {
       },
       user.id,
     )
-    return eco.id!
+    return changeOrder.id!
   }
 
   it('deleteWorkspaceBranch leaves zero branch_items rows pointing at nonexistent items', async () => {
@@ -258,18 +258,19 @@ describe('versioning-graph foreign keys (DBI-6)', () => {
   it("nulls a commit's ECO pointer when the ECO is deleted, and the graph readers still render it", async () => {
     // Two change orders on one design: the first is released and then deleted,
     // the second is what the ECO-history read is asked for afterwards.
-    const releasedEcoId = await createChangeOrder()
-    const openEcoId = await createChangeOrder()
+    const releasedChangeOrderId = await createChangeOrder()
+    const openChangeOrderId = await createChangeOrder()
 
-    const { branch: openBranch } = await BranchService.getOrCreateEcoBranch(
-      designId,
-      openEcoId,
-      user.id,
-    )
-    // EcoBranchHistoryService finds a change order's designs through this
+    const { branch: openBranch } =
+      await BranchService.getOrCreateChangeOrderBranch(
+        designId,
+        openChangeOrderId,
+        user.id,
+      )
+    // ChangeOrderBranchHistoryService finds a change order's designs through this
     // relation; linked directly so the fixture stays a fixture.
     await testDb.db.insert(changeOrderDesigns).values({
-      changeOrderId: openEcoId,
+      changeOrderId: openChangeOrderId,
       designId,
       branchId: openBranch.id,
       mergeStatus: 'pending',
@@ -283,14 +284,14 @@ describe('versioning-graph foreign keys (DBI-6)', () => {
           designId,
           branchId: mainBranchId,
           message: 'Released via ECO',
-          changeOrderItemId: releasedEcoId,
+          changeOrderItemId: releasedChangeOrderId,
           createdBy: user.id,
         })
         .returning(),
     )
-    expect(releaseCommit.changeOrderItemId).toBe(releasedEcoId)
+    expect(releaseCommit.changeOrderItemId).toBe(releasedChangeOrderId)
 
-    await testDb.db.delete(items).where(eq(items.id, releasedEcoId))
+    await testDb.db.delete(items).where(eq(items.id, releasedChangeOrderId))
 
     // The commit is history: it survives its ECO, with the pointer nulled.
     const kept = takeFirst(
@@ -314,14 +315,17 @@ describe('versioning-graph foreign keys (DBI-6)', () => {
     expect(designNode!.data.changeOrderItemId).toBeUndefined()
     expect(designNode!.data.ecoNumber).toBeUndefined()
 
-    const ecoGraph = await EcoBranchHistoryService.getGraph(openEcoId, {
-      designId,
-    })
-    const ecoNode = ecoGraph.nodes.find(
+    const changeOrderGraph = await ChangeOrderBranchHistoryService.getGraph(
+      openChangeOrderId,
+      {
+        designId,
+      },
+    )
+    const changeOrderNode = changeOrderGraph.nodes.find(
       (node) => node.data.commitId === releaseCommit.id,
     )
-    expect(ecoNode).toBeDefined()
-    expect(ecoNode!.data.ecoNumber).toBeUndefined()
+    expect(changeOrderNode).toBeDefined()
+    expect(changeOrderNode!.data.ecoNumber).toBeUndefined()
   })
 
   it('refuses a commit whose ECO pointer names no item', async () => {

@@ -4,7 +4,7 @@
 /**
  * Shared graph layout utilities for commit history visualization.
  *
- * Used by CommitGraphView, EcoHistoryGraphView, and ProgramHistoryGraphView
+ * Used by CommitGraphView, ChangeOrderHistoryGraphView, and ProgramHistoryGraphView
  * to avoid duplicating dagre layout, branch column assignment, and edge styling.
  *
  * **On `dagre@0.8.5` having no release since 2019 — that is a decision, not
@@ -152,14 +152,14 @@ export function computeBranchColumns<TData extends CommitNodeData>(
   const branchMergeY = new Map<string, number>()
   edges.forEach((edge) => {
     if (edge.data?.edgeType === 'merge') {
-      const ecoBranch = nodeToBranch.get(edge.source)
+      const changeOrderBranch = nodeToBranch.get(edge.source)
       const mergeCommitPos = dagreGraph.node(edge.target)
-      if (ecoBranch && ecoBranch !== mainBranchId) {
+      if (changeOrderBranch && changeOrderBranch !== mainBranchId) {
         if (
-          !branchMergeY.has(ecoBranch) ||
-          mergeCommitPos.y > branchMergeY.get(ecoBranch)!
+          !branchMergeY.has(changeOrderBranch) ||
+          mergeCommitPos.y > branchMergeY.get(changeOrderBranch)!
         ) {
-          branchMergeY.set(ecoBranch, mergeCommitPos.y)
+          branchMergeY.set(changeOrderBranch, mergeCommitPos.y)
         }
       }
     }
@@ -233,7 +233,7 @@ export function computeBranchColumns<TData extends CommitNodeData>(
 
 /**
  * Simple branch column assignment: main=0, others assigned incrementally by Y position.
- * Used by EcoHistoryGraphView which doesn't need fork-point grouping.
+ * Used by ChangeOrderHistoryGraphView which doesn't need fork-point grouping.
  */
 export function computeSimpleBranchColumns<TData extends CommitNodeData>(
   nodes: Array<Node<TData>>,

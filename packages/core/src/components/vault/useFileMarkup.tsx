@@ -22,7 +22,7 @@ import {
 import { DEFAULT_ANNOTATION_COLOR } from '@/lib/vault/annotations'
 import { fileAnnotationsQuery } from '@/lib/query/options/file-annotations'
 import { useInvalidateResources } from '@/lib/query'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 
 interface UseFileMarkupOptions {
@@ -63,7 +63,7 @@ export function useFileMarkup({
   markup: PdfMarkupBinding
   markupDialog: React.ReactNode
 } {
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
 
   const [tool, setTool] = useState<AnnotationTool>('select')
@@ -75,14 +75,9 @@ export function useFileMarkup({
 
   const reportFailure = useCallback(
     (action: string, error: unknown) => {
-      alert({
-        title: `Could not ${action} markup`,
-        description:
-          error instanceof Error ? error.message : `Failed to ${action} markup`,
-        variant: 'destructive',
-      })
+      handleError(error, { title: `Could not ${action} markup` })
     },
-    [alert],
+    [handleError],
   )
 
   const save = useCallback(

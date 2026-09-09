@@ -105,7 +105,7 @@ describe('ItemRelationshipService.getRelationshipsWithDetailsForBranch', () => {
     )
   }
 
-  async function createEco() {
+  async function createChangeOrder() {
     return ItemService.create(
       'ChangeOrder',
       {
@@ -151,9 +151,9 @@ describe('ItemRelationshipService.getRelationshipsWithDetailsForBranch', () => {
       })),
     )
 
-    const eco = await createEco()
-    const { branchItem, branch } = await ChangeOrderService.checkoutItemToEco(
-      eco.id,
+    const changeOrder = await createChangeOrder()
+    const { branchItem, branch } = await ChangeOrderService.checkoutItem(
+      changeOrder.id,
       parent.id,
       user.id,
     )
@@ -162,7 +162,7 @@ describe('ItemRelationshipService.getRelationshipsWithDetailsForBranch', () => {
       parent,
       childA,
       childB,
-      eco,
+      eco: changeOrder,
       branch,
       workingCopyId: branchItem.currentItemId!,
     }
@@ -262,11 +262,15 @@ describe('ItemRelationshipService.getRelationshipsWithDetailsForBranch', () => {
   })
 
   it('resolves targets to their ECO versions when the child is also on the branch', async () => {
-    const { childA, eco, branch, workingCopyId } =
-      await reviseReleasedAssembly()
+    const {
+      childA,
+      eco: changeOrder,
+      branch,
+      workingCopyId,
+    } = await reviseReleasedAssembly()
 
     const { branchItem: childBranchItem } =
-      await ChangeOrderService.checkoutItemToEco(eco.id, childA.id, user.id)
+      await ChangeOrderService.checkoutItem(changeOrder.id, childA.id, user.id)
     const childWorkingCopyId = childBranchItem.currentItemId!
     expect(childWorkingCopyId).not.toBe(childA.id)
 

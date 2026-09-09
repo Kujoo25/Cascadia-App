@@ -15,11 +15,13 @@ import {
 import { z } from 'zod'
 import { db } from '../db'
 import { likeContains } from '../db/like-pattern'
+import { notDeleted } from '../db/filters'
 import { branches, commits, designs, items, tags } from '../db/schema'
 import { NotFoundError, ValidationError } from '../errors'
 import { paginatedOrderBy } from '../db/paginated-order'
 import type { SQL } from 'drizzle-orm'
 import { takeFirst } from '@/lib/db/take-first'
+import { TAG_TYPES } from '@/lib/versioning/branch-types'
 
 // Zod schemas for validation
 export const designCreateSchema = z.object({
@@ -49,7 +51,12 @@ export const tagCreateSchema = z.object({
   name: z.string().min(1, 'Tag name is required').max(100),
   description: z.string().optional(),
   tagType: z
-    .enum(['baseline', 'release', 'milestone', 'eco-release'])
+    .enum([
+      TAG_TYPES.baseline,
+      TAG_TYPES.release,
+      TAG_TYPES.milestone,
+      TAG_TYPES.changeOrderRelease,
+    ])
     .optional()
     .default('baseline'),
 })
@@ -758,6 +765,18 @@ export class DesignService {
   /**
    * Get the protection status of a design.
    * Determines whether design is in pre-release or post-release phase.
+   *
+   * The verdict is `BranchService.isMainBranchProtected`, not a second opinion
+   * derived here. This method used to decide it itself by counting rows whose
+   * state was the literal `'Released'`, which broke both ways against the
+   * policy that actually governs writes: it read as post-release for a Free
+   * type that happens to name a state 'Released' (nothing about it protects
+   * main), and as pre-release for a design whose released items had all been
+   * superseded or obsoleted — main is protected there, so every create form
+   * this feeds offered a main-branch create the write would then refuse. The
+   * counts below classify by each type's released family for the same reason;
+   * `draftItemCount` is therefore everything not in that family, which is what
+   * its one consumer ("N draft item(s) ready for release") means by it.
    */
   static async getProtectionStatus(designId: string): Promise<{
     designId: string
@@ -775,36 +794,55 @@ export class DesignService {
       })
     }
 
-    // Count items by state
+    // Imported lazily: BranchService imports this module, so a static import
+    // here would close the cycle.
+    const [{ BranchService }, { LifecycleService }] = await Promise.all([
+      import('./BranchService'),
+      import('./LifecycleService'),
+    ])
+
+    // Grouped by type as well as state — "is this state released?" is a
+    // question only the item's own lifecycle can answer.
     const stateCounts = await db
       .select({
+        itemType: items.itemType,
         state: items.state,
         count: sql<number>`count(*)::int`,
       })
       .from(items)
-      .where(eq(items.designId, designId))
-      .groupBy(items.state)
+      .where(and(eq(items.designId, designId), notDeleted()))
+      .groupBy(items.itemType, items.state)
 
+    const familyByType = new Map<string, Array<string>>()
     let releasedItemCount = 0
     let draftItemCount = 0
     let totalItemCount = 0
 
     for (const row of stateCounts) {
       totalItemCount += row.count
-      if (row.state === 'Released') releasedItemCount = row.count
-      if (row.state === 'Draft') draftItemCount = row.count
+      let family = familyByType.get(row.itemType)
+      if (!family) {
+        family = await LifecycleService.getReleasedFamilyStates(row.itemType)
+        familyByType.set(row.itemType, family)
+      }
+      if (family.includes(row.state)) {
+        releasedItemCount += row.count
+      } else {
+        draftItemCount += row.count
+      }
     }
 
-    const hasReleasedItems = releasedItemCount > 0
+    const isMainBranchProtected =
+      await BranchService.isMainBranchProtected(designId)
 
     return {
       designId,
-      phase: hasReleasedItems ? 'post-release' : 'pre-release',
-      hasReleasedItems,
+      phase: isMainBranchProtected ? 'post-release' : 'pre-release',
+      hasReleasedItems: isMainBranchProtected,
       releasedItemCount,
       draftItemCount,
       totalItemCount,
-      isMainBranchProtected: hasReleasedItems,
+      isMainBranchProtected,
     }
   }
 

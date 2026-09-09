@@ -19,27 +19,27 @@ All item types in Cascadia follow a **two-table pattern**:
 
 ### Base Item Fields (all types)
 
-| Column                        | Type             | Description                                                                     |
-| ----------------------------- | ---------------- | ------------------------------------------------------------------------------- |
-| `id`                          | UUID (PK)        | Unique row identifier                                                           |
-| `master_id`                   | UUID             | Stable identity across revisions (all revisions of the same item share this)    |
-| `item_number`                 | varchar(100)     | Human-readable identifier (e.g., `PN-000001`)                                   |
-| `revision`                    | varchar(10)      | Revision letter/number (assigned on ECO merge for driven types)                 |
-| `item_type`                   | varchar(50)      | Discriminator: `Part`, `Document`, `ChangeOrder`, etc.                          |
-| `name`                        | varchar(500)     | Display name                                                                    |
-| `state`                       | varchar(50)      | Current lifecycle state (e.g., `Draft`, `Released`)                             |
-| `is_current`                  | boolean          | Whether this is the current version                                             |
-| `design_id`                   | UUID (FK)        | Which design this item belongs to                                               |
-| `commit_id`                   | UUID (FK)        | Which commit introduced this version                                            |
-| `in_design_structure`         | boolean          | Whether part appears as root in BOM tree                                        |
-| `attributes`                  | JSONB            | Extensible key-value attributes                                                 |
-| `metamodel`                   | varchar(50)      | `cascadia`, `sysml2`, or `kerml`                                                |
-| `sysml_type`                  | varchar(100)     | SysML v2 type mapping                                                           |
-| `usage_of`                    | UUID             | If set, this item is a "usage" referencing a definition item (SysML v2 pattern) |
-| `is_deleted`                  | boolean          | Soft delete flag                                                                |
-| `locked_by` / `locked_at`     | UUID / timestamp | Pessimistic lock for checkout                                                   |
-| `created_at` / `created_by`   | timestamp / UUID | Audit: creation                                                                 |
-| `modified_at` / `modified_by` | timestamp / UUID | Audit: last modification                                                        |
+| Column                        | Type             | Description                                                                                                                                 |
+| ----------------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                          | UUID (PK)        | Unique row identifier                                                                                                                       |
+| `master_id`                   | UUID             | Stable identity across revisions (all revisions of the same item share this)                                                                |
+| `item_number`                 | varchar(100)     | Human-readable identifier (e.g., `PN-000001`)                                                                                               |
+| `revision`                    | varchar(10)      | Revision letter/number (assigned on ECO merge for driven types)                                                                             |
+| `item_type`                   | varchar(50)      | Discriminator: `Part`, `Document`, `ChangeOrder`, etc.                                                                                      |
+| `name`                        | varchar(500)     | Display name                                                                                                                                |
+| `state`                       | varchar(50)      | Current lifecycle state (e.g., `Draft`, `Released`)                                                                                         |
+| `is_current`                  | boolean          | Whether this is the current version                                                                                                         |
+| `design_id`                   | UUID (FK)        | Which design this item belongs to                                                                                                           |
+| `commit_id`                   | UUID (FK)        | Which commit introduced this version                                                                                                        |
+| `in_design_structure`         | boolean          | Designated top-level part of its design's structure; set on creation in a design and by "Add to Structure", cleared when the part is nested |
+| `attributes`                  | JSONB            | Extensible key-value attributes                                                                                                             |
+| `metamodel`                   | varchar(50)      | `cascadia`, `sysml2`, or `kerml`                                                                                                            |
+| `sysml_type`                  | varchar(100)     | SysML v2 type mapping                                                                                                                       |
+| `usage_of`                    | UUID             | If set, this item is a "usage" referencing a definition item (SysML v2 pattern)                                                             |
+| `is_deleted`                  | boolean          | Soft delete flag                                                                                                                            |
+| `locked_by` / `locked_at`     | UUID / timestamp | Pessimistic lock for checkout                                                                                                               |
+| `created_at` / `created_by`   | timestamp / UUID | Audit: creation                                                                                                                             |
+| `modified_at` / `modified_by` | timestamp / UUID | Audit: last modification                                                                                                                    |
 
 ### Item Numbering
 
@@ -296,9 +296,7 @@ Each affected item on an ECO has a change action:
 
 ### Lifecycle States
 
-Draft -> Submitted -> Impact Assessment -> Review -> Approved -> Implementation -> Implemented -> Closed
-
-Also: Rejected (from Review)
+A change order's states are those of the Driving definition its change type runs, configured per change type in `lifecyclesByChangeType` (Admin > Item Types > ChangeOrder). No state name is declared in code. The shipped defaults are `Draft -> InReview -> Approved` (a `release` final) with `Cancelled` (a `cancel` final) and `Return to Draft` as rework, run by ECO, ECN, MCO and Deviation, and a flexible definition (`start -> complete`) run by XCO, whose instances may carry states of their own. `LifecycleService.getRenderableStates('ChangeOrder')` is the union across all of them.
 
 ### Related Tables
 

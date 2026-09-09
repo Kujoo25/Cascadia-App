@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
+import { formatRevision } from '../types/lifecycle'
 import { RevisionService } from './RevisionService'
 import type { RevisionScheme } from '../types/lifecycle'
 
@@ -246,4 +247,54 @@ describe('RevisionService', () => {
   // ============================================
   // getResetRevision
   // ============================================
+
+  // ============================================
+  // Working-copy markers and how they are displayed
+  // ============================================
+
+  describe('working revisions', () => {
+    it('reads every unreleased marker as a working copy', () => {
+      // The merge decides "is this a working copy?" with this predicate; a
+      // marker it misses takes the legacy path and mints a revision from the
+      // literal marker text.
+      expect(RevisionService.isWorkingRevision('')).toBe(true)
+      expect(RevisionService.isWorkingRevision(null)).toBe(true)
+      expect(RevisionService.isWorkingRevision(undefined)).toBe(true)
+      expect(RevisionService.isWorkingRevision('DRAFT')).toBe(true)
+      expect(
+        RevisionService.isWorkingRevision(
+          RevisionService.getUnreleasedRevision(),
+        ),
+      ).toBe(true)
+      expect(
+        RevisionService.isWorkingRevision(
+          RevisionService.getWorkingRevision(
+            '01704247-dead-beef-cafe-000000000000',
+          ),
+        ),
+      ).toBe(true)
+    })
+
+    it('does not read a released revision as a working copy', () => {
+      expect(RevisionService.isWorkingRevision('A')).toBe(false)
+      expect(RevisionService.isWorkingRevision('1')).toBe(false)
+      expect(RevisionService.isWorkingRevision('X1')).toBe(false)
+    })
+
+    it('displays every working marker as a dash, released revisions verbatim', () => {
+      // The branch placeholder exists to satisfy the items unique constraint,
+      // not to be read: rendering it put '-01704247' in a Rev column.
+      const branchId = '01704247-dead-beef-cafe-000000000000'
+      expect(formatRevision(RevisionService.getWorkingRevision(branchId))).toBe(
+        '-',
+      )
+      expect(formatRevision('DRAFT')).toBe('-')
+      expect(formatRevision('')).toBe('-')
+      expect(formatRevision(null)).toBe('-')
+      expect(formatRevision('B')).toBe('B')
+      expect(formatRevision(RevisionService.NO_REVISION)).toBe(
+        RevisionService.NO_REVISION,
+      )
+    })
+  })
 })

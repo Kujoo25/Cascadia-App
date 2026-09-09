@@ -176,7 +176,7 @@ export function ImpactAnalysisDialog({
   }, [itemId, changeType, direction, maxDepth, includeDomains])
 
   // Create ECO from selection
-  const createEcoFromSelection = useCallback(async () => {
+  const createChangeOrderFromSelection = useCallback(async () => {
     if (selectedItemIds.length === 0) return
 
     // Navigate to ECO creation with pre-selected items
@@ -437,7 +437,7 @@ export function ImpactAnalysisDialog({
               </Button>
               {result && result.impactedItems.length > 0 && (
                 <Button
-                  onClick={createEcoFromSelection}
+                  onClick={createChangeOrderFromSelection}
                   disabled={selectedItemIds.length === 0}
                 >
                   Create ECO

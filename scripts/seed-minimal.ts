@@ -24,7 +24,7 @@ import {
   commits,
 } from '../packages/core/src/lib/db/schema/versioning.ts'
 import { itemTypeConfigs } from '../packages/core/src/lib/db/schema/config.ts'
-import { workflowDefinitions } from '../packages/core/src/lib/db/schema/workflows.ts'
+import { lifecycleDefinitions } from '../packages/core/src/lib/db/schema/lifecycles.ts'
 import {
   DEFAULT_ITEM_LIFECYCLES,
   seedDefaultLifecycles,
@@ -239,20 +239,20 @@ try {
     IDS.requirementLifecycle,
   ]) {
     const row = await db
-      .select({ drivers: workflowDefinitions.drivers })
-      .from(workflowDefinitions)
-      .where(eq(workflowDefinitions.id, lifecycleId))
+      .select({ drivers: lifecycleDefinitions.drivers })
+      .from(lifecycleDefinitions)
+      .where(eq(lifecycleDefinitions.id, lifecycleId))
       .then(takeFirst)
     if ((row.drivers ?? []).length === 0) {
       await db
-        .update(workflowDefinitions)
+        .update(lifecycleDefinitions)
         .set({ drivers: shippedDrivers })
-        .where(eq(workflowDefinitions.id, lifecycleId))
+        .where(eq(lifecycleDefinitions.id, lifecycleId))
     }
   }
 
   console.log(
-    '✓ Default lifecycles for every item type (ECO + Dynamic Change Order workflows included)',
+    '✓ Default lifecycles for every item type (the standard and flexible change-order workflows included)',
   )
 
   // ============================================================================
@@ -301,7 +301,7 @@ try {
         lifecycleDefinitionId: IDS.changeOrderWorkflow,
         // Map all change order types to the default workflow
         // XCO (Flexible Change Order) uses the flexible workflow that can be customized per instance
-        workflowsByChangeType: {
+        lifecyclesByChangeType: {
           ECO: IDS.changeOrderWorkflow,
           ECN: IDS.changeOrderWorkflow,
           Deviation: IDS.changeOrderWorkflow,

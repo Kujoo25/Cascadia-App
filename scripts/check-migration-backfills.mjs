@@ -15,7 +15,7 @@
  * shape of data the statement exists to handle, and then applies that one
  * migration and asserts what it did.
  *
- * Two design choices worth knowing:
+ * Three design choices worth knowing:
  *
  * 1. **Drizzle's own reader.** `readMigrationFiles` from `drizzle-orm/migrator`
  *    is the function `drizzle-kit migrate` itself calls, so the statement split,
@@ -30,6 +30,24 @@
  *    install sitting at a released tag actually does on its next upgrade, and
  *    the only shape in which an abort assertion means anything — otherwise a
  *    deliberate abort in the last file would roll back the tags before it too.
+ *
+ * 3. **A migration with no DDL is applied twice.** `db:baseline` places a
+ *    pre-0.5 database by its schema, which such a migration leaves exactly as
+ *    it found it, so the stamp stops before it and `db:migrate` applies it —
+ *    to a database that may already carry its effect. Applying it a second
+ *    time and asking the scenario's questions again is the proof that this is
+ *    safe. `isDataOnly` in `migration-row-dependence.mjs` decides which
+ *    migrations that is.
+ *
+ *    A scenario can also ask for the second pass itself with `applyTwice`,
+ *    and that is what carries the proof across a fold. Consolidating a wave
+ *    of row-only migrations together with a schema change makes the file no
+ *    longer data-only, so the classifier stops asking — but the statements
+ *    are still the guarded ones, and a database that carries their effect
+ *    without the schema mark still re-runs them. Losing the proof silently as
+ *    a side effect of a fold is the failure this whole file exists to
+ *    prevent; the flag can only ever make the check stricter, since a guard
+ *    that stops holding fails the second pass.
  *
  * The ratchet at the end is the half that keeps this honest. A new migration
  * whose outcome depends on rows already present, and which registers no
@@ -51,7 +69,10 @@ import { readMigrationFiles } from 'drizzle-orm/migrator'
 import postgres from 'postgres'
 
 import { resolveApp } from './edition.mjs'
-import { rowDependentStatements } from './migration-row-dependence.mjs'
+import {
+  isDataOnly,
+  rowDependentStatements,
+} from './migration-row-dependence.mjs'
 
 /* ------------------------------------------------------------------ *
  * Scratch database
@@ -150,21 +171,36 @@ async function resetDatabase(sql) {
  * Apply one migration in one transaction, bookkeeping row included — the body
  * of `PgDialect.migrate`'s loop, lifted out of its all-or-nothing wrapper.
  */
+/** One migration's statements, the way drizzle runs them, inside `tx`. */
+async function runStatements(tx, migration) {
+  for (const statement of migration.sql) {
+    // Drizzle executes every chunk, including a whitespace-only trailing one
+    // that a file ending in a breakpoint would produce. An empty statement is
+    // a no-op there and an error over the extended protocol here, so it is
+    // the one thing skipped.
+    if (statement.trim() === '') continue
+    await tx.unsafe(statement)
+  }
+}
+
 async function applyMigration(sql, migration) {
   await sql.begin(async (tx) => {
-    for (const statement of migration.sql) {
-      // Drizzle executes every chunk, including a whitespace-only trailing one
-      // that a file ending in a breakpoint would produce. An empty statement is
-      // a no-op there and an error over the extended protocol here, so it is
-      // the one thing skipped.
-      if (statement.trim() === '') continue
-      await tx.unsafe(statement)
-    }
+    await runStatements(tx, migration)
     await tx.unsafe(
       `insert into ${MIGRATIONS_TABLE} ("hash", "created_at") values ($1, $2)`,
       [migration.hash, migration.folderMillis],
     )
   })
+}
+
+/**
+ * Apply a migration the journal already records, again — what `db:migrate`
+ * does to a data-only migration on a database `db:baseline` placed (design
+ * choice 3 above). The journal is left alone: the question is what the
+ * statements do the second time, not what drizzle writes down.
+ */
+async function reapplyMigration(sql, migration) {
+  await sql.begin((tx) => runStatements(tx, migration))
 }
 
 async function appliedCount(sql) {
@@ -1145,6 +1181,358 @@ const SCENARIOS = [
     },
   },
 
+  {
+    tag: CHANGE_ORDER_VOCABULARY_TAG(),
+    applyTwice: true,
+    name: 'the shipped change-order workflows take one name each; a renamed one keeps its name',
+    async seed(sql) {
+      // The two definitions by their fixed ids: one still carrying the shipped
+      // name, one an administrator renamed — which the migration must leave
+      await exec(
+        sql,
+        `
+        insert into workflow_definitions
+          (id, name, version, workflow_type, definition, lifecycle_type)
+        values
+          ('00000000-0000-4000-8000-000000000102', 'ECO - Default Workflow', 2, 'strict', '{}'::jsonb, 'Driving'),
+          ('00000000-0000-4000-8000-000000000103', 'Renamed by an administrator', 1, 'flexible', '{}'::jsonb, 'Driving');
+        `,
+      )
+    },
+    async assert(sql) {
+      const strict = await one(
+        sql,
+        `select name from workflow_definitions where id = '00000000-0000-4000-8000-000000000102'`,
+      )
+      expectEqual(
+        strict.name,
+        'Change Order - Standard',
+        'the strict definition',
+      )
+      const flexible = await one(
+        sql,
+        `select name from workflow_definitions where id = '00000000-0000-4000-8000-000000000103'`,
+      )
+      expectEqual(
+        flexible.name,
+        'Renamed by an administrator',
+        'a definition an administrator renamed keeps that name',
+      )
+    },
+  },
+
+  {
+    tag: CHANGE_ORDER_VOCABULARY_TAG(),
+    applyTwice: true,
+    name: 'the program-setting key moves from ecoNumberFormat to changeOrderNumberFormat',
+    async seed(sql) {
+      // One program carrying the old key beside another setting, one without
+      // it — the second must come through untouched
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into programs (id, name, code, settings, created_by) values
+          ('${PROGRAM_A}', 'Program A', 'PA-KEY', '{"ecoNumberFormat": "ECO-{YYYY}-{NNN}", "other": 1}'::jsonb, '${U1}'),
+          ('${PROGRAM_B}', 'Program B', 'PB-KEY', '{"other": 2}'::jsonb, '${U1}');
+        `,
+      )
+    },
+    async assert(sql) {
+      const a = await one(
+        sql,
+        `select settings from programs where id = '${PROGRAM_A}'`,
+      )
+      expectEqual(
+        a.settings.changeOrderNumberFormat,
+        'ECO-{YYYY}-{NNN}',
+        'the value now sits under the new key',
+      )
+      expectEqual(a.settings.ecoNumberFormat, undefined, 'the old key is gone')
+      expectEqual(a.settings.other, 1, 'the other settings are untouched')
+      const b = await one(
+        sql,
+        `select settings from programs where id = '${PROGRAM_B}'`,
+      )
+      expectEqual(
+        JSON.stringify(b.settings),
+        JSON.stringify({ other: 2 }),
+        'a program without the key is untouched',
+      )
+    },
+  },
+
+  {
+    tag: LIFECYCLES_BY_CHANGE_TYPE_TAG(),
+    applyTwice: true,
+    name: 'the change-type mapping moves from workflowsByChangeType to lifecyclesByChangeType',
+    async seed(sql) {
+      // Three item-type rows: one carrying only the old key, one carrying
+      // both (the new one wins), one carrying neither — untouched
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into item_type_configs (item_type, config, modified_by) values
+          ('ChangeOrder', '{"lifecycleDefinitionId": "${id(102)}", "workflowsByChangeType": {"ECO": "${id(102)}", "XCO": "${id(103)}"}}'::jsonb, '${U1}'),
+          ('Part', '{"lifecycleDefinitionId": "${id(101)}", "lifecyclesByChangeType": {"ECO": "${id(102)}"}, "workflowsByChangeType": {"ECO": "${id(199)}"}}'::jsonb, '${U1}'),
+          ('Document', '{"lifecycleDefinitionId": "${id(104)}"}'::jsonb, '${U1}');
+        `,
+      )
+    },
+    async assert(sql) {
+      const co = await one(
+        sql,
+        `select config from item_type_configs where item_type = 'ChangeOrder'`,
+      )
+      expectEqual(
+        JSON.stringify(co.config.lifecyclesByChangeType),
+        JSON.stringify({ ECO: id(102), XCO: id(103) }),
+        'the mapping now sits under the new key',
+      )
+      expectEqual(
+        co.config.workflowsByChangeType,
+        undefined,
+        'the old key is gone',
+      )
+      expectEqual(
+        co.config.lifecycleDefinitionId,
+        id(102),
+        'the rest of the config is untouched',
+      )
+      const part = await one(
+        sql,
+        `select config from item_type_configs where item_type = 'Part'`,
+      )
+      expectEqual(
+        JSON.stringify(part.config.lifecyclesByChangeType),
+        JSON.stringify({ ECO: id(102) }),
+        'a row carrying both keys keeps the new one',
+      )
+      expectEqual(
+        part.config.workflowsByChangeType,
+        undefined,
+        'and loses the old one',
+      )
+      const doc = await one(
+        sql,
+        `select config from item_type_configs where item_type = 'Document'`,
+      )
+      expectEqual(
+        JSON.stringify(doc.config),
+        JSON.stringify({ lifecycleDefinitionId: id(104) }),
+        'a row without the mapping is untouched',
+      )
+    },
+  },
+
+  {
+    tag: LIFECYCLE_TYPE_COLUMN_TAG(),
+    name: 'the lifecycle_type column takes the truth from the JSONB, then stands alone',
+    async seed(sql) {
+      // Every shape the JSONB-first read used to resolve: the column's
+      // ADD-COLUMN lie corrected by a legacy definitionType, by an explicit
+      // JSONB lifecycleType, a silent JSONB that leaves the column alone, a
+      // null column with nothing to say (Free), and JSONB nonsense (Free)
+      await exec(
+        sql,
+        `
+        insert into workflow_definitions (id, name, version, workflow_type, definition, lifecycle_type) values
+          ('${id(601)}', 'Legacy workflow', 1, 'strict', '{"definitionType": "workflow", "states": []}'::jsonb, 'Free'),
+          ('${id(602)}', 'Legacy lifecycle', 1, 'strict', '{"definitionType": "lifecycle"}'::jsonb, 'Free'),
+          ('${id(603)}', 'Explicit JSONB', 1, 'strict', '{"lifecycleType": "Driven", "definitionType": "workflow"}'::jsonb, 'Free'),
+          ('${id(604)}', 'Silent JSONB', 1, 'strict', '{"states": []}'::jsonb, 'Driving'),
+          ('${id(605)}', 'Nothing at all', 1, 'strict', '{}'::jsonb, null),
+          ('${id(606)}', 'Nonsense', 1, 'strict', '{"lifecycleType": "bogus"}'::jsonb, 'Driving');
+        `,
+      )
+    },
+    async assert(sql) {
+      const kinds = {}
+      for (const row of await sql.unsafe(
+        'select id, lifecycle_type, definition from workflow_definitions order by name',
+      )) {
+        kinds[row.id] = row.lifecycle_type
+        expect(
+          !('lifecycleType' in row.definition) &&
+            !('definitionType' in row.definition),
+          `the JSONB of ${row.id} still carries a kind`,
+        )
+      }
+      expectEqual(
+        kinds[id(601)],
+        'Driving',
+        "definitionType 'workflow' is Driving",
+      )
+      expectEqual(
+        kinds[id(602)],
+        'Driven',
+        "definitionType 'lifecycle' is Driven",
+      )
+      expectEqual(
+        kinds[id(603)],
+        'Driven',
+        'an explicit JSONB lifecycleType wins',
+      )
+      expectEqual(
+        kinds[id(604)],
+        'Driving',
+        'a silent JSONB leaves the column alone',
+      )
+      expectEqual(kinds[id(605)], 'Free', 'nothing to say is Free')
+      expectEqual(
+        kinds[id(606)],
+        'Free',
+        'JSONB nonsense is Free, as the code read it',
+      )
+      const notNull = await one(
+        sql,
+        `select attnotnull from pg_attribute where attrelid = 'workflow_definitions'::regclass and attname = 'lifecycle_type'`,
+      )
+      expectEqual(notNull.attnotnull, true, 'the column is NOT NULL')
+      const rejected = await refused(
+        sql,
+        `insert into workflow_definitions (id, name, version, workflow_type, definition) values ('${id(607)}', 'No kind', 1, 'strict', '{}'::jsonb)`,
+      )
+      expectEqual(
+        rejected.code,
+        '23502',
+        'a row that states no kind is refused, not defaulted',
+      )
+    },
+  },
+
+  {
+    tag: PERMISSION_RESOURCE_TAG(),
+    applyTwice: true,
+    name: 'the workflows permission resource becomes lifecycles in role and API-key maps',
+    async seed(sql) {
+      // Roles: one with only the old key, one with both (the new wins), one
+      // with neither. API keys: a scoped one carrying the old key, an
+      // unscoped one (null)
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into roles (id, name, permissions) values
+          ('${id(701)}', 'Legacy role', '{"workflows": ["read"], "parts": ["read"]}'::jsonb),
+          ('${id(702)}', 'Both keys', '{"lifecycles": ["read", "manage"], "workflows": ["read"]}'::jsonb),
+          ('${id(703)}', 'Untouched', '{"parts": ["read"]}'::jsonb);
+        insert into api_keys (id, user_id, name, key_hash, key_prefix, permissions) values
+          ('${id(704)}', '${U1}', 'Legacy key', 'hash-704', 'csc_legacy04', '{"workflows": ["read"]}'::jsonb),
+          ('${id(705)}', '${U1}', 'Unscoped key', 'hash-705', 'csc_noscope5', null);
+        `,
+      )
+    },
+    async assert(sql) {
+      const role = async (n) =>
+        (await one(sql, `select permissions from roles where id = '${id(n)}'`))
+          .permissions
+      expectEqual(
+        JSON.stringify(await role(701)),
+        JSON.stringify({ parts: ['read'], lifecycles: ['read'] }),
+        'the old key moves, the rest of the map is untouched',
+      )
+      expectEqual(
+        JSON.stringify(await role(702)),
+        JSON.stringify({ lifecycles: ['read', 'manage'] }),
+        'a map carrying both keeps the new key and loses the old',
+      )
+      expectEqual(
+        JSON.stringify(await role(703)),
+        JSON.stringify({ parts: ['read'] }),
+        'a map without the key is untouched',
+      )
+      const key = async (n) =>
+        (
+          await one(
+            sql,
+            `select permissions from api_keys where id = '${id(n)}'`,
+          )
+        ).permissions
+      expectEqual(
+        JSON.stringify(await key(704)),
+        JSON.stringify({ lifecycles: ['read'] }),
+        'an API-key scope moves too',
+      )
+      expectEqual(await key(705), null, 'an unscoped key stays unscoped')
+    },
+  },
+
+  {
+    tag: DESIGN_STRUCTURE_TAG(),
+    name: 'a nested part loses its top-level designation; roots, history and other branches keep theirs',
+    // The row statements write only rows still designated and the ALTERs
+    // are idempotent — the second pass is the proof, across a later fold.
+    applyTwice: true,
+    async seed(sql) {
+      await exec(sql, designStructureSeed())
+    },
+    async assert(sql) {
+      const designated = async (n) =>
+        (
+          await one(
+            sql,
+            `select in_design_structure as d from items where id = '${id(n)}'`,
+          )
+        ).d
+      expectEqual(
+        await designated(912),
+        false,
+        'a child the current assembly nests is not a top-level part',
+      )
+      expectEqual(
+        await designated(924),
+        false,
+        "a branch-created part nested by that branch's working copy is not one either",
+      )
+      expectEqual(
+        await designated(926),
+        false,
+        'a row that never recorded a designation has none',
+      )
+      expectEqual(
+        await designated(910),
+        true,
+        'the assembly nothing points at is still a top-level part',
+      )
+      expectEqual(
+        await designated(914),
+        true,
+        'a part nothing points at is still a top-level part',
+      )
+      expectEqual(
+        await designated(916),
+        true,
+        'a part only a superseded revision nested keeps its designation',
+      )
+      expectEqual(
+        await designated(920),
+        true,
+        "a main row only a branch's working copy nests is the merge's business, not this one's",
+      )
+      expectEqual(
+        await designated(928),
+        true,
+        "a line into another design does not nest that design's part",
+      )
+      expectEqual(await designated(930), true, 'non-Part rows are left alone')
+
+      const column = await one(
+        sql,
+        `select is_nullable, column_default from information_schema.columns
+          where table_schema = 'public' and table_name = 'items'
+            and column_name = 'in_design_structure'`,
+      )
+      expectEqual(column.is_nullable, 'NO', 'the column is NOT NULL')
+      expectEqual(
+        column.column_default,
+        'false',
+        'the column defaults to false',
+      )
+    },
+  },
+
   ...snapshotSeqScenarios(),
   ...signingCredentialScenarios(),
 ]
@@ -1250,6 +1638,168 @@ function VAULT_THUMBNAIL_TAG() {
   if (!found) {
     throw new Error(
       'No migration creates uq_vault_files_item_thumbnail — the vault thumbnail scenarios name a file that no longer exists.',
+    )
+  }
+  return found.tag
+}
+
+/**
+ * The four resolvers below name the change-management remediation's row
+ * changes by what they write, for the reason the ones above give and for one
+ * more: they were hardcoded as `0004_change_order_vocabulary` through
+ * `0007_permission_resource_lifecycles` until those four files were folded
+ * into `0004_change_management_remediation`, and a hardcoded tag would have
+ * failed the run rather than following the fold. That file was itself folded
+ * again before publication, with the design-structure designation, into
+ * `0004_change_management_and_design_structure` — which these four followed
+ * unaided, as did DESIGN_STRUCTURE_TAG below, so all five resolve to that one
+ * file today. They are kept apart because each names a different statement,
+ * so a later fold or split moves each scenario to whichever file its own SQL
+ * ended up in.
+ *
+ * The change-order vocabulary rename: both of its row changes — the two
+ * shipped definitions' names and the program-settings key — ship in one file,
+ * so both scenarios name this one.
+ */
+function CHANGE_ORDER_VOCABULARY_TAG() {
+  const found = migrations.find((m) =>
+    m.sql.some((s) => s.includes("'Change Order - Standard'")),
+  )
+  if (!found) {
+    throw new Error(
+      'No migration renames the shipped change-order definitions — the vocabulary scenarios name a file that no longer exists.',
+    )
+  }
+  return found.tag
+}
+
+/** The item-type config key move, named by the key it writes. */
+function LIFECYCLES_BY_CHANGE_TYPE_TAG() {
+  const found = migrations.find((m) =>
+    m.sql.some(
+      (s) =>
+        s.includes('UPDATE "item_type_configs"') &&
+        s.includes("'lifecyclesByChangeType'"),
+    ),
+  )
+  if (!found) {
+    throw new Error(
+      'No migration moves workflowsByChangeType to lifecyclesByChangeType — that scenario names a file that no longer exists.',
+    )
+  }
+  return found.tag
+}
+
+/**
+ * The lifecycle_type consolidation, named by the constraint it tightens
+ * rather than by its backfill: the `SET NOT NULL` is the statement that can
+ * abort, and the one the scenario's last assertion is about.
+ */
+function LIFECYCLE_TYPE_COLUMN_TAG() {
+  const found = migrations.find((m) =>
+    m.sql.some(
+      (s) => s.includes('"lifecycle_type"') && /set\s+not\s+null/i.test(s),
+    ),
+  )
+  if (!found) {
+    throw new Error(
+      'No migration makes workflow_definitions.lifecycle_type NOT NULL — that scenario names a file that no longer exists.',
+    )
+  }
+  return found.tag
+}
+
+/**
+ * The design-structure designation flip, named by the constraint it adds:
+ * the `SET NOT NULL` is the statement that can abort, and the backfill ahead
+ * of it is what the scenario's row assertions are about.
+ */
+function DESIGN_STRUCTURE_TAG() {
+  const found = migrations.find((m) =>
+    m.sql.some(
+      (s) => s.includes('"in_design_structure"') && /set\s+not\s+null/i.test(s),
+    ),
+  )
+  if (!found) {
+    throw new Error(
+      'No migration makes items.in_design_structure NOT NULL — that scenario names a file that no longer exists.',
+    )
+  }
+  return found.tag
+}
+
+/**
+ * One design, its main and change-order branches, and every shape of BOM
+ * line the designation backfill has to read correctly: a current line, a
+ * line only a superseded revision owns, a branch working copy's line into a
+ * main row, the same working copy's line into a branch-created row, a line
+ * into another design, plus a row with no designation recorded and a
+ * Document carrying the flag.
+ */
+function designStructureSeed() {
+  const D1 = id(900)
+  const D2 = id(940)
+  const MAIN = id(901)
+  const ECO = id(902)
+  const row = (n, master, number, revision, type, design, current, flag) =>
+    `('${id(n)}', '${id(master)}', '${number}', '${revision}', '${type}', 'Released', '${design}', ${current}, ${flag}, '${U1}', '${U1}')`
+  return `
+    ${USERS}
+    insert into designs (id, name, code, created_by) values
+      ('${D1}', 'Structure Design', 'FIX-STRUCT', '${U1}'),
+      ('${D2}', 'Other Design', 'FIX-STRUCT-2', '${U1}');
+    insert into branches (id, design_id, name, branch_type, is_archived) values
+      ('${MAIN}', '${D1}', 'main', 'main', false),
+      ('${ECO}', '${D1}', 'eco/FIX', 'eco', false);
+    insert into items
+      (id, master_id, item_number, revision, item_type, state, design_id,
+       is_current, in_design_structure, created_by, modified_by)
+    values
+      -- the assembly, current on main, and the child it nests
+      ${row(910, 911, 'FIX-ASSY', 'B', 'Part', D1, true, true)},
+      ${row(912, 913, 'FIX-CHILD', 'A', 'Part', D1, true, true)},
+      -- a part nothing points at
+      ${row(914, 915, 'FIX-ROOT', 'A', 'Part', D1, true, true)},
+      -- a part only the assembly's superseded revision nested
+      ${row(916, 917, 'FIX-DROPPED', 'A', 'Part', D1, true, true)},
+      ${row(918, 911, 'FIX-ASSY', 'A', 'Part', D1, false, true)},
+      -- a main row only the assembly's working copy on the ECO nests
+      ${row(920, 921, 'FIX-BRANCH-NESTED', 'A', 'Part', D1, true, true)},
+      ${row(922, 911, 'FIX-ASSY', '-00000000', 'Part', D1, false, true)},
+      -- a part created on the ECO and nested there by that working copy
+      ${row(924, 925, 'FIX-BRANCH-CHILD', '-00000000', 'Part', D1, true, true)},
+      -- a row that never recorded a designation
+      ${row(926, 927, 'FIX-NULL', 'A', 'Part', D1, true, 'null')},
+      -- another design's part, nested by a line from this design's assembly
+      ${row(928, 929, 'FIX-EXTERNAL', 'A', 'Part', D2, true, true)},
+      -- a Document carrying the flag
+      ${row(930, 931, 'FIX-DOC', 'A', 'Document', D1, true, true)};
+    insert into branch_items
+      (id, branch_id, item_master_id, current_item_id, base_item_id, change_type)
+    values
+      ('${id(950)}', '${ECO}', '${id(911)}', '${id(922)}', '${id(910)}', 'modified'),
+      ('${id(951)}', '${ECO}', '${id(925)}', '${id(924)}', '${id(924)}', 'added');
+    insert into item_relationships (source_id, target_id, relationship_type, created_by) values
+      ('${id(910)}', '${id(912)}', 'BOM', '${U1}'),
+      ('${id(918)}', '${id(916)}', 'BOM', '${U1}'),
+      ('${id(922)}', '${id(920)}', 'BOM', '${U1}'),
+      ('${id(922)}', '${id(924)}', 'BOM', '${U1}'),
+      ('${id(910)}', '${id(928)}', 'BOM', '${U1}');
+  `
+}
+
+/** The permission-resource rename, named by the map it rewrites. */
+function PERMISSION_RESOURCE_TAG() {
+  const found = migrations.find((m) =>
+    m.sql.some(
+      (s) =>
+        s.includes('UPDATE "roles"') &&
+        s.includes("jsonb_build_object('lifecycles'"),
+    ),
+  )
+  if (!found) {
+    throw new Error(
+      'No migration renames the workflows permission resource — that scenario names a file that no longer exists.',
     )
   }
   return found.tag
@@ -1938,6 +2488,7 @@ try {
       continue
     }
 
+    let twice = ''
     try {
       await resetDatabase(sql)
       for (let i = 0; i < target; i += 1) {
@@ -1978,9 +2529,21 @@ try {
           'the applied migration should be recorded in the journal',
         )
         await scenario.assert(sql)
+        if (isDataOnly(migrations[target]) || scenario.applyTwice) {
+          await reapplyMigration(sql, migrations[target])
+          try {
+            await scenario.assert(sql)
+          } catch (error) {
+            throw new Failed(
+              `after being applied a second time — which db:migrate does on ` +
+                `a database db:baseline placed — ${describe(error)}`,
+            )
+          }
+          twice = ' (and a second time)'
+        }
       }
 
-      console.log(`✓ ${scenario.tag} — ${scenario.name}`)
+      console.log(`✓ ${scenario.tag} — ${scenario.name}${twice}`)
     } catch (error) {
       failures += 1
       console.error(`✗ ${scenario.tag} — ${scenario.name}`)

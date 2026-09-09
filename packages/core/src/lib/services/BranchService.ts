@@ -19,12 +19,18 @@ import {
 } from '../errors'
 import { DesignService } from './DesignService'
 import type { TransactionClient } from '../db'
+import type { BranchType } from '@/lib/versioning/branch-types'
 import { takeFirst } from '@/lib/db/take-first'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 // Zod schemas for validation
 export const branchCreateSchema = z.object({
   designId: z.string().uuid(),
-  branchType: z.enum(['eco', 'workspace', 'release']),
+  branchType: z.enum([
+    BRANCH_TYPES.changeOrder,
+    BRANCH_TYPES.workspace,
+    BRANCH_TYPES.release,
+  ]),
   changeOrderItemId: z.string().uuid().optional(),
   sourceTagId: z.string().uuid().optional(),
   name: z.string().min(1).max(100).optional(), // Only for release branches
@@ -103,7 +109,7 @@ export class BranchService {
    * Create an ECO branch for a design
    * Branch naming: eco/{changeOrderItemNumber}
    */
-  static async createEcoBranch(
+  static async createChangeOrderBranch(
     designId: string,
     changeOrderItemId: string,
     userId: string,
@@ -119,7 +125,7 @@ export class BranchService {
     const changeOrder = changeOrderItem[0]
     if (!changeOrder) {
       throw new NotFoundError('Change Order', changeOrderItemId, {
-        operation: 'createEcoBranch',
+        operation: 'createChangeOrderBranch',
       })
     }
 
@@ -143,7 +149,7 @@ export class BranchService {
       {
         designId,
         name: branchName,
-        branchType: 'eco',
+        branchType: BRANCH_TYPES.changeOrder,
         changeOrderItemId,
         userId,
       },
@@ -268,10 +274,10 @@ export class BranchService {
    * its own: two callers checking the same item out of the same design both
    * find no branch and both try to make one. `created` is the answer to "did
    * *this* call make it", and callers act on it — `ensureDesignAssociation`
-   * and `addDesignToEco` write the "ChangeOrder created" commit only when it
+   * and `addDesign` write the "ChangeOrder created" commit only when it
    * is true — so exactly one of two racers may come back with `true`.
    */
-  static async getOrCreateEcoBranch(
+  static async getOrCreateChangeOrderBranch(
     designId: string,
     changeOrderItemId: string,
     userId: string,
@@ -287,7 +293,7 @@ export class BranchService {
     const changeOrder = changeOrderItem[0]
     if (!changeOrder) {
       throw new NotFoundError('Change Order', changeOrderItemId, {
-        operation: 'getOrCreateEcoBranch',
+        operation: 'getOrCreateChangeOrderBranch',
       })
     }
 
@@ -301,7 +307,7 @@ export class BranchService {
 
     // Create new ECO branch. Nothing holds a lock across the read above and
     // this write, so the loser of a race arrives here with the winner's
-    // branch already committed and fails — either on `createEcoBranch`'s own
+    // branch already committed and fails — either on `createChangeOrderBranch`'s own
     // existence check, or, having got past it, on
     // `branches_design_name_unique`, which reaches the client as a raw
     // RESOURCE_ALREADY_EXISTS. "Get or create" owes that caller the branch.
@@ -309,16 +315,20 @@ export class BranchService {
     // The attempt runs in a savepoint when it is on a caller's transaction:
     // `withTx` threads an outer transaction straight through, so a failed
     // statement would abort the caller's whole transaction and leave nothing
-    // to re-resolve on. `createEcoBranch` itself is untouched — a direct
+    // to re-resolve on. `createChangeOrderBranch` itself is untouched — a direct
     // caller asking to create a branch that exists is still told so, which is
     // the right answer for the user-named workspace and release branches that
     // share `createBranch`.
     try {
       const branch =
         tx === undefined
-          ? await this.createEcoBranch(designId, changeOrderItemId, userId)
+          ? await this.createChangeOrderBranch(
+              designId,
+              changeOrderItemId,
+              userId,
+            )
           : await tx.transaction((savepoint) =>
-              this.createEcoBranch(
+              this.createChangeOrderBranch(
                 designId,
                 changeOrderItemId,
                 userId,
@@ -710,7 +720,7 @@ export class BranchService {
     data: {
       designId: string
       name: string
-      branchType: 'eco' | 'workspace' | 'release'
+      branchType: Exclude<BranchType, typeof BRANCH_TYPES.main>
       changeOrderItemId?: string
       sourceTagId?: string
       ownerId?: string
@@ -948,8 +958,12 @@ export class BranchService {
       phase: isProtected ? 'post-release' : 'pre-release',
       canEditMainDirectly: !isProtected,
       availableBranchTypes: isProtected
-        ? ['eco', 'workspace', 'release']
-        : ['eco', 'workspace'], // Pre-release: workspace for private work, ECO for formal changes
+        ? [
+            BRANCH_TYPES.changeOrder,
+            BRANCH_TYPES.workspace,
+            BRANCH_TYPES.release,
+          ]
+        : [BRANCH_TYPES.changeOrder, BRANCH_TYPES.workspace], // Pre-release: workspace for private work, ECO for formal changes
     }
   }
 

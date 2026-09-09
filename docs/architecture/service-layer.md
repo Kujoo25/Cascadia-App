@@ -35,7 +35,7 @@ Cascadia's business logic lives in a layered service architecture with strict de
  │                                                                   │
  │  ProgramService, ItemTypeRegistry, NumberingService,             │
  │  ItemRelationshipService, ItemSearchService, UsageService,       │
- │  WorkflowService, FileService                                    │
+ │  LifecycleInstanceService, FileService                           │
  └──────────────────────────────┬───────────────────────────────────┘
                                 │
                                 ▼
@@ -71,7 +71,7 @@ Key responsibilities:
 
 Manages the ECO lifecycle: adding affected items, creating branches, orchestrating transitions.
 
-**Dependencies**: BranchService, CheckoutService, CommitService, DesignService, ChangeOrderMergeService, LifecycleService, ItemService, WorkflowService
+**Dependencies**: BranchService, CheckoutService, CommitService, DesignService, ChangeOrderMergeService, LifecycleService, ItemService, LifecycleDefinitionService, LifecycleInstanceService
 
 Key responsibilities:
 
@@ -173,8 +173,8 @@ Branch lifecycle: creation, locking, archival, lookup.
 
 Key methods:
 
-- `createEcoBranch(designId, ecoItemId, userId)` -- create ECO branch from main HEAD
-- `getOrCreateEcoBranch(designId, ecoItemId, userId)` -- idempotent branch creation
+- `createChangeOrderBranch(designId, ecoItemId, userId)` -- create ECO branch from main HEAD
+- `getOrCreateChangeOrderBranch(designId, ecoItemId, userId)` -- idempotent branch creation
 - `lockBranch(branchId)` / `unlockBranch(branchId)` -- submission locking
 - `archiveBranch(branchId)` -- post-merge archival
 
@@ -232,16 +232,18 @@ through `ItemService.update` / `.addRelationship` rather than against the class.
 
 Standalone services with no service-layer dependencies. They only access the database directly.
 
-| Service                   | File                                                              | Purpose                                      |
-| ------------------------- | ----------------------------------------------------------------- | -------------------------------------------- |
-| `ProgramService`          | `packages/core/src/lib/services/ProgramService.ts`                | Program CRUD and membership checks           |
-| `ItemTypeRegistry`        | `packages/core/src/lib/items/registry.ts`                         | Central registry of item type configurations |
-| `NumberingService`        | `packages/core/src/lib/items/numbering/NumberingService.ts`       | Auto-numbering (P-001, ECO-001, D-001)       |
-| `ItemRelationshipService` | `packages/core/src/lib/items/services/ItemRelationshipService.ts` | BOM and cross-item relationships             |
-| `ItemSearchService`       | `packages/core/src/lib/items/services/ItemSearchService.ts`       | Full-text search, filtering, sorting         |
-| `UsageService`            | `packages/core/src/lib/services/UsageService.ts`                  | SysML definition/usage copy tracking         |
-| `WorkflowService`         | `packages/core/src/lib/workflows/WorkflowService.ts`              | Workflow state machine execution             |
-| `FileService`             | `packages/core/src/lib/vault/services/FileService.ts`             | File vault upload/download/versioning        |
+| Service                      | File                                                              | Purpose                                      |
+| ---------------------------- | ----------------------------------------------------------------- | -------------------------------------------- |
+| `ProgramService`             | `packages/core/src/lib/services/ProgramService.ts`                | Program CRUD and membership checks           |
+| `ItemTypeRegistry`           | `packages/core/src/lib/items/registry.ts`                         | Central registry of item type configurations |
+| `NumberingService`           | `packages/core/src/lib/items/numbering/NumberingService.ts`       | Auto-numbering (P-001, ECO-001, D-001)       |
+| `ItemRelationshipService`    | `packages/core/src/lib/items/services/ItemRelationshipService.ts` | BOM and cross-item relationships             |
+| `ItemSearchService`          | `packages/core/src/lib/items/services/ItemSearchService.ts`       | Full-text search, filtering, sorting         |
+| `UsageService`               | `packages/core/src/lib/services/UsageService.ts`                  | SysML definition/usage copy tracking         |
+| `LifecycleDefinitionService` | `packages/core/src/lib/lifecycles/LifecycleDefinitionService.ts`  | Lifecycle definitions: CRUD and validation   |
+| `LifecycleInstanceService`   | `packages/core/src/lib/lifecycles/LifecycleInstanceService.ts`    | Instances, transitions, claims, history      |
+| `ApprovalService`            | `packages/core/src/lib/lifecycles/ApprovalService.ts`             | Approvers and approval votes                 |
+| `FileService`                | `packages/core/src/lib/vault/services/FileService.ts`             | File vault upload/download/versioning        |
 
 ---
 
@@ -367,7 +369,7 @@ This retries on PostgreSQL serialization failures (`40001`) and deadlocks (`40P0
 The graph is acyclic. Key design decisions that prevent cycles:
 
 1. **Cycle broken by dynamic import**: `ItemVersioningFacade` and `ItemService` genuinely reference each other — the facade needs `getTypeSpecificData`/`findById`/`insertTypeSpecificData`. `ItemService` imports the facade statically; the facade reaches back through `await import()`, so nothing resolves at module-evaluation time. `ItemEditPolicy` has no such cycle: it never calls `ItemService`.
-2. **Dynamic imports**: `ChangeOrderService` uses `import()` for `WorkflowService` to avoid static circular references.
+2. **Dynamic imports**: `ChangeOrderService` uses `import()` for `LifecycleDefinitionService` and `LifecycleInstanceService` to avoid static circular references.
 3. **Leaf services**: `DesignService` and `ProgramService` have zero service dependencies -- they only talk to the database.
 
 ### Impact of Changes

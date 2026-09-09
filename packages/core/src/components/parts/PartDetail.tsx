@@ -49,7 +49,7 @@ import {
   mergeEnrichmentAttributes,
 } from '@/components/items/apply-enrichment'
 import { useVersionContext } from '@/lib/hooks/useVersionContext'
-import { useEditLock } from '@/lib/hooks/useEditLock'
+import { useEditLock, useItemEditContext } from '@/lib/hooks/useEditLock'
 import { WorkspaceContextBanner } from '@/components/workspaces/WorkspaceContextBanner'
 import {
   Badge,
@@ -232,9 +232,17 @@ export function PartDetail({
   const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>()
 
   // Version context (only applicable for existing parts with a design)
-  const { context, contextLabel, isEditable, setContext } = useVersionContext(
-    isCreateMode ? undefined : part.designId,
-  )
+  // Where the server says this item may be edited: the branch holding its
+  // edit lock, and whether main is protected for this item's TYPE (a design
+  // with released items protects main for everything in it, but a Free or
+  // Driving lifecycle stays editable there). Asked once and fed to both the
+  // version context — which decides whether main is editable at all — and the
+  // edit lock below, because neither answer is derivable from the item.
+  const editContext = useItemEditContext(isCreateMode ? undefined : part.id)
+  const { context, contextLabel, isEditable, setContext } = useVersionContext({
+    designId: isCreateMode ? undefined : part.designId,
+    isMainProtected: editContext?.isMainProtected ?? false,
+  })
 
   // The part as it stood at the selected version context. Unlike the other
   // detail pages, `main` is a real request here (released=true): the route
@@ -293,17 +301,23 @@ export function PartDetail({
       resolvedItemId &&
       resolvedItemId !== part.id
     ) {
-      const search: Record<string, string | undefined> = {}
+      const search: Record<string, string | undefined> = { tab: activeTab }
       if (context.type === 'branch' && context.branchId) {
         search.branch = context.branchId
       }
+      // `replace`, because this is a correction of the id the user arrived
+      // with, not a place they chose to be. Pushing it left Back pointing at
+      // the URL that redirects here, so Back could not escape the page — and
+      // made each correction a new history entry while the breadcrumb's own
+      // auto-select was still settling the branch half of the same URL.
       navigate({
         to: '/parts/$id',
         params: { id: resolvedItemId },
         search,
+        replace: true,
       } as any)
     }
-  }, [versionAtContext.data, context, part.id, navigate])
+  }, [versionAtContext.data, context, part.id, activeTab, navigate])
 
   // Check if current context is a workspace branch
   // Whether the viewing context is a workspace branch, read through the
@@ -365,14 +379,13 @@ export function PartDetail({
   const needsCheckout =
     !isCreateMode && isReleasedLineage && context.type === 'main'
 
-  // The server-side edit lock behind the Edit button. Released-on-main goes
-  // through the CheckoutDialog (revise onto a branch) instead of a direct
-  // main-branch lock, so treat that case as "protected main" for the hook.
+  // The server-side edit lock behind the Edit button. The hook reads where the
+  // lock lives off `editContext`, so released-on-main resolves to no lock
+  // branch at all and the Edit button becomes Revise (the CheckoutDialog).
   const editLock = useEditLock({
     itemId: isCreateMode ? undefined : currentPart.id,
-    designId: isCreateMode ? undefined : part.designId,
     context,
-    isMainProtected: needsCheckout,
+    editContext,
   })
 
   const handleEdit = async () => {
@@ -470,14 +483,25 @@ export function PartDetail({
 
   // Get reason for disabled Edit button
   const getEditDisabledReason = (): string | undefined => {
+    // Ordered by what actually stops the click. Someone else's lock stops
+    // every path including Revise, so it is asked first. Then Revise: a
+    // released item on a protected main is not blocked at all, since the
+    // button opens the CheckoutDialog and revises onto a branch. What is left
+    // is the context itself.
+    if (editLock.lockedByOther) {
+      return `Checked out by ${editLock.lockHolderLabel}`
+    }
+    if (needsCheckout) {
+      return undefined
+    }
     if (!isEditable) {
       if (context.type === 'tag' || context.type === 'commit') {
         return 'Cannot edit historical versions'
       }
+      if (context.type === 'main' && editLock.isMainProtected) {
+        return 'This design has released items, so main is protected. Switch to an ECO or workspace branch to edit this item.'
+      }
       return 'Editing not available in this context'
-    }
-    if (editLock.lockedByOther) {
-      return `Checked out by ${editLock.lockHolderLabel}`
     }
     return undefined
   }
@@ -614,7 +638,10 @@ export function PartDetail({
                             <Button
                               variant="outline"
                               onClick={handleEdit}
-                              disabled={!isEditable || editLock.lockedByOther}
+                              disabled={
+                                (!isEditable && !needsCheckout) ||
+                                editLock.lockedByOther
+                              }
                             >
                               {needsCheckout ? (
                                 <>
@@ -639,7 +666,10 @@ export function PartDetail({
                     <Button
                       variant="outline"
                       onClick={handleEdit}
-                      disabled={!isEditable || editLock.lockedByOther}
+                      disabled={
+                        (!isEditable && !needsCheckout) ||
+                        editLock.lockedByOther
+                      }
                     >
                       {needsCheckout ? (
                         <>

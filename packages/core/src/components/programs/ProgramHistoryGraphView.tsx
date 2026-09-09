@@ -475,7 +475,7 @@ function ProgramHistoryGraphViewInner({
       </div>
       <div className="flex items-center gap-1.5">
         <div className="w-3 h-3 rounded-full bg-orange-500" />
-        <span className="text-slate-600 dark:text-slate-400">ECO</span>
+        <span className="text-slate-600 dark:text-slate-400">Change order</span>
       </div>
       <div className="flex items-center gap-1.5">
         <div className="w-6 h-0.5 bg-slate-400" />
@@ -493,7 +493,7 @@ function ProgramHistoryGraphViewInner({
 
   const crossDesignInfo =
     graphData.crossDesignEcos.length > 0
-      ? ` - ${graphData.crossDesignEcos.length} cross-design ECO${graphData.crossDesignEcos.length !== 1 ? 's' : ''}`
+      ? ` - ${graphData.crossDesignEcos.length} cross-design change order${graphData.crossDesignEcos.length !== 1 ? 's' : ''}`
       : ''
 
   // Calculate commit count (exclude header nodes)

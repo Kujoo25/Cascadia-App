@@ -25,7 +25,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import type { JobHandler, JobTypeConfig } from '@/lib/jobs/types'
 import { JobTypeRegistry } from '@/lib/jobs/registry'
-import { ApprovalRegistry } from '@/lib/workflows/approval-registry'
+import { ApprovalRegistry } from '@/lib/lifecycles/approval-registry'
 import { ReleaseHookRegistry } from '@/lib/services/release-hooks'
 
 /** A type no shipped definition claims — this file never imports `register.ts`. */

@@ -169,7 +169,7 @@ export function RequirementForm({
                 ? 'Please select a branch to create this requirement on'
                 : undefined
             }
-            helpText="Select an ECO or workspace branch for the new requirement"
+            helpText="Select a change-order or workspace branch for the new requirement"
             className="md:col-span-2"
           >
             <BranchSelector

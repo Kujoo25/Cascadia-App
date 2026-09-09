@@ -8,7 +8,7 @@ import type { ReportCreateInput } from '@/lib/reports/types'
 import { PageContainer } from '@/components/layout'
 import { ReportBuilder } from '@/components/reports/ReportBuilder'
 import { Button } from '@/components/ui'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 
 export const Route = createFileRoute('/reports/new')({
   component: NewReportPage,
@@ -16,7 +16,7 @@ export const Route = createFileRoute('/reports/new')({
 
 function NewReportPage() {
   const navigate = useNavigate()
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleSubmit = async (data: ReportCreateInput) => {
@@ -36,12 +36,7 @@ function NewReportPage() {
       const { report } = await response.json()
       navigate({ to: '/reports/$id/view', params: { id: report.id } })
     } catch (error) {
-      console.error('Error creating report:', error)
-      alert({
-        title: 'Error',
-        description: `Failed to create report: ${(error as Error).message}`,
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Failed to create report' })
     } finally {
       setIsSubmitting(false)
     }

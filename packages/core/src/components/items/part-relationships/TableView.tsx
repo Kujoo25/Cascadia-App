@@ -233,7 +233,7 @@ export function TableView({
         header: '',
         enableSorting: false,
         enableFiltering: false,
-        meta: { width: '80px', align: 'center' as const },
+        meta: { width: '100px', align: 'center' as const },
         cell: ({ row }) => {
           if (readOnly) return null
           return (
@@ -241,9 +241,8 @@ export function TableView({
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="icon"
                 onClick={() => setEditingRelationship(row.original)}
-                className="h-8 w-8 p-0"
                 aria-label="Edit relationship"
               >
                 <Pencil className="h-4 w-4 text-slate-600 dark:text-slate-400" />
@@ -251,9 +250,8 @@ export function TableView({
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="icon"
                 onClick={() => handleRemoveRelationship(row.original.id)}
-                className="h-8 w-8 p-0"
                 aria-label="Remove relationship"
               >
                 <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />

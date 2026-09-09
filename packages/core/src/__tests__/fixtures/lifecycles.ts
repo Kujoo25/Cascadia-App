@@ -18,7 +18,7 @@
 import { eq } from 'drizzle-orm'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import type * as schema from '@/lib/db/schema'
-import { itemTypeConfigs, users, workflowDefinitions } from '@/lib/db/schema'
+import { itemTypeConfigs, lifecycleDefinitions, users } from '@/lib/db/schema'
 import { LIFECYCLE_IDS } from '@/lib/items/lifecycle-ids'
 import {
   PART_LIFECYCLE_DEFINITION,
@@ -68,7 +68,7 @@ export async function seedSystemUser(db: TestDbInstance): Promise<void> {
  */
 export async function seedPartLifecycle(db: TestDbInstance): Promise<void> {
   await db
-    .insert(workflowDefinitions)
+    .insert(lifecycleDefinitions)
     .values({
       id: LIFECYCLE_IDS.part,
       name: 'Part - Test Lifecycle',
@@ -90,10 +90,10 @@ export async function seedPartLifecycle(db: TestDbInstance): Promise<void> {
   // Suites that test the allow-list itself own their rows (see
   // LifecycleService.test.ts) and never rely on this shared one.
   await db
-    .update(workflowDefinitions)
+    .update(lifecycleDefinitions)
     .set({ drivers: [] })
-    .where(eq(workflowDefinitions.id, LIFECYCLE_IDS.part))
-  // Definitions written straight to the table bypass WorkflowService, which is
+    .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.part))
+  // Definitions written straight to the table bypass LifecycleDefinitionService, which is
   // where the lifecycle memo is normally dropped
   ItemTypeRegistry.invalidateLifecycleCache()
 }
@@ -213,7 +213,7 @@ export async function seedRequirementLifecycle(
 ): Promise<void> {
   await seedSystemUser(db)
   await db
-    .insert(workflowDefinitions)
+    .insert(lifecycleDefinitions)
     .values({
       id: LIFECYCLE_IDS.requirement,
       name: 'Requirement - Test Lifecycle',
@@ -226,9 +226,9 @@ export async function seedRequirementLifecycle(
     .onConflictDoNothing()
 
   await db
-    .update(workflowDefinitions)
+    .update(lifecycleDefinitions)
     .set({ drivers: [] })
-    .where(eq(workflowDefinitions.id, LIFECYCLE_IDS.requirement))
+    .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.requirement))
 
   const config = { lifecycleDefinitionId: LIFECYCLE_IDS.requirement }
   await db
@@ -242,7 +242,7 @@ export async function seedRequirementLifecycle(
       target: itemTypeConfigs.itemType,
       set: { config, modifiedBy: systemUserId },
     })
-  // Definitions written straight to the table bypass WorkflowService, which is
+  // Definitions written straight to the table bypass LifecycleDefinitionService, which is
   // where the lifecycle memo is normally dropped
   ItemTypeRegistry.invalidateLifecycleCache()
 }
@@ -258,7 +258,7 @@ export async function seedWorkOrderLifecycle(
 ): Promise<void> {
   await seedSystemUser(db)
   await db
-    .insert(workflowDefinitions)
+    .insert(lifecycleDefinitions)
     .values({
       id: LIFECYCLE_IDS.workOrder,
       name: 'Work Order - Test Lifecycle',
@@ -281,7 +281,7 @@ export async function seedWorkOrderLifecycle(
       target: itemTypeConfigs.itemType,
       set: { config, modifiedBy: systemUserId },
     })
-  // Definitions written straight to the table bypass WorkflowService, which is
+  // Definitions written straight to the table bypass LifecycleDefinitionService, which is
   // where the lifecycle memo is normally dropped
   ItemTypeRegistry.invalidateLifecycleCache()
 }

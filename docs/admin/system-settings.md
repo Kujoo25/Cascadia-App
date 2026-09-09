@@ -10,16 +10,16 @@ Cascadia uses a hybrid code-first + runtime configuration model. Item types (Par
 
 ### What Can Be Configured at Runtime
 
-| Setting                 | Description                                                      |
-| ----------------------- | ---------------------------------------------------------------- |
-| `label`                 | Display name (e.g., rename "Part" to "Component")                |
-| `pluralLabel`           | Plural display name                                              |
-| `icon`                  | Lucide icon name                                                 |
-| `lifecycleDefinitionId` | Link to a workflow definition for lifecycle states               |
-| `permissions`           | CRUD permission arrays (role names that can perform each action) |
-| `relationships`         | Allowed relationship types and targets                           |
-| `fieldMetadata`         | Per-field labels, descriptions, required/visible flags           |
-| `workflowsByChangeType` | (ChangeOrder only) Map change types to workflow definitions      |
+| Setting                  | Description                                                      |
+| ------------------------ | ---------------------------------------------------------------- |
+| `label`                  | Display name (e.g., rename "Part" to "Component")                |
+| `pluralLabel`            | Plural display name                                              |
+| `icon`                   | Lucide icon name                                                 |
+| `lifecycleDefinitionId`  | Link to a workflow definition for lifecycle states               |
+| `permissions`            | CRUD permission arrays (role names that can perform each action) |
+| `relationships`          | Allowed relationship types and targets                           |
+| `fieldMetadata`          | Per-field labels, descriptions, required/visible flags           |
+| `lifecyclesByChangeType` | (ChangeOrder only) Map change types to workflow definitions      |
 
 ### What Requires Code Changes
 

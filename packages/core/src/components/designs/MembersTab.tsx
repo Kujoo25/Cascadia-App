@@ -36,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/DropdownMenu'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 
 interface MemberDesign {
@@ -63,7 +64,8 @@ export function MembersTab({
   programId,
   readOnly = false,
 }: MembersTabProps) {
-  const { confirm, alert } = useAlertDialog()
+  const { confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [members, setMembers] = useState<Array<MemberDesign>>([])
   const [loading, setLoading] = useState(true)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
@@ -105,11 +107,7 @@ export function MembersTab({
           )
           await fetchMembers()
         } catch (error) {
-          alert({
-            title: 'Error',
-            description: `Failed to remove member: ${(error as Error).message}`,
-            variant: 'destructive',
-          })
+          handleError(error, { title: 'Failed to remove member' })
         }
       },
     })

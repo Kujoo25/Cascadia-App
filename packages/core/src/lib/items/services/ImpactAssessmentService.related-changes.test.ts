@@ -34,8 +34,8 @@ import { seedStandardPartLifecycle } from '@/__tests__/fixtures/lifecycles'
 import { DesignService } from '@/lib/services/DesignService'
 import {
   changeOrderAffectedItems,
+  lifecycleInstances,
   programs,
-  workflowInstances,
 } from '@/lib/db/schema'
 
 import '@/lib/items/registerItemTypes.server'
@@ -103,8 +103,8 @@ describe('ImpactAssessmentService.findRelatedChanges', () => {
   }
 
   /** An open ECO (workflow instance still running) affecting `partId`. */
-  async function createOpenEcoAffecting(name: string, partId: string) {
-    const eco = await ItemService.create(
+  async function createOpenChangeOrderAffecting(name: string, partId: string) {
+    const changeOrder = await ItemService.create(
       'ChangeOrder',
       {
         revision: '-',
@@ -114,23 +114,23 @@ describe('ImpactAssessmentService.findRelatedChanges', () => {
       } as any,
       user.id,
     )
-    await testDb.db.insert(workflowInstances).values({
-      itemId: eco.id,
+    await testDb.db.insert(lifecycleInstances).values({
+      itemId: changeOrder.id,
       currentState: 'Draft',
     })
     await testDb.db.insert(changeOrderAffectedItems).values({
-      changeOrderId: eco.id,
+      changeOrderId: changeOrder.id,
       affectedItemId: partId,
       changeAction: 'revise',
       createdBy: user.id,
     })
-    return eco
+    return changeOrder
   }
 
   it('returns every open change order when there is no current one', async () => {
     const part = await createPart('shared')
-    const first = await createOpenEcoAffecting('First ECO', part.id)
-    const second = await createOpenEcoAffecting('Second ECO', part.id)
+    const first = await createOpenChangeOrderAffecting('First ECO', part.id)
+    const second = await createOpenChangeOrderAffecting('Second ECO', part.id)
 
     const related = await ImpactAssessmentService.findRelatedChanges(
       undefined,
@@ -144,8 +144,8 @@ describe('ImpactAssessmentService.findRelatedChanges', () => {
 
   it('excludes the change order that is asking', async () => {
     const part = await createPart('asker')
-    const asking = await createOpenEcoAffecting('Asking ECO', part.id)
-    const other = await createOpenEcoAffecting('Other ECO', part.id)
+    const asking = await createOpenChangeOrderAffecting('Asking ECO', part.id)
+    const other = await createOpenChangeOrderAffecting('Other ECO', part.id)
 
     const related = await ImpactAssessmentService.findRelatedChanges(
       asking.id,

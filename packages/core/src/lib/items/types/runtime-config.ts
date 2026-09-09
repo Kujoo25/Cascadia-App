@@ -45,15 +45,25 @@ export interface RuntimeItemTypeConfig {
     }
   >
   /**
-   * For ChangeOrder item type only: Maps change order types to their default workflow definitions.
-   * When a change order is created, the workflow matching its changeType is automatically started.
-   * All change types must have a workflow assigned - null values are not allowed.
+   * ChangeOrder only: the Driving definition each change type runs. Creation
+   * starts that definition's instance, so every change type an install
+   * creates needs an entry.
    */
-  workflowsByChangeType?: {
-    ECO?: string
-    ECN?: string
-    Deviation?: string
-    MCO?: string
-    XCO?: string
-  }
+  lifecyclesByChangeType?: LifecyclesByChangeType
+  /**
+   * The key this shipped under. Read for one release — a config written by
+   * an older client or a database not yet migrated still says it — and
+   * never written: `ConfigService` moves it to `lifecyclesByChangeType` on
+   * the way in and out (remediation plan CM-25).
+   * @deprecated
+   */
+  workflowsByChangeType?: LifecyclesByChangeType
+}
+
+export interface LifecyclesByChangeType {
+  ECO?: string
+  ECN?: string
+  Deviation?: string
+  MCO?: string
+  XCO?: string
 }

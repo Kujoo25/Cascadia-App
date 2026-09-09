@@ -434,7 +434,7 @@ describe('CommitService', () => {
         priority: 'Medium',
       })
 
-      const ecoBranch = await BranchService.createEcoBranch(
+      const changeOrderBranch = await BranchService.createChangeOrderBranch(
         design.id,
         coItem.id,
         user.id,
@@ -464,7 +464,7 @@ describe('CommitService', () => {
       const mergeCommit = await CommitService.createMergeCommit(
         {
           targetBranchId: design.mainBranch!.id,
-          sourceBranchId: ecoBranch.id,
+          sourceBranchId: changeOrderBranch.id,
           message: 'Merge ECO branch',
           itemChanges: [{ itemId: partItem.id, changeType: 'added' }],
         },
@@ -472,7 +472,7 @@ describe('CommitService', () => {
       )
 
       expect(mergeCommit).toBeDefined()
-      expect(mergeCommit.mergeParentId).toBe(ecoBranch.headCommitId)
+      expect(mergeCommit.mergeParentId).toBe(changeOrderBranch.headCommitId)
       expect(mergeCommit.message).toBe('Merge ECO branch')
     })
 
@@ -513,7 +513,7 @@ describe('CommitService', () => {
         priority: 'Medium',
       })
 
-      const ecoBranch1 = await BranchService.createEcoBranch(
+      const ecoBranch1 = await BranchService.createChangeOrderBranch(
         design.id,
         coItem1.id,
         user.id,
@@ -544,7 +544,7 @@ describe('CommitService', () => {
         priority: 'Medium',
       })
 
-      const ecoBranch2 = await BranchService.createEcoBranch(
+      const ecoBranch2 = await BranchService.createChangeOrderBranch(
         design.id,
         coItem2.id,
         user.id,
@@ -1065,7 +1065,7 @@ describe('CommitService', () => {
         priority: 'Medium',
       })
 
-      const ecoBranch = await BranchService.createEcoBranch(
+      const changeOrderBranch = await BranchService.createChangeOrderBranch(
         design.id,
         coItem.id,
         user.id,
@@ -1093,14 +1093,14 @@ describe('CommitService', () => {
 
       await CommitService.create(
         {
-          branchId: ecoBranch.id,
+          branchId: changeOrderBranch.id,
           message: 'Add part on ECO',
           itemChanges: [{ itemId: item.id, changeType: 'added' }],
         },
         user.id,
       )
 
-      const changes = await CommitService.getBranchChanges(ecoBranch.id)
+      const changes = await CommitService.getBranchChanges(changeOrderBranch.id)
 
       expect(changes.length).toBeGreaterThanOrEqual(1)
       expect(changes.some((c) => c.itemId === item.id)).toBe(true)
@@ -1367,7 +1367,7 @@ describe('CommitService', () => {
           priority: 'Medium',
         })
 
-        const ecoBranch = await BranchService.createEcoBranch(
+        const changeOrderBranch = await BranchService.createChangeOrderBranch(
           design2.id,
           coItem.id,
           user.id,
@@ -1378,7 +1378,7 @@ describe('CommitService', () => {
           CommitService.createMergeCommit(
             {
               targetBranchId: design1.mainBranch!.id,
-              sourceBranchId: ecoBranch.id,
+              sourceBranchId: changeOrderBranch.id,
               message: 'Should fail',
               itemChanges: [],
             },
@@ -1446,7 +1446,7 @@ describe('CommitService', () => {
           priority: 'Medium',
         })
 
-        const ecoBranch = await BranchService.createEcoBranch(
+        const changeOrderBranch = await BranchService.createChangeOrderBranch(
           design.id,
           coItem.id,
           user.id,
@@ -1474,7 +1474,7 @@ describe('CommitService', () => {
         const mergeCommit = await CommitService.createMergeCommit(
           {
             targetBranchId: design.mainBranch!.id,
-            sourceBranchId: ecoBranch.id,
+            sourceBranchId: changeOrderBranch.id,
             message: 'Merge with revision info',
             itemChanges: [{ itemId: partItem.id, changeType: 'added' }],
             changeOrderItemId: coItem.id,
@@ -1723,7 +1723,7 @@ describe('CommitService', () => {
           priority: 'Medium',
         })
 
-        const ecoBranch = await BranchService.createEcoBranch(
+        const changeOrderBranch = await BranchService.createChangeOrderBranch(
           design.id,
           coItem.id,
           user.id,
@@ -1755,7 +1755,7 @@ describe('CommitService', () => {
 
         await CommitService.create(
           {
-            branchId: ecoBranch.id,
+            branchId: changeOrderBranch.id,
             message: 'Modify on ECO',
             itemChanges: [
               {
@@ -1769,23 +1769,23 @@ describe('CommitService', () => {
         )
 
         // Get history from ECO branch perspective
-        const ecoHistory = await CommitService.getItemCommits(
+        const changeOrderHistory = await CommitService.getItemCommits(
           masterId,
           design.id,
           {
-            branchId: ecoBranch.id,
+            branchId: changeOrderBranch.id,
           },
         )
 
         // Should see at least the ECO branch commit
         // Note: Main branch history at fork point may be included depending on timing
-        expect(ecoHistory.length).toBeGreaterThanOrEqual(1)
+        expect(changeOrderHistory.length).toBeGreaterThanOrEqual(1)
         // Verify ECO branch commit is present
-        const ecoCommit = ecoHistory.find(
-          (h) => h.commit.branchId === ecoBranch.id,
+        const changeOrderCommit = changeOrderHistory.find(
+          (h) => h.commit.branchId === changeOrderBranch.id,
         )
-        expect(ecoCommit).toBeDefined()
-        expect(ecoCommit?.changeType).toBe('modified')
+        expect(changeOrderCommit).toBeDefined()
+        expect(changeOrderCommit?.changeType).toBe('modified')
       })
     })
 
@@ -2016,7 +2016,7 @@ describe('CommitService', () => {
           priority: 'Medium',
         })
 
-        const ecoBranch = await BranchService.createEcoBranch(
+        const changeOrderBranch = await BranchService.createChangeOrderBranch(
           design.id,
           coItem.id,
           user.id,
@@ -2044,7 +2044,7 @@ describe('CommitService', () => {
         // First commit - add
         await CommitService.create(
           {
-            branchId: ecoBranch.id,
+            branchId: changeOrderBranch.id,
             message: 'Add part',
             itemChanges: [{ itemId: item1.id, changeType: 'added' }],
           },
@@ -2078,7 +2078,7 @@ describe('CommitService', () => {
         // Second commit - modify
         await CommitService.create(
           {
-            branchId: ecoBranch.id,
+            branchId: changeOrderBranch.id,
             message: 'Modify part',
             itemChanges: [
               {
@@ -2091,7 +2091,9 @@ describe('CommitService', () => {
           user.id,
         )
 
-        const changes = await CommitService.getBranchChanges(ecoBranch.id)
+        const changes = await CommitService.getBranchChanges(
+          changeOrderBranch.id,
+        )
 
         // Should only have one entry for this masterId, with the latest itemId
         const partChanges = changes.filter(

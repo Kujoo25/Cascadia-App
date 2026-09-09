@@ -4,10 +4,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Loader2, Plus, Trash2, User, Users, X } from 'lucide-react'
-import type {
-  InstanceApprover,
-  InstanceWorkflowState,
-} from '@/lib/workflows/types'
+import type { InstanceApprover, InstanceState } from '@/lib/lifecycles/types'
 import {
   Badge,
   Button,
@@ -28,9 +25,9 @@ import { instanceStateApproversQuery } from '@/lib/query/options/change-orders'
 import { activeUserListQuery, roleListQuery } from '@/lib/query/options/users'
 
 interface InstanceStatePropertiesPanelProps {
-  state: InstanceWorkflowState
+  state: InstanceState
   isCurrent: boolean
-  onUpdate: (state: InstanceWorkflowState) => void
+  onUpdate: (state: InstanceState) => void
   onClose: () => void
   readOnly?: boolean
   /** Change order this instance workflow belongs to (for approver APIs) */
@@ -56,7 +53,7 @@ export function InstanceStatePropertiesPanel({
   readOnly = false,
   changeOrderId,
 }: InstanceStatePropertiesPanelProps) {
-  const handleChange = (updates: Partial<InstanceWorkflowState>) => {
+  const handleChange = (updates: Partial<InstanceState>) => {
     onUpdate({ ...state, ...updates })
   }
 
@@ -184,7 +181,7 @@ export function InstanceStatePropertiesPanel({
                   value={state.finalKind ?? ''}
                   onValueChange={(value) =>
                     handleChange({
-                      finalKind: value as InstanceWorkflowState['finalKind'],
+                      finalKind: value as InstanceState['finalKind'],
                     })
                   }
                 >

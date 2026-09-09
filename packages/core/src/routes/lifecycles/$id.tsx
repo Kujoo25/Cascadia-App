@@ -6,13 +6,13 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AlertCircle, ArrowLeft, Loader2, Save } from 'lucide-react'
 import type {
+  LifecycleDefinition,
   LifecycleType,
-  WorkflowDefinition,
   WorkflowType,
-} from '@/lib/workflows/types'
-import { LifecycleTypeSelector } from '@/components/workflows/LifecycleTypeSelector'
-import { DriverSelector } from '@/components/workflows/DriverSelector'
-import { WorkflowBuilder } from '@/components/workflows/WorkflowBuilder'
+} from '@/lib/lifecycles/types'
+import { LifecycleTypeSelector } from '@/components/lifecycles/LifecycleTypeSelector'
+import { DriverSelector } from '@/components/lifecycles/DriverSelector'
+import { LifecycleBuilder } from '@/components/lifecycles/LifecycleBuilder'
 import {
   Badge,
   Button,
@@ -30,8 +30,8 @@ import {
 } from '@/components/ui'
 import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
-import { workflowDefinitionQuery } from '@/lib/query'
-import { resolveLifecycleType } from '@/lib/workflows/normalize'
+import { lifecycleDefinitionQuery } from '@/lib/query'
+import { resolveLifecycleType } from '@/lib/lifecycles/normalize'
 
 export const Route = createFileRoute('/lifecycles/$id')({
   component: EditLifecyclePage,
@@ -44,7 +44,7 @@ function EditLifecyclePage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [hasChanges, setHasChanges] = useState(false)
   const [definition, setDefinition] =
-    useState<Partial<WorkflowDefinition> | null>(null)
+    useState<Partial<LifecycleDefinition> | null>(null)
   const [lifecycleType, setLifecycleType] = useState<LifecycleType>('Free')
   const [drivers, setDrivers] = useState<Array<string>>([])
 
@@ -53,7 +53,7 @@ function EditLifecyclePage() {
     data: saved,
     isPending: loading,
     error: loadError,
-  } = useQuery(workflowDefinitionQuery<WorkflowDefinition>(id))
+  } = useQuery(lifecycleDefinitionQuery<LifecycleDefinition>(id))
 
   useEffect(() => {
     if (!saved) return
@@ -101,7 +101,7 @@ function EditLifecyclePage() {
     )
   }
 
-  const handleChange = (updates: Partial<WorkflowDefinition>) => {
+  const handleChange = (updates: Partial<LifecycleDefinition>) => {
     setDefinition(updates)
     setHasChanges(true)
   }
@@ -126,12 +126,10 @@ function EditLifecyclePage() {
 
     setIsSubmitting(true)
     try {
-      await apiFetch(`/api/v1/workflows/${definition.id}`, {
+      await apiFetch(`/api/v1/lifecycles/${definition.id}`, {
         method: 'PUT',
         body: JSON.stringify({
           ...definition,
-          // lifecycleType is authoritative; the legacy definitionType field
-          // is no longer written on save
           lifecycleType,
           drivers: lifecycleType === 'Driven' ? drivers : [],
           // For Driven lifecycles, clear transitions (states only)
@@ -373,7 +371,7 @@ function EditLifecyclePage() {
               </div>
             )}
             <div className="flex-1">
-              <WorkflowBuilder
+              <LifecycleBuilder
                 definition={definition}
                 kind={lifecycleType === 'Driving' ? 'workflow' : 'lifecycle'}
 

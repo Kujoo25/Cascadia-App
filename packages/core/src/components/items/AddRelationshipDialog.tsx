@@ -32,6 +32,7 @@ import {
   isValidQuantity,
 } from '@/components/items/bom-quantity'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { useListSelection } from '@/lib/hooks/useListSelection'
 import { apiFetch } from '@/lib/api/client'
 import { useInvalidateResources } from '@/lib/query'
@@ -85,6 +86,7 @@ export function AddRelationshipDialog({
   onSuccess,
 }: AddRelationshipDialogProps) {
   const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   const [searchQuery, setSearchQuery] = useState('')
   const [itemType, setItemType] = useState('Part')
@@ -185,16 +187,11 @@ export function AddRelationshipDialog({
       selection.clear()
       setDetails({})
     } catch (error) {
-      alert({
+      handleError(error, {
         title:
           selectedCount === 1
             ? 'Failed to add relationship'
             : 'Failed to add relationships',
-        description:
-          error instanceof Error
-            ? error.message
-            : 'Failed to add relationships',
-        variant: 'destructive',
       })
     } finally {
       setLoading(false)

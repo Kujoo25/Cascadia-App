@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { Link } from '@tanstack/react-router'
+import { Link, useNavigate } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Edit, ExternalLink, Save, Trash2, X } from 'lucide-react'
+import {
+  ArrowLeft,
+  Edit,
+  ExternalLink,
+  GitBranch,
+  Loader2,
+  Lock,
+  Save,
+  Trash2,
+  X,
+} from 'lucide-react'
 import { BuildArtifactCard } from './BuildArtifactCard'
 import { SourceViewer } from './SourceViewer'
 import type { Software } from '@/lib/items/types/software'
@@ -15,6 +25,10 @@ import {
   formatAttributeValue,
 } from '@/components/items/AttributesEditor'
 import { ItemHistoryTab } from '@/components/items/ItemHistoryTab'
+import { CheckoutDialog } from '@/components/items/CheckoutDialog'
+import { useVersionContext } from '@/lib/hooks/useVersionContext'
+import { useEditLock, useItemEditContext } from '@/lib/hooks/useEditLock'
+import { WorkspaceContextBanner } from '@/components/workspaces/WorkspaceContextBanner'
 import {
   Badge,
   Button,
@@ -29,16 +43,21 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
   ViewEditSelect,
   ViewEditStatic,
   ViewEditText,
   ViewEditTextarea,
 } from '@/components/ui'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { StateBadge } from '@/components/items/StateBadge'
 import { useReleasedFamily } from '@/lib/hooks/useReleasedFamily'
 import { ItemCreateDesignSection } from '@/components/items/ItemCreateDesignSection'
-import { designStatusQuery } from '@/lib/query'
+import { itemAtContextQuery } from '@/lib/query/options/items'
+import { branchDetailQuery, designStatusQuery } from '@/lib/query'
 
 const SOFTWARE_TYPE_OPTIONS = [
   { value: 'firmware', label: 'Firmware' },
@@ -172,7 +191,9 @@ export function SoftwareDetail({
   activeTab = 'details',
   onTabChange,
 }: SoftwareDetailProps) {
+  const navigate = useNavigate()
   const { confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
 
   const isCreateMode = !initialSoftware?.id
 
@@ -180,6 +201,7 @@ export function SoftwareDetail({
     () => initialSoftware || createEmptySoftware(defaultDesignId),
   )
   const [isEditing, setIsEditing] = useState(isCreateMode)
+  const [isCheckoutDialogOpen, setIsCheckoutDialogOpen] = useState(false)
   const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>()
   const [attributes, setAttributes] = useState<Record<string, unknown>>(
     initialSoftware?.attributes ?? {},
@@ -192,7 +214,44 @@ export function SoftwareDetail({
     }
   }, [initialSoftware])
 
-  const current = software
+  // Where the server says this item may be edited: the branch holding its
+  // edit lock, and whether main is protected for this item's TYPE (a design
+  // with released items protects main for everything in it, but a Free or
+  // Driving lifecycle stays editable there). Software shares the Part
+  // lifecycle — it is Driven, so a protected main refuses its writes.
+  // Asked once and fed to both the version context — which decides whether
+  // main is editable at all — and the edit lock below, because neither
+  // answer is derivable from the item.
+  const editContext = useItemEditContext(isCreateMode ? undefined : software.id)
+  const { context, contextLabel, isEditable, setContext } = useVersionContext({
+    designId: isCreateMode ? undefined : software.designId,
+    isMainProtected: editContext?.isMainProtected ?? false,
+  })
+
+  // The software item as it stood at the selected version context. Viewing
+  // `main` addresses nothing, so the query stays disabled and the caller's
+  // copy is shown — the same rule the shared factory encodes for every
+  // detail page.
+  const { data: versionAtContext, isFetching: isLoadingVersion } = useQuery(
+    itemAtContextQuery<Software>(
+      software.id ?? '',
+      context,
+      !isCreateMode && Boolean(software.designId),
+    ),
+  )
+
+  const current = isCreateMode ? software : (versionAtContext ?? software)
+
+  // Whether the viewing context is a workspace branch, read through the
+  // shared cache rather than a per-mount probe.
+  const { data: contextBranch } = useQuery(
+    branchDetailQuery(
+      context.type === 'branch' ? (context.branchId ?? '') : '',
+      !isCreateMode,
+    ),
+  )
+  const isWorkspaceContext = contextBranch?.branchType === 'workspace'
+
   const { isReleasedFamily } = useReleasedFamily('Software', current.state)
   const { data: designStatus = null } = useQuery(
     designStatusQuery(
@@ -201,6 +260,20 @@ export function SoftwareDetail({
     ),
   )
   const branchRequired = designStatus?.protection.phase === 'post-release'
+
+  // Released lineage on main is revised through a change order (the
+  // CheckoutDialog); membership comes from the lifecycle's mappings
+  const needsCheckout =
+    !isCreateMode && isReleasedFamily && context.type === 'main'
+
+  // The server-side edit lock behind the Edit button. The hook reads where the
+  // lock lives off `editContext`, so released-on-main resolves to no lock
+  // branch at all and the Edit button becomes Revise (the CheckoutDialog).
+  const editLock = useEditLock({
+    itemId: isCreateMode ? undefined : current.id,
+    context,
+    editContext,
+  })
 
   const updateField = (field: keyof Software, value: unknown) => {
     setSoftware((prev) => ({ ...prev, [field]: value }))
@@ -220,17 +293,82 @@ export function SoftwareDetail({
     }))
   }
 
+  const handleEdit = async () => {
+    if (needsCheckout) {
+      setIsCheckoutDialogOpen(true)
+      return
+    }
+    // Acquire the edit lock (checkout) before entering edit mode — the
+    // server rejects saves without it, and other users see the lock.
+    if (!isCreateMode && editLock.canLock && !editLock.heldByMe) {
+      try {
+        await editLock.acquire()
+      } catch (error) {
+        handleError(error, { title: 'Cannot edit item' })
+        return
+      }
+    }
+    setSoftware(current)
+    setAttributes(current.attributes ?? {})
+    setIsEditing(true)
+  }
+
+  // A revise-checkout mints the branch working copy up front, so editing
+  // belongs on that row's page: the route-level save PUTs the id in the URL,
+  // and from the released row's page it would target the released version and
+  // be refused (BRANCH_PROTECTED). Navigate there in edit mode — the route
+  // component survives the param change, so `isEditing` carries over and the
+  // working copy drops into the form via the initialSoftware effect above.
+  const handleCheckoutComplete = (branchId: string, currentItemId?: string) => {
+    setSoftware(current)
+    setAttributes(current.attributes ?? {})
+    setIsEditing(true)
+    if (currentItemId && currentItemId !== current.id) {
+      navigate({
+        to: '/software/$id',
+        params: { id: currentItemId },
+        search: { branch: branchId, tab: activeTab },
+      } as any)
+      return
+    }
+    // The branch still tracks the row this page is showing — edit in place.
+    setContext({ type: 'branch', branchId })
+  }
+
   const handleSave = async () => {
-    await onSave({ ...software, attributes }, selectedBranchId)
-    if (!isCreateMode) setIsEditing(false)
+    const branchId = isCreateMode
+      ? selectedBranchId
+      : context.type === 'branch'
+        ? context.branchId
+        : undefined
+    await onSave({ ...software, attributes }, branchId)
+    if (!isCreateMode) {
+      // Leaving edit mode releases the lock (changes are kept)
+      if (editLock.heldByMe) {
+        try {
+          await editLock.checkin()
+        } catch {
+          // Lock release is best-effort; the user can re-enter edit mode
+        }
+      }
+      setIsEditing(false)
+    }
   }
 
   const handleCancelEdit = () => {
     if (isCreateMode) {
       onCancel()
     } else {
-      setSoftware(initialSoftware)
-      setAttributes(initialSoftware.attributes ?? {})
+      if (editLock.heldByMe) {
+        // Discard the checkout (removes the untouched branch row entirely)
+        void editLock.cancel().catch(() => {})
+      }
+      // Revert to the saved copy for the context being viewed. Not `current`:
+      // on main that resolves to the in-progress form state itself, so
+      // reverting to it would keep the very edits this discards.
+      const saved = versionAtContext ?? initialSoftware
+      setSoftware(saved)
+      setAttributes(saved.attributes ?? {})
       setIsEditing(false)
     }
   }
@@ -245,6 +383,80 @@ export function SoftwareDetail({
       variant: 'destructive',
       onConfirm: onDelete,
     })
+  }
+
+  // Get reason for disabled Edit button
+  const getEditDisabledReason = (): string | undefined => {
+    // Ordered by what actually stops the click. Someone else's lock stops
+    // every path including Revise, so it is asked first. Then Revise: a
+    // released item on a protected main is not blocked at all, since the
+    // button opens the CheckoutDialog and revises onto a branch. What is left
+    // is the context itself.
+    if (editLock.lockedByOther) {
+      return `Checked out by ${editLock.lockHolderLabel}`
+    }
+    if (needsCheckout) {
+      return undefined
+    }
+    if (!isEditable) {
+      if (context.type === 'tag' || context.type === 'commit') {
+        return 'Cannot edit historical versions'
+      }
+      if (context.type === 'main' && editLock.isMainProtected) {
+        return 'This design has released items, so main is protected. Switch to an ECO or workspace branch to edit this item.'
+      }
+      return 'Editing not available in this context'
+    }
+    return undefined
+  }
+
+  /**
+   * Why the source tree is read-only right now, or undefined if it is not.
+   *
+   * Source writes land on the same edit policy as the fields above:
+   * `SoftwareSourceService` routes every import, file write, rename and
+   * delete through `ItemService.update`, so a protected main, a historical
+   * context, a locked ECO branch and another user's checkout each refuse
+   * them. None of that was visible — the editor opened, the 30-second
+   * autosave fired, and every write failed in a toast. Ask the same
+   * questions the Edit button asks, and say the answer out loud.
+   */
+  const getSourceReadOnlyReason = (): string | undefined => {
+    if (editLock.lockedByOther) {
+      return `Checked out by ${editLock.lockHolderLabel}`
+    }
+    if (context.type === 'tag' || context.type === 'commit') {
+      return 'Historical versions are read-only.'
+    }
+    // Released on main only — the Revise button beside this tab is the way
+    // out, and it is the same `needsCheckout` the Edit button branches on.
+    // On a branch a released-family row is still writable: the update
+    // reroutes through `saveChanges` and mints the working copy, so gating
+    // on the state alone (as this did) refused an edit the server accepts.
+    if (needsCheckout) {
+      return 'Released source is read-only. Revise this item to edit it.'
+    }
+    if (context.type === 'main' && editLock.isMainProtected) {
+      return 'This design has released items, so main is protected. Switch to an ECO or workspace branch to edit this item.'
+    }
+    if (editContext?.isBranchLocked) {
+      return 'This branch is locked while its change order is out for approval.'
+    }
+    return undefined
+  }
+
+  const sourceReadOnlyReason = getSourceReadOnlyReason()
+
+  const getContextBadgeVariant = () => {
+    switch (context.type) {
+      case 'branch':
+        return 'secondary'
+      case 'tag':
+      case 'commit':
+        return 'outline'
+      default:
+        return 'default'
+    }
   }
 
   const formatDate = (date?: string | Date) => {
@@ -266,9 +478,14 @@ export function SoftwareDetail({
             </Button>
           </Link>
           <div>
-            <h1 className="text-4xl font-bold text-slate-900 dark:text-white">
-              {isCreateMode ? 'Create Software Item' : current.itemNumber}
-            </h1>
+            <div className="flex items-center gap-3">
+              <h1 className="text-4xl font-bold text-slate-900 dark:text-white">
+                {isCreateMode ? 'Create Software Item' : current.itemNumber}
+              </h1>
+              {!isCreateMode && isLoadingVersion && (
+                <Loader2 className="h-5 w-5 animate-spin text-slate-400" />
+              )}
+            </div>
             <p className="text-slate-600 dark:text-slate-400 mt-1">
               {isCreateMode
                 ? 'The configuration item behind a firmware or software BOM line'
@@ -305,12 +522,64 @@ export function SoftwareDetail({
             </>
           ) : (
             <>
-              <Button variant="outline" onClick={() => setIsEditing(true)}>
-                <Edit className="h-4 w-4 mr-2" />
-                Edit
-              </Button>
+              {/* Edit button with tooltip when disabled */}
+              {getEditDisabledReason() ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        onClick={handleEdit}
+                        disabled={
+                          (!isEditable && !needsCheckout) ||
+                          editLock.lockedByOther
+                        }
+                      >
+                        {needsCheckout ? (
+                          <>
+                            <GitBranch className="h-4 w-4 mr-2" />
+                            Revise
+                          </>
+                        ) : (
+                          <>
+                            <Edit className="h-4 w-4 mr-2" />
+                            Edit
+                          </>
+                        )}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{getEditDisabledReason()}</p>
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={handleEdit}
+                  disabled={
+                    (!isEditable && !needsCheckout) || editLock.lockedByOther
+                  }
+                >
+                  {needsCheckout ? (
+                    <>
+                      <GitBranch className="h-4 w-4 mr-2" />
+                      Revise
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="h-4 w-4 mr-2" />
+                      Edit
+                    </>
+                  )}
+                </Button>
+              )}
               {onDelete && (
-                <Button variant="destructive" onClick={handleDelete}>
+                <Button
+                  variant="destructive"
+                  onClick={handleDelete}
+                  disabled={!isEditable}
+                >
                   <Trash2 className="h-4 w-4 mr-2" />
                   Delete
                 </Button>
@@ -321,7 +590,7 @@ export function SoftwareDetail({
       </div>
 
       {!isCreateMode && (
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <StateBadge
             itemType="Software"
             state={current.state}
@@ -335,8 +604,32 @@ export function SoftwareDetail({
               v{current.version}
             </Badge>
           )}
+          {current.designId && context.type !== 'main' && (
+            <Badge variant={getContextBadgeVariant()} className="text-sm">
+              <GitBranch className="h-3 w-3 mr-1" />
+              {contextLabel}
+            </Badge>
+          )}
+          {editLock.status?.isCheckedOut && (
+            <Badge
+              variant="outline"
+              className="text-sm text-amber-600 dark:text-amber-400 border-amber-300 dark:border-amber-700"
+            >
+              <Lock className="h-3 w-3 mr-1" />
+              {editLock.heldByMe
+                ? 'Checked out by you'
+                : `Checked out by ${editLock.lockHolderLabel}`}
+            </Badge>
+          )}
         </div>
       )}
+
+      {!isCreateMode &&
+        isWorkspaceContext &&
+        context.type === 'branch' &&
+        context.branchId && (
+          <WorkspaceContextBanner branchId={context.branchId} />
+        )}
 
       <Tabs
         value={activeTab}
@@ -651,8 +944,9 @@ export function SoftwareDetail({
             ) : (
               <SourceViewer
                 itemId={current.id}
-                canImport
-                canEdit={!isReleasedFamily}
+                canImport={!sourceReadOnlyReason}
+                canEdit={!sourceReadOnlyReason}
+                readOnlyReason={sourceReadOnlyReason}
               />
             )}
           </TabsContent>
@@ -663,12 +957,24 @@ export function SoftwareDetail({
             <ItemHistoryTab
               itemId={current.id}
               designId={current.designId || null}
-              versionContext={{ type: 'main' }}
+              versionContext={context}
+              onViewHistoricalState={setContext}
               itemType="Software"
             />
           </TabsContent>
         )}
       </Tabs>
+
+      {!isCreateMode && current.id && current.designId && (
+        <CheckoutDialog
+          open={isCheckoutDialogOpen}
+          onOpenChange={setIsCheckoutDialogOpen}
+          itemId={current.id}
+          itemNumber={current.itemNumber ?? ''}
+          designId={current.designId}
+          onCheckoutComplete={handleCheckoutComplete}
+        />
+      )}
     </PageContainer>
   )
 }

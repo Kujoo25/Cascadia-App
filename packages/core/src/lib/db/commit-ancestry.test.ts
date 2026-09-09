@@ -130,8 +130,8 @@ describe('commit ancestry', () => {
 
     for (let i = 0; i < count; i++) {
       const onMain = await insert(`main ${i}`, head)
-      const onEco = await insert(`eco ${i}`, head)
-      head = await insert(`merge ${i}`, onMain, onEco)
+      const onChangeOrder = await insert(`eco ${i}`, head)
+      head = await insert(`merge ${i}`, onMain, onChangeOrder)
     }
 
     return { head, all }

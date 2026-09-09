@@ -20,7 +20,7 @@ import { StructureTab } from '@/components/designs/StructureTab'
 import { DesignModelViewer } from '@/components/designs/DesignModelViewer'
 import { LibraryItemsTab } from '@/components/designs/LibraryItemsTab'
 import { HistoryTab } from '@/components/designs/HistoryTab'
-import { ECOsTab } from '@/components/designs/ECOsTab'
+import { ChangeOrdersTab } from '@/components/designs/ChangeOrdersTab'
 import { BaselinesTab } from '@/components/designs/BaselinesTab'
 import { MembersTab } from '@/components/designs/MembersTab'
 import { PageContainer } from '@/components/layout'
@@ -316,7 +316,7 @@ function DesignDetailPage() {
             <TabsTrigger value="items">Items</TabsTrigger>
             <TabsTrigger value="graph">Graph</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
-            <TabsTrigger value="ecos">ECOs</TabsTrigger>
+            <TabsTrigger value="ecos">Change Orders</TabsTrigger>
             <TabsTrigger value="baselines">Baselines</TabsTrigger>
           </TabsList>
 
@@ -345,7 +345,7 @@ function DesignDetailPage() {
           </TabsContent>
 
           <TabsContent value="ecos" className="mt-6">
-            <ECOsTab
+            <ChangeOrdersTab
               designId={design.id}
               versionContext={context}
               isHistoricalView={isHistoricalView}
@@ -373,7 +373,7 @@ function DesignDetailPage() {
             <TabsTrigger value="structure">Structure</TabsTrigger>
             <TabsTrigger value="graph">Graph</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
-            <TabsTrigger value="ecos">ECOs</TabsTrigger>
+            <TabsTrigger value="ecos">Change Orders</TabsTrigger>
             <TabsTrigger value="baselines">Baselines</TabsTrigger>
           </TabsList>
 
@@ -412,7 +412,7 @@ function DesignDetailPage() {
           </TabsContent>
 
           <TabsContent value="ecos" className="mt-6">
-            <ECOsTab
+            <ChangeOrdersTab
               designId={design.id}
               versionContext={context}
               isHistoricalView={isHistoricalView}

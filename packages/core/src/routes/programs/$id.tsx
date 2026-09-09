@@ -152,8 +152,12 @@ function ProgramDetail({
         status: editProgram.status as CreateProgramInput['status'],
         customer: editProgram.customer || '',
         contractNumber: editProgram.contractNumber || '',
-        startDate: editProgram.startDate || '',
-        targetEndDate: editProgram.targetEndDate || '',
+        // `null`, not `''`: an emptied `<input type="date">` reads back as
+        // the empty string, and a program with no dates set starts there.
+        // Both spellings mean "no date" and the server normalizes either
+        // (see `clearableDate`), but only one of them says so.
+        startDate: editProgram.startDate || null,
+        targetEndDate: editProgram.targetEndDate || null,
         attributes,
       }
       await apiFetch(`/api/v1/programs/${program.id}`, {

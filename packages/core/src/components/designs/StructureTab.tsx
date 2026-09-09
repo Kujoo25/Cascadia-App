@@ -309,7 +309,7 @@ export function StructureTab({
   const handleAddToStructure = (itemId: string, itemNumber: string) => {
     confirm({
       title: 'Add to Structure',
-      description: `Add ${itemNumber} back to the design structure as a root part?`,
+      description: `Add ${itemNumber} to the design structure as a top-level part?`,
       actionLabel: 'Add',
       cancelLabel: 'Cancel',
       onConfirm: () => {
@@ -448,7 +448,7 @@ export function StructureTab({
         align: 'center',
         renderCell: (node) =>
           node.isInWork ? (
-            <span className="text-amber-500" title="In work on ECO">
+            <span className="text-amber-500" title="In work on a change order">
               &#8635;
             </span>
           ) : null,

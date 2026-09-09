@@ -28,7 +28,7 @@ export interface ItemTypeRelationship {
   allowMultiple: boolean
 }
 
-export interface WorkflowsByChangeType {
+export interface LifecyclesByChangeType {
   ECO?: string
   ECN?: string
   Deviation?: string
@@ -56,7 +56,7 @@ export interface ItemTypeConfigOverrides {
   icon?: string
   lifecycleDefinitionId?: string | null
   permissions?: ItemTypePermissions
-  workflowsByChangeType?: WorkflowsByChangeType
+  lifecyclesByChangeType?: LifecyclesByChangeType
 }
 
 export interface ItemTypeRuntimeConfig {

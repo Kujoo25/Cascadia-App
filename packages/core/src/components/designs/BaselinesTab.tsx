@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/Select'
+import { TAG_TYPES } from '@/lib/versioning/branch-types'
 
 interface TagItem {
   id: string
@@ -65,7 +66,7 @@ export function BaselinesTab({
         return 'success' as const
       case 'milestone':
         return 'secondary' as const
-      case 'eco-release':
+      case TAG_TYPES.changeOrderRelease:
         return 'warning' as const
       default:
         return 'outline' as const

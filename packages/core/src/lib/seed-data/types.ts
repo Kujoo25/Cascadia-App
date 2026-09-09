@@ -228,7 +228,7 @@ export interface AffectedItemInput {
 }
 
 // ECO Actions
-export interface EcoActionResult {
+export interface ChangeOrderActionResult {
   success: boolean
   message: string
   details?: Record<string, unknown>

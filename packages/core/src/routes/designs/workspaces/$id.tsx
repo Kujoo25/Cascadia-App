@@ -28,8 +28,8 @@ import {
   workspaceDetailQuery,
 } from '@/lib/query'
 import { apiFetch } from '@/lib/api/client'
-import { ConvertToEcoDialog } from '@/components/workspaces/ConvertToEcoDialog'
-import { MergeToEcoDialog } from '@/components/workspaces/MergeToEcoDialog'
+import { ConvertToChangeOrderDialog } from '@/components/workspaces/ConvertToChangeOrderDialog'
+import { MergeToChangeOrderDialog } from '@/components/workspaces/MergeToChangeOrderDialog'
 import { WorkspaceItemsPanel } from '@/components/workspaces/WorkspaceItemsPanel'
 
 /** The tabs the workspace page renders; the search schema derives from this list. */
@@ -58,8 +58,10 @@ function WorkspaceDetailPage() {
   const { confirm } = useAlertDialog()
   const { handleError, showSuccess } = useErrorHandler()
   const invalidate = useInvalidateResources()
-  const [convertToEcoDialogOpen, setConvertToEcoDialogOpen] = useState(false)
-  const [mergeToEcoDialogOpen, setMergeToEcoDialogOpen] = useState(false)
+  const [convertToChangeOrderDialogOpen, setConvertToChangeOrderDialogOpen] =
+    useState(false)
+  const [mergeToChangeOrderDialogOpen, setMergeToChangeOrderDialogOpen] =
+    useState(false)
 
   const { data: workspace } = useQuery(workspaceDetailQuery(id))
   const { data: commits = [], isLoading: loadingCommits } = useQuery(
@@ -147,7 +149,7 @@ function WorkspaceDetailPage() {
         <div className="flex items-center gap-3">
           <Button
             variant="default"
-            onClick={() => setConvertToEcoDialogOpen(true)}
+            onClick={() => setConvertToChangeOrderDialogOpen(true)}
             disabled={workspace.itemCount === 0}
           >
             <FileBox className="h-4 w-4 mr-2" />
@@ -155,7 +157,7 @@ function WorkspaceDetailPage() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => setMergeToEcoDialogOpen(true)}
+            onClick={() => setMergeToChangeOrderDialogOpen(true)}
             disabled={workspace.itemCount === 0}
           >
             <GitMerge className="h-4 w-4 mr-2" />
@@ -255,7 +257,7 @@ function WorkspaceDetailPage() {
                     </p>
                     <Button
                       size="sm"
-                      onClick={() => setConvertToEcoDialogOpen(true)}
+                      onClick={() => setConvertToChangeOrderDialogOpen(true)}
                       disabled={workspace.itemCount === 0}
                     >
                       <FileBox className="h-4 w-4 mr-2" />
@@ -280,7 +282,7 @@ function WorkspaceDetailPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setMergeToEcoDialogOpen(true)}
+                      onClick={() => setMergeToChangeOrderDialogOpen(true)}
                       disabled={workspace.itemCount === 0}
                     >
                       <GitMerge className="h-4 w-4 mr-2" />
@@ -347,30 +349,39 @@ function WorkspaceDetailPage() {
       </Tabs>
 
       {/* Dialogs */}
-      <ConvertToEcoDialog
-        open={convertToEcoDialogOpen}
-        onOpenChange={setConvertToEcoDialogOpen}
+      <ConvertToChangeOrderDialog
+        open={convertToChangeOrderDialogOpen}
+        onOpenChange={setConvertToChangeOrderDialogOpen}
         workspaceId={workspace.id}
         workspaceName={displayName}
         itemCount={workspace.itemCount}
-        onSuccess={(ecoId, ecoNumber) => {
-          showSuccess('ECO created', `Successfully created ${ecoNumber}`)
+        onSuccess={(changeOrderId, changeOrderNumber) => {
+          showSuccess(
+            'ECO created',
+            `Successfully created ${changeOrderNumber}`,
+          )
           void invalidate('workspaces', 'change-orders')
-          router.navigate({ to: '/change-orders/$id', params: { id: ecoId } })
+          router.navigate({
+            to: '/change-orders/$id',
+            params: { id: changeOrderId },
+          })
         }}
       />
 
-      <MergeToEcoDialog
-        open={mergeToEcoDialogOpen}
-        onOpenChange={setMergeToEcoDialogOpen}
+      <MergeToChangeOrderDialog
+        open={mergeToChangeOrderDialogOpen}
+        onOpenChange={setMergeToChangeOrderDialogOpen}
         workspaceId={workspace.id}
         workspaceName={displayName}
         designId={workspace.designId}
         itemCount={workspace.itemCount}
-        onSuccess={(ecoId) => {
+        onSuccess={(changeOrderId) => {
           showSuccess('Workspace merged', 'Items added to ECO')
           void invalidate('workspaces', 'change-orders')
-          router.navigate({ to: '/change-orders/$id', params: { id: ecoId } })
+          router.navigate({
+            to: '/change-orders/$id',
+            params: { id: changeOrderId },
+          })
         }}
       />
     </PageContainer>

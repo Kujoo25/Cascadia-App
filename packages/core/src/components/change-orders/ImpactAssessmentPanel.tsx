@@ -32,6 +32,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui'
+import { formatRevision } from '@/lib/types/lifecycle'
 
 interface WhereUsedNode {
   itemId: string
@@ -221,7 +222,9 @@ function RelationshipGroup({
                 <span className="text-xs text-slate-500">Source:</span>
               )}
               <span className="font-mono">{part.itemNumber}</span>
-              <span className="text-slate-400">{part.revision}</span>
+              <span className="text-slate-400">
+                {formatRevision(part.revision)}
+              </span>
               <span className="flex-1 truncate text-slate-600 dark:text-slate-400">
                 {part.name}
               </span>
@@ -410,7 +413,9 @@ function FlatPartsList({
               <span className="text-xs text-slate-500">Source:</span>
             )}
             <span className="font-mono">{part.itemNumber}</span>
-            <span className="text-slate-400">{part.revision}</span>
+            <span className="text-slate-400">
+              {formatRevision(part.revision)}
+            </span>
             <span className="flex-1 truncate text-slate-600 dark:text-slate-400">
               {part.name}
             </span>
@@ -451,10 +456,12 @@ export function ImpactAssessmentPanel({
   onRunAssessment: externalOnRunAssessment,
 }: ImpactAssessmentPanelProps) {
   const [expandedLevels, setExpandedLevels] = useState<Set<number>>(new Set())
-  const [addedToEco, setAddedToEco] = useState<Set<string>>(new Set())
-  const [addToEcoErrors, setAddToEcoErrors] = useState<Record<string, string>>(
-    {},
+  const [addedToChangeOrder, setAddedToChangeOrder] = useState<Set<string>>(
+    new Set(),
   )
+  const [addToChangeOrderErrors, setAddToChangeOrderErrors] = useState<
+    Record<string, string>
+  >({})
   const [running, setRunning] = useState(false)
 
   const invalidate = useInvalidateResources()
@@ -492,8 +499,8 @@ export function ImpactAssessmentPanel({
     await runAssessment()
   }, [externalOnRunAssessment, runAssessment])
 
-  // Handle "Add to ECO" action
-  const handleAddToEco = useCallback(
+  // Handle "Add to Change Order" action
+  const handleAddToChangeOrder = useCallback(
     async (node: WhereUsedNode) => {
       const nodeKey = node.masterId ?? node.itemId
       try {
@@ -507,16 +514,18 @@ export function ImpactAssessmentPanel({
             }),
           },
         )
-        setAddedToEco((prev) => new Set(prev).add(nodeKey))
-        setAddToEcoErrors((prev) => {
+        setAddedToChangeOrder((prev) => new Set(prev).add(nodeKey))
+        setAddToChangeOrderErrors((prev) => {
           const next = { ...prev }
           delete next[nodeKey]
           return next
         })
       } catch (err: any) {
         const message =
-          err?.data?.error ?? err?.message ?? 'Failed to add to ECO'
-        setAddToEcoErrors((prev) => ({ ...prev, [nodeKey]: message }))
+          err?.data?.error ??
+          err?.message ??
+          'Failed to add to the change order'
+        setAddToChangeOrderErrors((prev) => ({ ...prev, [nodeKey]: message }))
       }
     },
     [changeOrderId],
@@ -718,8 +727,8 @@ export function ImpactAssessmentPanel({
                         : nodes.slice(0, 10)
                       ).map((node) => {
                         const nodeKey = node.masterId ?? node.itemId
-                        const isAdded = addedToEco.has(nodeKey)
-                        const error = addToEcoErrors[nodeKey]
+                        const isAdded = addedToChangeOrder.has(nodeKey)
+                        const error = addToChangeOrderErrors[nodeKey]
                         return (
                           <div
                             key={nodeKey}
@@ -734,7 +743,7 @@ export function ImpactAssessmentPanel({
                                 {node.itemNumber}
                               </span>
                               <span className="text-slate-500">
-                                {node.revision}
+                                {formatRevision(node.revision)}
                               </span>
                               <span className="flex-1 truncate">
                                 {node.name}
@@ -790,7 +799,7 @@ export function ImpactAssessmentPanel({
                                     variant="outline"
                                     size="sm"
                                     className="h-6 text-xs px-2"
-                                    onClick={() => handleAddToEco(node)}
+                                    onClick={() => handleAddToChangeOrder(node)}
                                   >
                                     <Plus className="h-3 w-3 mr-1" />
                                     Add to ECO

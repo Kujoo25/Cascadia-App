@@ -160,7 +160,7 @@ export function ConfirmationCard({
           )}
           {details.changeOrderNumber && (
             <div>
-              <span className="font-medium">ECO:</span>{' '}
+              <span className="font-medium">Change order:</span>{' '}
               {details.changeOrderNumber}
             </div>
           )}
@@ -219,13 +219,14 @@ export function isConfirmationResult(result: unknown): result is {
 /**
  * Type guard for checking if a tool result suggests creating an ECO
  */
-export function isSuggestEcoResult(
-  result: unknown,
-): result is { suggestCreateEco: true; suggestEcoMessage?: string } {
+export function isSuggestChangeOrderResult(result: unknown): result is {
+  suggestCreateChangeOrder: true
+  suggestChangeOrderMessage?: string
+} {
   return (
     typeof result === 'object' &&
     result !== null &&
-    'suggestCreateEco' in result &&
-    (result as any).suggestCreateEco === true
+    'suggestCreateChangeOrder' in result &&
+    (result as any).suggestCreateChangeOrder === true
   )
 }

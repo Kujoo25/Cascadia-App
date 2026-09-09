@@ -27,6 +27,7 @@ import { apiFetch } from '@/lib/api/client'
 import { useInvalidateResources } from '@/lib/query'
 import { designBranchesQuery } from '@/lib/query/options/designs'
 import { designStatusQuery } from '@/lib/query/options/branches'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 interface Branch {
   id: string
@@ -55,7 +56,7 @@ interface BranchSelectorProps {
   /**
    * Callback when user wants to create a new ECO
    */
-  onCreateEco?: () => void
+  onCreateChangeOrder?: () => void
 }
 
 /**
@@ -70,7 +71,7 @@ export function BranchSelector({
   disabled = false,
   className,
   placeholder = 'Select branch...',
-  onCreateEco,
+  onCreateChangeOrder: onCreateChangeOrder,
 }: BranchSelectorProps) {
   const invalidate = useInvalidateResources()
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -127,7 +128,7 @@ export function BranchSelector({
       return
     }
     if (val === '__create_eco__') {
-      onCreateEco?.()
+      onCreateChangeOrder?.()
       return
     }
     onChange(val)
@@ -135,8 +136,8 @@ export function BranchSelector({
 
   // Group branches by type
   const mainBranch = branches.find((b) => b.branchType === 'main')
-  const ecoBranches = branches.filter(
-    (b) => b.branchType === 'eco' && !b.isArchived,
+  const changeOrderBranches = branches.filter(
+    (b) => b.branchType === BRANCH_TYPES.changeOrder && !b.isArchived,
   )
   const workspaceBranches = branches.filter(
     (b) => b.branchType === 'workspace' && !b.isArchived,
@@ -201,12 +202,12 @@ export function BranchSelector({
             )}
 
             {/* ECO branches */}
-            {ecoBranches.length > 0 && (
+            {changeOrderBranches.length > 0 && (
               <>
                 {showMainOption && mainBranch && <SelectSeparator />}
                 <SelectGroup>
-                  <SelectLabel>ECO Branches</SelectLabel>
-                  {ecoBranches.map((branch) => (
+                  <SelectLabel>Change Order Branches</SelectLabel>
+                  {changeOrderBranches.map((branch) => (
                     <SelectItem
                       key={branch.id}
                       value={branch.id}
@@ -259,7 +260,7 @@ export function BranchSelector({
                   New Workspace...
                 </div>
               </SelectItem>
-              {onCreateEco && (
+              {onCreateChangeOrder && (
                 <SelectItem value="__create_eco__">
                   <div className="flex items-center gap-2 text-cyan-600 dark:text-cyan-400">
                     <Plus className="h-3 w-3" />

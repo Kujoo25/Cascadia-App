@@ -99,7 +99,7 @@ export class ChangeOrdersPage extends BasePage {
    * the Existing Change Order option, select the branch, confirm. Assumes
    * the dialog is already open (the part page's Revise button opens it).
    */
-  async checkoutToEco(page: Page): Promise<void> {
+  async checkoutToChangeOrder(page: Page): Promise<void> {
     await page.locator('[data-testid="checkout-option-eco"]').click()
 
     // Radix Select locks pointer events on everything outside its open

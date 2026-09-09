@@ -92,7 +92,7 @@ describe('remaining by-id surfaces — program isolation', () => {
   let foreignProgramId: string
   let derivedIssueId: string
   let orphanIssueId: string
-  let ecoId: string
+  let changeOrderId: string
 
   const cookies = new Map<string, string>()
 
@@ -223,7 +223,7 @@ describe('remaining by-id surfaces — program isolation', () => {
 
     // An ECO carries no designId of its own — its designs hang off
     // `change_order_designs`, which is what the gate has to walk.
-    ecoId = (
+    changeOrderId = (
       await ChangeOrderService.create(
         { revision: 'A', changeType: 'ECO', name: 'Gated ECO' },
         [design.id],
@@ -297,11 +297,12 @@ describe('remaining by-id surfaces — program isolation', () => {
   it('scopes an ECO on its linked designs across the three context reads', async () => {
     for (const route of contextReads) {
       await expectDenied(
-        await request(outsider, `/api/v1/items/${ecoId}/${route}`),
+        await request(outsider, `/api/v1/items/${changeOrderId}/${route}`),
         `eco ${route}`,
       )
       expect(
-        (await request(member, `/api/v1/items/${ecoId}/${route}`)).status,
+        (await request(member, `/api/v1/items/${changeOrderId}/${route}`))
+          .status,
         `eco ${route}`,
       ).toBe(200)
     }
@@ -396,7 +397,7 @@ describe('remaining by-id surfaces — program isolation', () => {
     // No program is a data gap, not a row outside every boundary. This gate is
     // the only instance-level check the work-order routes have — it covers the
     // traveler, sign-off and production — so it fails closed, the same rule
-    // requireEcoAccess applies to a link-less ECO.
+    // requireChangeOrderAccess applies to a link-less ECO.
     await expectDenied(
       await request(
         outsider,
@@ -516,7 +517,12 @@ describe('remaining by-id surfaces — program isolation', () => {
     // The route hand-rolled the design check, so it was vacuous on all four
     // types whose `items.design_id` is NULL — this closes the ChangeOrder and
     // Issue halves as well as the two this change is about, deliberately.
-    for (const id of [ecoId, derivedIssueId, workOrderId, physicalPartId]) {
+    for (const id of [
+      changeOrderId,
+      derivedIssueId,
+      workOrderId,
+      physicalPartId,
+    ]) {
       await expectDenied(await request(outsider, `/api/v1/items/${id}`), id)
       expect((await request(member, `/api/v1/items/${id}`)).status, id).toBe(
         200,

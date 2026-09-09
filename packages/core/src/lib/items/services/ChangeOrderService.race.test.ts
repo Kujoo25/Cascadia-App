@@ -65,7 +65,7 @@ describe('ChangeOrderService — concurrent design association', () => {
       designId: seeded,
     } = await concurrent.seedScope(label)
 
-    const eco = await ChangeOrderService.create(
+    const changeOrder = await ChangeOrderService.create(
       { revision: 'A', changeType: 'ECO', name: `Design race ${label}` },
       [seeded],
       user.id,
@@ -104,8 +104,8 @@ describe('ChangeOrderService — concurrent design association', () => {
     concurrent.trackUser(rival.id)
 
     return {
-      changeOrderId: eco.id!,
-      ecoNumber: eco.itemNumber!,
+      changeOrderId: changeOrder.id!,
+      ecoNumber: changeOrder.itemNumber!,
       designId: design.id,
       parts,
       owner: user,
@@ -125,26 +125,32 @@ describe('ChangeOrderService — concurrent design association', () => {
       )
   }
 
-  async function ecoBranchesFor(designId: string, ecoNumber: string) {
+  async function changeOrderBranchesFor(
+    designId: string,
+    changeOrderNumber: string,
+  ) {
     return concurrent.db
       .select()
       .from(branches)
       .where(
         and(
           eq(branches.designId, designId),
-          eq(branches.name, `eco/${ecoNumber}`),
+          eq(branches.name, `eco/${changeOrderNumber}`),
         ),
       )
   }
 
-  async function creationCommitsFor(branchId: string, ecoNumber: string) {
+  async function creationCommitsFor(
+    branchId: string,
+    changeOrderNumber: string,
+  ) {
     return concurrent.db
       .select()
       .from(commits)
       .where(
         and(
           eq(commits.branchId, branchId),
-          eq(commits.message, `ChangeOrder ${ecoNumber} created`),
+          eq(commits.message, `ChangeOrder ${changeOrderNumber} created`),
         ),
       )
   }
@@ -169,17 +175,19 @@ describe('ChangeOrderService — concurrent design association', () => {
   }
 
   it('links the design once when two checkouts race to be its first', async () => {
-    const { changeOrderId, ecoNumber, designId, parts, owner, rival } =
-      await unlinkedDesign('eco-first-checkout')
+    const {
+      changeOrderId,
+      ecoNumber: changeOrderNumber,
+      designId,
+      parts,
+      owner,
+      rival,
+    } = await unlinkedDesign('eco-first-checkout')
     const [first, second] = parts
 
     const outcomes = await Promise.allSettled([
-      ChangeOrderService.checkoutItemToEco(changeOrderId, first!.id!, owner.id),
-      ChangeOrderService.checkoutItemToEco(
-        changeOrderId,
-        second!.id!,
-        rival.id,
-      ),
+      ChangeOrderService.checkoutItem(changeOrderId, first!.id!, owner.id),
+      ChangeOrderService.checkoutItem(changeOrderId, second!.id!, rival.id),
     ])
 
     // Both callers asked for something that is true afterwards either way, so
@@ -189,32 +197,42 @@ describe('ChangeOrderService — concurrent design association', () => {
     const links = await linksFor(changeOrderId, designId)
     expect(links).toHaveLength(1)
 
-    const ecoBranches = await ecoBranchesFor(designId, ecoNumber)
-    expect(ecoBranches).toHaveLength(1)
+    const changeOrderBranches = await changeOrderBranchesFor(
+      designId,
+      changeOrderNumber,
+    )
+    expect(changeOrderBranches).toHaveLength(1)
 
     // Consistent branch ids: whichever call lost the branch insert must have
     // re-resolved onto the winner's branch, and the link must name it.
     expect(alsoWon!.value.branch.id).toBe(won!.value.branch.id)
     expect(links[0]?.branchId).toBe(won!.value.branch.id)
-    expect(ecoBranches[0]?.id).toBe(won!.value.branch.id)
+    expect(changeOrderBranches[0]?.id).toBe(won!.value.branch.id)
   })
 
   it('links the design once when the same item is checked out twice at once', async () => {
     // The double-click, and the narrowest form of the race: one caller, one
     // item, two calls in flight. Both are the same request, so both succeed.
-    const { changeOrderId, ecoNumber, designId, parts, owner } =
-      await unlinkedDesign('eco-double-checkout')
+    const {
+      changeOrderId,
+      ecoNumber: changeOrderNumber,
+      designId,
+      parts,
+      owner,
+    } = await unlinkedDesign('eco-double-checkout')
     const [only] = parts
 
     const outcomes = await Promise.allSettled([
-      ChangeOrderService.checkoutItemToEco(changeOrderId, only!.id!, owner.id),
-      ChangeOrderService.checkoutItemToEco(changeOrderId, only!.id!, owner.id),
+      ChangeOrderService.checkoutItem(changeOrderId, only!.id!, owner.id),
+      ChangeOrderService.checkoutItem(changeOrderId, only!.id!, owner.id),
     ])
 
     const [won, alsoWon] = outcomes.map(expectFulfilled)
 
     expect(await linksFor(changeOrderId, designId)).toHaveLength(1)
-    expect(await ecoBranchesFor(designId, ecoNumber)).toHaveLength(1)
+    expect(
+      await changeOrderBranchesFor(designId, changeOrderNumber),
+    ).toHaveLength(1)
     expect(alsoWon!.value.branch.id).toBe(won!.value.branch.id)
     expect(alsoWon!.value.branchItem.id).toBe(won!.value.branchItem.id)
   })
@@ -223,8 +241,14 @@ describe('ChangeOrderService — concurrent design association', () => {
     // Same association, reached through `ensureDesignAssociation` and from
     // inside a transaction each — where a failed statement aborts the caller's
     // whole transaction, not just the write that failed.
-    const { changeOrderId, ecoNumber, designId, parts, owner, rival } =
-      await unlinkedDesign('eco-first-add')
+    const {
+      changeOrderId,
+      ecoNumber: changeOrderNumber,
+      designId,
+      parts,
+      owner,
+      rival,
+    } = await unlinkedDesign('eco-first-add')
     const [first, second] = parts
 
     const outcomes = await Promise.allSettled([
@@ -245,14 +269,20 @@ describe('ChangeOrderService — concurrent design association', () => {
     const links = await linksFor(changeOrderId, designId)
     expect(links).toHaveLength(1)
 
-    const ecoBranches = await ecoBranchesFor(designId, ecoNumber)
-    expect(ecoBranches).toHaveLength(1)
-    expect(links[0]?.branchId).toBe(ecoBranches[0]?.id)
+    const changeOrderBranches = await changeOrderBranchesFor(
+      designId,
+      changeOrderNumber,
+    )
+    expect(changeOrderBranches).toHaveLength(1)
+    expect(links[0]?.branchId).toBe(changeOrderBranches[0]?.id)
 
     // Only the caller that actually created the branch writes the registration
     // commit. Both believing they did is how the design's history acquired two
     // of them.
-    const created = await creationCommitsFor(ecoBranches[0]!.id, ecoNumber)
+    const created = await creationCommitsFor(
+      changeOrderBranches[0]!.id,
+      changeOrderNumber,
+    )
     expect(created).toHaveLength(1)
   })
 })

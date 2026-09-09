@@ -18,7 +18,7 @@ This creates:
 | **Roles**                  | Administrator, Power User, Approver, User, View Only                |
 | **Standard Parts Library** | Code: `STD-LIB` (global, not tied to any program)                   |
 | **Lifecycles**             | Part, Document (Driven by ECO), ChangeOrder (Driving), Issue (Free) |
-| **Flexible Workflow**      | Dynamic Change Order (customizable per instance)                    |
+| **Flexible Workflow**      | XCO - Flexible Change Order (customizable per instance)             |
 | **Item Type Configs**      | Lifecycle assignments and role-based permissions                    |
 
 ### Component catalog (optional)

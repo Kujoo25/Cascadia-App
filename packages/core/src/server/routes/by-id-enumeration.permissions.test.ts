@@ -319,7 +319,7 @@ describe('by-id routes, enumerated — program isolation', () => {
       Software: await make('Software'),
       WorkInstruction: await make('WorkInstruction', { outputPartId: partId }),
       // The three whose creation is not a plain ItemService.create: an ECO
-      // needs its design links (which is what requireEcoAccess reads), and the
+      // needs its design links (which is what requireChangeOrderAccess reads), and the
       // two physical-lane types carry no designId at all.
       ChangeOrder: (
         await ChangeOrderService.create(

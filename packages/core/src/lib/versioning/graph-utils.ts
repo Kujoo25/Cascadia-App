@@ -5,7 +5,7 @@
  * Commit-graph consolidation — the single implementation.
  *
  * Three graph pipelines call `consolidateCommits`: the design history graph,
- * the ECO branch history graph (`EcoBranchHistoryService`), and the program
+ * the ECO branch history graph (`ChangeOrderBranchHistoryService`), and the program
  * history graph — the first and last both via `CommitGraphService`. Each used
  * to carry its own copy of this algorithm and they had already drifted.
  * Everything here is pure — no `@/lib/db` import — so it stays safe to reach

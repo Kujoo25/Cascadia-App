@@ -23,6 +23,7 @@ import {
   Input,
 } from '@/components/ui'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 import {
   entitySubQuery,
@@ -71,7 +72,8 @@ export function RequirementLinkingPanel({
   readOnly = false,
   onUpdate,
 }: RequirementLinkingPanelProps) {
-  const { alert, confirm } = useAlertDialog()
+  const { confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -137,12 +139,8 @@ export function RequirementLinkingPanel({
           })
           await invalidate('items')
           onUpdate?.()
-        } catch {
-          alert({
-            title: 'Error',
-            description: 'Failed to remove requirement link',
-            variant: 'destructive',
-          })
+        } catch (error) {
+          handleError(error, { title: 'Failed to remove requirement link' })
         }
       },
     })
@@ -175,12 +173,8 @@ export function RequirementLinkingPanel({
       setSelectedIds(new Set())
       setSearchQuery('')
       onUpdate?.()
-    } catch {
-      alert({
-        title: 'Error',
-        description: 'Failed to link requirements',
-        variant: 'destructive',
-      })
+    } catch (error) {
+      handleError(error, { title: 'Failed to link requirements' })
     } finally {
       setAdding(false)
     }
@@ -274,14 +268,13 @@ export function RequirementLinkingPanel({
               id: 'actions',
               header: '',
               enableSorting: false,
-              meta: { width: '50px', align: 'center' as const },
+              meta: { width: '60px', align: 'center' as const },
               cell: ({ row }) => (
                 <Button
                   type="button"
                   variant="ghost"
-                  size="sm"
+                  size="icon"
                   onClick={() => handleRemoveLink(row.original.id)}
-                  className="h-8 w-8 p-0"
                   title="Remove link"
                 >
                   <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />

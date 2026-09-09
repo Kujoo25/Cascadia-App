@@ -17,8 +17,12 @@ export const wiPartChangedHandler: JobHandler<
     payload: WiPartChangedPayload,
     context: JobContext,
   ): Promise<WiPartChangedResult> {
+    // Either key: see the payload schema
+    const changeOrderId = payload.changeOrderId ?? payload.ecoId
+    if (!changeOrderId) throw new Error('Payload names no change order')
+
     await context.log.info('Starting WI part change alert creation', {
-      ecoId: payload.ecoId,
+      changeOrderId,
       changedPartIds: payload.changedPartIds,
     })
 
@@ -31,7 +35,7 @@ export const wiPartChangedHandler: JobHandler<
     await context.updateProgress(10, 'Querying affected work instructions...')
 
     const result = await WorkInstructionChangeAlertService.createAlerts({
-      ecoId: payload.ecoId,
+      ecoId: changeOrderId,
       changedPartIds: payload.changedPartIds,
       changeDetails: payload.changeDetails,
     })

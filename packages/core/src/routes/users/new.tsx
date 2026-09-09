@@ -14,7 +14,7 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 
 export const Route = createFileRoute('/users/new')({
   component: NewUserPage,
@@ -22,7 +22,7 @@ export const Route = createFileRoute('/users/new')({
 
 function NewUserPage() {
   const navigate = useNavigate()
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const handleCreateUser = async (data: any) => {
@@ -42,12 +42,7 @@ function NewUserPage() {
       // Navigate to the users list
       navigate({ to: '/users' })
     } catch (error) {
-      console.error('Error creating user:', error)
-      alert({
-        title: 'Error',
-        description: `Failed to create user: ${(error as Error).message}`,
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Failed to create user' })
     } finally {
       setIsSubmitting(false)
     }

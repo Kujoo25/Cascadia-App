@@ -141,7 +141,7 @@ app.delete('/items/:id', adapt(
 
 Both halves of the tuple are typed, so a misspelt resource or action is a
 compile error. What the types cannot say is whether any role _holds_ the pair
-you charged. `manage` is the trap: it sits on `workflows`, `users`, `roles`,
+you charged. `manage` is the trap: it sits on `lifecycles`, `users`, `roles`,
 `programs` and `system`, and on no item-type resource — so
 `permission: ['documents', 'manage']` is not a tight route, it is a route
 nobody can call, answering 403 to everyone including the Administrator with
@@ -164,7 +164,7 @@ the body is parsed:
 apiHandler<{ id: string }, z.infer<typeof transitionSchema>>(
   {
     permission: ['change_orders', 'update'],
-    access: ({ params, user }) => requireEcoAccess(user.id, params.id),
+    access: ({ params, user }) => requireChangeOrderAccess(user.id, params.id),
     body: transitionSchema,
   },
   async ({ params, body }) => { ... },

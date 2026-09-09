@@ -61,6 +61,12 @@ export interface CreateUsageInput {
     /** Type-specific overrides (parts, documents, requirements, etc.) */
     typeSpecific?: Record<string, unknown>
   }
+  /**
+   * Whether the usage is a top-level part of the design's structure. A
+   * subtree copy names its root true and its children false; a caller that
+   * says nothing gets the definition's own designation.
+   */
+  inDesignStructure?: boolean
 }
 
 /**
@@ -243,7 +249,10 @@ export class UsageService {
       sysmlType: sysmlType,
       metamodel: definition.metamodel ?? 'cascadia',
       isCurrent: true,
-      inDesignStructure: definition.inDesignStructure,
+      // The caller says whether the usage is a top-level part of the design it
+      // lands in; absent that, it stands where its definition stands.
+      inDesignStructure:
+        input.inDesignStructure ?? definition.inDesignStructure,
       attributes: definition.attributes,
       createdBy: userId,
       modifiedBy: userId,
@@ -599,11 +608,11 @@ export class UsageService {
       // When a branchId is provided (ECO branch), use it directly; otherwise
       // fall back to the design's main branch.
       let trackingBranchId: string
-      let isEcoBranch = false
+      let isChangeOrderBranch = false
 
       if (branchId) {
         trackingBranchId = branchId
-        isEcoBranch = true
+        isChangeOrderBranch = true
       } else {
         const targetMainBranch =
           await BranchService.getMainBranch(targetDesignId)
@@ -615,6 +624,9 @@ export class UsageService {
 
       const itemIdMap = new Map<string, string>() // sourceItemId -> newUsageId
       const createdUsages: Array<typeof items.$inferSelect> = []
+      // Usages that already stood in the target design and are reused as
+      // subtree children rather than copied again.
+      const reusedUsageIds = new Set<string>()
 
       for (const sourceItem of subtreeItems) {
         // A subtree child may already have a usage in the target design —
@@ -625,6 +637,7 @@ export class UsageService {
 
         if (existingUsages.length > 0) {
           itemIdMap.set(sourceItem.id, existingUsages[0]!.id)
+          reusedUsageIds.add(existingUsages[0]!.id)
           continue
         }
 
@@ -637,6 +650,9 @@ export class UsageService {
           {
             definitionId: sourceItem.id,
             targetDesignId,
+            // The subtree's root is what the caller added to the design's
+            // structure; everything below it arrives as a child of it.
+            inDesignStructure: sourceItem.id === rootItemId,
             ...(overrides.itemNumber ? { overrides } : {}),
           },
           userId,
@@ -651,17 +667,21 @@ export class UsageService {
           itemMasterId: usageResult.usage.masterId,
           currentItemId: usageResult.usage.id,
           baseItemId: usageResult.usage.id,
-          changeType: isEcoBranch ? 'added' : null,
+          changeType: isChangeOrderBranch ? 'added' : null,
         })
       }
 
       // Step 3: copy BOM relationships with remapped ids.
       let relationshipsCreated = 0
+      const nestedReusedIds = new Set<string>()
 
       for (const rel of bomRelationships) {
         const newSourceId = itemIdMap.get(rel.sourceId)
         const newTargetId = itemIdMap.get(rel.targetId)
         if (!newSourceId) continue
+        if (newTargetId && reusedUsageIds.has(newTargetId)) {
+          nestedReusedIds.add(newTargetId)
+        }
 
         // Both ends in the subtree: remap. External target (e.g. a library
         // item): preserve the original reference.
@@ -682,6 +702,16 @@ export class UsageService {
           modifiedBy: userId,
         })
         relationshipsCreated++
+      }
+
+      // A usage that already stood in this design and was just nested under
+      // a copied parent is a child now, not a top-level part — the rule
+      // ItemRelationshipService applies when a line is added one at a time.
+      if (nestedReusedIds.size > 0) {
+        await tx
+          .update(items)
+          .set({ inDesignStructure: false })
+          .where(inArray(items.id, [...nestedReusedIds]))
       }
 
       return { items: createdUsages, relationshipsCreated }

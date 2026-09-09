@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm'
+import {
+  and,
+  asc,
+  countDistinct,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  or,
+  sql,
+} from 'drizzle-orm'
 import { db, withTx } from '../../db'
 import {
   branchItems,
@@ -13,10 +24,11 @@ import {
   changeOrderRisks,
   changeOrders,
   designs,
+  itemRelationships,
   items,
-  workflowInstances,
+  lifecycleInstances,
 } from '../../db/schema'
-import { ecoAccessScopeCondition, notDeleted } from '../../db/filters'
+import { changeOrderAccessScopeCondition, notDeleted } from '../../db/filters'
 import { BranchService } from '../../services/BranchService'
 import { CheckoutService } from '../../services/CheckoutService'
 import { CommitService } from '../../services/CommitService'
@@ -27,6 +39,7 @@ import { RevisionService } from '../../services/RevisionService'
 import { FileService } from '../../vault/services/FileService'
 import {
   ConflictError,
+  InternalError,
   NotFoundError,
   PermissionDeniedError,
   ValidationError,
@@ -36,8 +49,12 @@ import {
   constraintOf,
   isUniqueViolation,
 } from '../../errors/pg'
-import { CHANGE_ACTION_LABELS } from '../types/change-order'
+import {
+  CHANGE_ACTION_LABELS,
+  changeOrderTypeSchema,
+} from '../types/change-order'
 import { copyTypeSpecificData } from '../type-handlers/copy'
+import { isDrivingDefinition } from '../../lifecycles/normalize'
 import { ItemService } from './ItemService'
 import { ItemRelationshipService } from './ItemRelationshipService'
 import type { TransactionClient } from '../../db'
@@ -50,15 +67,60 @@ import type {
   Risk,
 } from '../types/change-order'
 import type { BaseItem } from '../types/base'
-import type { FinalKind, TransitionResult } from '../../workflows/types'
+import type {
+  FinalKind,
+  LifecycleInstance,
+  TransitionResult,
+} from '../../lifecycles/types'
 
 // Lazy-cached dynamic imports to avoid circular dependencies
 // (same pattern as src/lib/items/registry.ts)
-import type { WorkflowService as WorkflowServiceType } from '../../workflows/WorkflowService'
+import type { LifecycleDefinitionService as LifecycleDefinitionServiceType } from '../../lifecycles/LifecycleDefinitionService'
+import type { LifecycleInstanceService as LifecycleInstanceServiceType } from '../../lifecycles/LifecycleInstanceService'
 import type { ConflictDetectionService as ConflictDetectionServiceType } from '../../services/ConflictDetectionService'
 import type { ItemTypeRegistry as ItemTypeRegistryType } from '../registry'
-import type { requireEcoAccess as requireEcoAccessType } from '../../auth/access'
+import type { requireChangeOrderAccess as requireChangeOrderAccessType } from '../../auth/access'
 import { takeFirst } from '@/lib/db/take-first'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
+
+/** A BOM edit on the ECO's working copy of an affected item */
+export interface BomChangeInput {
+  parentItemId: string
+  childItemId: string
+  quantity: number
+  findNumber?: number
+  action: 'add' | 'remove' | 'modify'
+}
+
+/** One affected item in a transition preview */
+export interface TransitionPreviewItem {
+  itemId: string | null
+  itemNumber: string | null
+  changeAction: ChangeAction
+  currentState: string | null
+  predictedTransitions: Array<{
+    fromState: string
+    toState: string
+    lifecycleName: string
+  }>
+}
+
+/**
+ * What `validateTransition` reports: the transition does not exist from the
+ * current state, a guard refuses it, or the release preview — which is
+ * invalid when the change-action mappings would refuse the release.
+ */
+export type TransitionValidation =
+  | { valid: false; error: string }
+  | {
+      valid: boolean
+      workflowGuardErrors: Array<string>
+      affectedItemErrors: Array<string>
+      affectedItemsPreview: Array<TransitionPreviewItem>
+      transitionName?: string
+      fromState?: string
+      toState?: string
+    }
 
 /**
  * The arbiter for `uq_coai_change_order_master` — the partial unique index
@@ -104,13 +166,41 @@ export interface ValidationResult {
   suggestion?: string
 }
 
-let _WorkflowService: typeof WorkflowServiceType | null = null
-async function getWorkflowService() {
-  if (!_WorkflowService) {
-    const module = await import('../../workflows/WorkflowService')
-    _WorkflowService = module.WorkflowService
+/** What the release-conflicts dialog offers per item. */
+export type ConflictResolution = 'keep_ours' | 'keep_theirs' | 'skip'
+
+export interface ConflictResolutionInput {
+  /** The item's master id — what the dialog calls `itemId`. */
+  itemId: string
+  resolution: ConflictResolution
+  /** Per-field overrides of the item-level choice, keyed by field name. */
+  fieldResolutions?: Record<string, 'ours' | 'theirs'>
+}
+
+export interface ConflictResolutionOutcome {
+  itemId: string
+  resolution: ConflictResolution
+  success: boolean
+  error?: string
+}
+
+let _LifecycleDefinitionService: typeof LifecycleDefinitionServiceType | null =
+  null
+async function getLifecycleDefinitionService() {
+  if (!_LifecycleDefinitionService) {
+    const module = await import('../../lifecycles/LifecycleDefinitionService')
+    _LifecycleDefinitionService = module.LifecycleDefinitionService
   }
-  return _WorkflowService
+  return _LifecycleDefinitionService
+}
+
+let _LifecycleInstanceService: typeof LifecycleInstanceServiceType | null = null
+async function getLifecycleInstanceService() {
+  if (!_LifecycleInstanceService) {
+    const module = await import('../../lifecycles/LifecycleInstanceService')
+    _LifecycleInstanceService = module.LifecycleInstanceService
+  }
+  return _LifecycleInstanceService
 }
 
 /**
@@ -118,13 +208,13 @@ async function getWorkflowService() {
  * in FileService statically, and loading that eagerly here would close a
  * require cycle through the item services.
  */
-let _requireEcoAccess: typeof requireEcoAccessType | null = null
-async function getRequireEcoAccess() {
-  if (!_requireEcoAccess) {
+let _requireChangeOrderAccess: typeof requireChangeOrderAccessType | null = null
+async function getRequireChangeOrderAccess() {
+  if (!_requireChangeOrderAccess) {
     const module = await import('../../auth/access')
-    _requireEcoAccess = module.requireEcoAccess
+    _requireChangeOrderAccess = module.requireChangeOrderAccess
   }
-  return _requireEcoAccess
+  return _requireChangeOrderAccess
 }
 
 let _ConflictDetectionService: typeof ConflictDetectionServiceType | null = null
@@ -169,6 +259,15 @@ export class ChangeOrderService {
    * carried on, the other swallowed rejections from `Promise.allSettled` —
    * so a failure there left exactly the design-less ECO this refuses to make.
    * If a link fails, the change order is removed and the error raised.
+   *
+   * So is starting the workflow. Three creators used to call
+   * `autoStartWorkflow` afterwards — the route and the AI tool swallowed a
+   * failure with a warning, the design engine threw — and none rolled the
+   * change order back, so a missing workflow configuration left a change
+   * order with no instance: every `/workflow` endpoint answered 404, and the
+   * editable-change-orders list offered it because it had no instance to be
+   * locked. A change order exists with its designs, its branches and a
+   * running instance, or not at all.
    */
   static async create(
     data: Partial<BaseItem> & Record<string, unknown>,
@@ -180,6 +279,16 @@ export class ChangeOrderService {
     if (uniqueDesignIds.length === 0) {
       throw new ValidationError(
         'A change order must be created against at least one design',
+      )
+    }
+
+    // The change type decides which workflow runs, so an unknown one is
+    // refused here rather than discovered — or, as the route used to do,
+    // silently skipped — after the change order exists
+    const changeType = changeOrderTypeSchema.safeParse(data.changeType)
+    if (!changeType.success) {
+      throw new ValidationError(
+        `A change order needs a changeType of ${changeOrderTypeSchema.options.join(', ')}`,
       )
     }
 
@@ -205,17 +314,37 @@ export class ChangeOrderService {
 
     try {
       for (const designId of uniqueDesignIds) {
-        await this.addDesignToEco(changeOrder.id, designId, userId)
+        await this.addDesign(changeOrder.id, designId, userId)
       }
+      await this.autoStartWorkflow(changeOrder.id, changeType.data, userId)
     } catch (error) {
-      await ItemService.delete(changeOrder.id, userId).catch(() => {
-        // The link failure is the error worth reporting; a cleanup that also
-        // fails must not mask it.
+      await this.discardCreation(changeOrder.id, userId).catch(() => {
+        // The link or start failure is the error worth reporting; a cleanup
+        // that also fails must not mask it.
       })
       throw error
     }
 
-    return changeOrder
+    // The workflow start stamped the state; hand back what is stored
+    return (await ItemService.findById(changeOrder.id)) ?? changeOrder
+  }
+
+  /**
+   * Undo a creation that failed part-way. The design-link rows go with the
+   * item, but the branches those links created would outlive it as
+   * unarchived orphans — `branches.changeOrderItemId` is set to null on
+   * delete — so they are archived first.
+   */
+  private static async discardCreation(
+    changeOrderId: string,
+    userId: string,
+  ): Promise<void> {
+    for (const design of await this.getChangeOrderDesigns(changeOrderId)) {
+      if (design.branchId) {
+        await BranchService.archiveBranch(design.branchId)
+      }
+    }
+    await ItemService.delete(changeOrderId, userId)
   }
 
   /**
@@ -263,6 +392,37 @@ export class ChangeOrderService {
   }
 
   /**
+   * Scope — the affected items, the designs and the branch content under
+   * review — is open while the workflow sits in its initial state and locked
+   * once it leaves it (`scopeLocked`, set by the first transition out and
+   * cleared by a rework transition back). Every scope change asks this first,
+   * and a completed workflow refuses them all.
+   *
+   * Resolved from the instance, never from a state name: the initial state is
+   * whatever the change order's workflow calls it. The five refusals this
+   * replaces each named "Draft".
+   */
+  private static async assertScopeOpen(
+    changeOrderId: string,
+    verb: string,
+  ): Promise<LifecycleInstance | null> {
+    const LifecycleInstanceService = await getLifecycleInstanceService()
+    const instance =
+      await LifecycleInstanceService.getInstanceByItemId(changeOrderId)
+    if (instance?.completedAt) {
+      throw new ValidationError(
+        `Cannot ${verb}: the change order's workflow has completed`,
+      )
+    }
+    if (instance?.scopeLocked) {
+      throw new ValidationError(
+        `Cannot ${verb}: the change order's scope is locked after leaving its initial state`,
+      )
+    }
+    return instance
+  }
+
+  /**
    * Add an affected item to a change order.
    * If the item belongs to a design, automatically creates the ECO-Design association.
    * For 'revise' actions on Released items, creates a working copy on the ECO branch.
@@ -275,15 +435,10 @@ export class ChangeOrderService {
     userId: string,
     outerTx?: TransactionClient,
   ): Promise<AffectedItem> {
-    // Check if scope is locked (ECO has left initial state)
-    const WorkflowService = await getWorkflowService()
-    const workflowInstance =
-      await WorkflowService.getInstanceByItemId(changeOrderId)
-    if (workflowInstance?.scopeLocked) {
-      throw new ValidationError(
-        'Cannot add affected items: ECO scope is locked after leaving Draft state',
-      )
-    }
+    const workflowInstance = await this.assertScopeOpen(
+      changeOrderId,
+      'add affected items',
+    )
 
     // Everything from here writes (design association, ECO branch, working
     // copy, the affected-item row itself) — one transaction, so a failure
@@ -292,7 +447,8 @@ export class ChangeOrderService {
     // must see this transaction's own writes take `tx`.
     return withTx(outerTx, async (tx) => {
       let workingCopyId: string | null = null
-      let ecoDesign: typeof changeOrderDesigns.$inferSelect | null = null
+      let changeOrderDesign: typeof changeOrderDesigns.$inferSelect | null =
+        null
       let affectedItem: Awaited<ReturnType<typeof ItemService.findById>> = null
       // Target state and revision are resolved from the item's lifecycle below,
       // never taken from the caller. They used to be accepted from the request
@@ -341,7 +497,7 @@ export class ChangeOrderService {
         }
 
         if (affectedItem?.designId) {
-          ecoDesign = await this.ensureDesignAssociation(
+          changeOrderDesign = await this.ensureDesignAssociation(
             changeOrderId,
             affectedItem.designId,
             userId,
@@ -391,13 +547,13 @@ export class ChangeOrderService {
       if (
         item.changeAction === 'revise' &&
         affectedItem &&
-        ecoDesign?.branchId &&
+        changeOrderDesign?.branchId &&
         !RevisionService.isWorkingRevision(affectedItem.revision)
       ) {
         // Check if working copy already exists on this branch (idempotency)
         const existingWorkingCopy = await this.findExistingWorkingCopy(
           affectedItem.masterId,
-          ecoDesign.branchId,
+          changeOrderDesign.branchId,
           tx,
         )
 
@@ -409,7 +565,7 @@ export class ChangeOrderService {
           // Cast to items.$inferSelect since we know the item exists with required fields
           const { workingCopy } = await this.createRevisionWorkingCopy(
             affectedItem as typeof items.$inferSelect,
-            ecoDesign.branchId,
+            changeOrderDesign.branchId,
             userId,
             tx,
           )
@@ -480,7 +636,7 @@ export class ChangeOrderService {
    *
    * **Atomic.** One transaction wraps the whole batch, threaded through every
    * write on the way down — `ensureDesignAssociation`,
-   * `BranchService.getOrCreateEcoBranch`, `CommitService.create`,
+   * `BranchService.getOrCreateChangeOrderBranch`, `CommitService.create`,
    * `createRevisionWorkingCopy` — so a failure part-way leaves nothing added.
    * (An earlier version opened `db.transaction` and ignored the handle, which
    * wrapped nothing in production while looking atomic under test; the harness
@@ -532,11 +688,9 @@ export class ChangeOrderService {
   /**
    * Write the ECO/design link, absorbing a concurrent caller's row.
    *
-   * Every caller reaches here having just read that no link exists, and
-   * nothing holds a lock in between: `checkoutItemToEco`, `addDesignToEco`
-   * and `adoptWorkspaceItems` run their check and their insert as separate
-   * statements on the pool, and two `addAffectedItem` batches each run in
-   * their own transaction. So two callers routinely both insert, and
+   * Every caller reaches here through `ensureDesignAssociation`, having just
+   * read on its own transaction that no link exists, and nothing holds a lock
+   * in between: two callers in two transactions routinely both insert, and
    * `change_order_designs_unique` rejects the second with a raw 23505 —
    * surfaced as RESOURCE_ALREADY_EXISTS, for an operation whose whole
    * contract is "link this design if it is not linked yet".
@@ -588,9 +742,14 @@ export class ChangeOrderService {
   }
 
   /**
-   * Ensure a design is associated with an ECO (idempotent).
-   * Creates the changeOrderDesigns record and ECO branch if they don't exist.
-   * Also creates a "ChangeOrder created" commit when the design is first linked.
+   * Link a design to a change order: the association row, the ECO branch it
+   * names and the branch's registration commit — the one path every caller
+   * links a design through (`addAffectedItem`, `addDesign`,
+   * `checkoutItem`, `adoptWorkspaceItems`), on the caller's
+   * transaction, so a failure part-way leaves none of the three behind.
+   *
+   * Idempotent: an existing link is returned as it is, and one written
+   * before every path created the branch with the link takes the branch now.
    */
   private static async ensureDesignAssociation(
     changeOrderId: string,
@@ -598,10 +757,9 @@ export class ChangeOrderService {
     userId: string,
     tx?: TransactionClient,
   ): Promise<typeof changeOrderDesigns.$inferSelect> {
-    // Check if association already exists. On a caller's transaction the read
-    // must go through it, so an association inserted earlier in the same batch
-    // is seen rather than re-created.
-    const existing = await (tx ?? db)
+    // On a caller's transaction the read goes through it, so an association
+    // inserted earlier in the same batch is seen rather than re-created
+    const existingAssociation = await (tx ?? db)
       .select()
       .from(changeOrderDesigns)
       .where(
@@ -611,19 +769,20 @@ export class ChangeOrderService {
         ),
       )
       .limit(1)
+      .then((r) => r.at(0))
 
-    const existingAssociation = existing[0]
-    if (existingAssociation) {
+    if (existingAssociation?.branchId) {
       return existingAssociation
     }
 
     // Get or create ECO branch for this design (idempotent)
-    const { branch, created } = await BranchService.getOrCreateEcoBranch(
-      designId,
-      changeOrderId,
-      userId,
-      tx,
-    )
+    const { branch, created } =
+      await BranchService.getOrCreateChangeOrderBranch(
+        designId,
+        changeOrderId,
+        userId,
+        tx,
+      )
 
     // Create "ChangeOrder created" commit when design is first linked
     // This makes the ECO visible in the program graph view for this design
@@ -642,7 +801,17 @@ export class ChangeOrderService {
       }
     }
 
-    // Create the changeOrderDesigns record
+    if (existingAssociation) {
+      return takeFirst(
+        await (tx ?? db)
+          .update(changeOrderDesigns)
+          .set({ branchId: branch.id, updatedAt: new Date() })
+          .where(eq(changeOrderDesigns.id, existingAssociation.id))
+          .returning(),
+        'change order design',
+      )
+    }
+
     return this.insertDesignAssociation(changeOrderId, designId, branch.id, tx)
   }
 
@@ -742,6 +911,11 @@ export class ChangeOrderService {
         sysmlType: sourceItem.sysmlType,
         metamodel: sourceItem.metamodel,
         usageOf: sourceItem.usageOf,
+        // Carried like the other structural columns: the working copy is
+        // what the branch shows and what the merge releases, so a root
+        // assembly whose copy lost its designation would vanish from the
+        // branch's structure and, on release, from main's.
+        inDesignStructure: sourceItem.inDesignStructure,
         createdBy: userId,
         modifiedBy: userId,
       }
@@ -897,9 +1071,9 @@ export class ChangeOrderService {
     changeOrderId: string,
     itemIds: Array<string>,
   ): Promise<Array<ChangeActionOptions>> {
-    const WorkflowService = await getWorkflowService()
+    const LifecycleInstanceService = await getLifecycleInstanceService()
     const workflowInstance =
-      await WorkflowService.getInstanceByItemId(changeOrderId)
+      await LifecycleInstanceService.getInstanceByItemId(changeOrderId)
     const drivingLifecycleId = workflowInstance?.workflowDefinitionId
 
     const alreadyListed = new Set(
@@ -1004,7 +1178,7 @@ export class ChangeOrderService {
     // Resolved through the caller's transaction, not the pool. Three write
     // paths enter here from inside an open transaction —
     // `createRevisionWorkingCopy`, `createOnBranch`, `deleteOnBranch`, plus
-    // `adoptWorkspaceIntoEco` once per adopted row — and a pool-bound read
+    // `adoptWorkspaceIntoChangeOrder` once per adopted row — and a pool-bound read
     // made every one of them need a SECOND connection while the first was
     // still held. N concurrent writers then want 2N connections and each can
     // sit on one while queueing for another, which is a livelock on a bounded
@@ -1013,7 +1187,11 @@ export class ChangeOrderService {
     // changes nothing visible; `CommitService.create` already resolves the
     // branch this way.
     const branch = await BranchService.getById(branchId, tx)
-    if (!branch || branch.branchType !== 'eco' || !branch.changeOrderItemId) {
+    if (
+      !branch ||
+      branch.branchType !== BRANCH_TYPES.changeOrder ||
+      !branch.changeOrderItemId
+    ) {
       return
     }
     const changeOrderId = branch.changeOrderItemId
@@ -1152,7 +1330,11 @@ export class ChangeOrderService {
     // branch-added path, and a pool read here would make that transaction
     // hold two connections at once.
     const branch = await BranchService.getById(branchId, tx)
-    if (!branch || branch.branchType !== 'eco' || !branch.changeOrderItemId) {
+    if (
+      !branch ||
+      branch.branchType !== BRANCH_TYPES.changeOrder ||
+      !branch.changeOrderItemId
+    ) {
       return
     }
     const changeOrderId = branch.changeOrderItemId
@@ -1218,33 +1400,23 @@ export class ChangeOrderService {
       })
     }
 
-    const WorkflowService = await getWorkflowService()
-    const workflowInstance =
-      await WorkflowService.getInstanceByItemId(changeOrderId)
-    if (workflowInstance?.scopeLocked) {
-      throw new ValidationError(
-        'Cannot remove affected items: ECO scope is locked after leaving the initial state',
-      )
-    }
-    if (workflowInstance?.completedAt) {
-      throw new ValidationError(
-        'Cannot remove affected items: ECO workflow has been completed',
-      )
-    }
+    await this.assertScopeOpen(changeOrderId, 'remove affected items')
 
     // Branch content for this master, across every branch this ECO owns
-    const ecoBranchIds = (await this.getEcoDesigns(changeOrderId))
+    const changeOrderBranchIds = (
+      await this.getChangeOrderDesigns(changeOrderId)
+    )
       .map((d) => d.branchId)
       .filter((id): id is string => id !== null)
 
     const branchChanges =
-      affected.affectedItemMasterId && ecoBranchIds.length > 0
+      affected.affectedItemMasterId && changeOrderBranchIds.length > 0
         ? await db
             .select()
             .from(branchItems)
             .where(
               and(
-                inArray(branchItems.branchId, ecoBranchIds),
+                inArray(branchItems.branchId, changeOrderBranchIds),
                 eq(branchItems.itemMasterId, affected.affectedItemMasterId),
                 isNotNull(branchItems.changeType),
               ),
@@ -1286,6 +1458,196 @@ export class ChangeOrderService {
         .delete(changeOrderAffectedItems)
         .where(eq(changeOrderAffectedItems.id, affectedItemId))
     })
+  }
+
+  /**
+   * Apply the resolutions chosen in the release-conflicts dialog.
+   *
+   * Every arm goes through the service that already knows how to do the
+   * job, one transaction per resolution, and each item reports its own
+   * outcome so a caller can apply what it can and say what it could not:
+   *
+   * - `keep_ours` / `keep_theirs` rebase the branch's working copy onto
+   *   main's current version through `ConflictDetectionService.rebaseItem`:
+   *   a three-way merge under REPEATABLE READ. The two differ only where a
+   *   field changed on both sides — the branch's value wins, or main's.
+   *   Changes made on one side only survive either way, and a per-field
+   *   choice overrides the item-level one. The item stays in scope and is
+   *   still released, with main's changes underneath its own.
+   * - `skip` removes the item from the change order — the scope row and the
+   *   branch content together — through `removeAffectedItem`, which refuses
+   *   once the scope is locked, like any other scope change. After submit,
+   *   the change order goes back to its initial state first; the rework
+   *   transition reopens scope and supersedes the approvals already given.
+   *
+   * These used to be raw `branch_items` writes in the route. `keep_ours`
+   * rewrote `baseItemId` alone, so the release then replaced main's content
+   * wholesale and reverted whatever the other change order had released.
+   * `keep_theirs` pointed the branch at main's row and left the item listed
+   * for revision with no content, and `skip` deleted the branch row and left
+   * the scope row — both of which the release read as "listed but never
+   * checked out" and answered with a new revision letter carrying no change.
+   */
+  static async resolveConflicts(
+    changeOrderId: string,
+    resolutions: Array<ConflictResolutionInput>,
+    userId: string,
+  ): Promise<Array<ConflictResolutionOutcome>> {
+    const branchIds = (await this.getChangeOrderDesigns(changeOrderId))
+      .map((d) => d.branchId)
+      .filter((id): id is string => id !== null)
+
+    const outcomes: Array<ConflictResolutionOutcome> = []
+    for (const { itemId, resolution, fieldResolutions } of resolutions) {
+      try {
+        if (resolution === 'skip') {
+          await this.skipConflictingItem(changeOrderId, itemId, branchIds)
+        } else {
+          await this.rebaseConflictingItem(
+            itemId,
+            branchIds,
+            resolution,
+            fieldResolutions,
+            userId,
+          )
+        }
+        outcomes.push({ itemId, resolution, success: true })
+      } catch (error) {
+        outcomes.push({
+          itemId,
+          resolution,
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    return outcomes
+  }
+
+  /**
+   * `skip`: the change order no longer changes this item. The scope row and
+   * the branch content go together, through the path that already enforces
+   * the scope lock. Branch content with no scope row — which the release
+   * would refuse to merge anyway — is simply dropped.
+   */
+  private static async skipConflictingItem(
+    changeOrderId: string,
+    itemMasterId: string,
+    branchIds: Array<string>,
+  ): Promise<void> {
+    const affected = await db
+      .select({ id: changeOrderAffectedItems.id })
+      .from(changeOrderAffectedItems)
+      .where(
+        and(
+          eq(changeOrderAffectedItems.changeOrderId, changeOrderId),
+          eq(changeOrderAffectedItems.affectedItemMasterId, itemMasterId),
+        ),
+      )
+      .limit(1)
+      .then((rows) => rows.at(0))
+
+    if (affected) {
+      await this.removeAffectedItem(changeOrderId, affected.id, {
+        discardBranchChanges: true,
+      })
+      return
+    }
+
+    if (branchIds.length === 0) return
+    await db
+      .delete(branchItems)
+      .where(
+        and(
+          inArray(branchItems.branchId, branchIds),
+          eq(branchItems.itemMasterId, itemMasterId),
+        ),
+      )
+  }
+
+  /**
+   * `keep_ours` / `keep_theirs`: rebase every branch row this change order
+   * holds for the master onto main's current version. `rebaseItem` is asked
+   * once without resolutions — it auto-merges when nothing conflicts, and
+   * otherwise names the conflicting fields — and then again with each of
+   * those fields resolved the way the caller chose.
+   */
+  private static async rebaseConflictingItem(
+    itemMasterId: string,
+    branchIds: Array<string>,
+    resolution: 'keep_ours' | 'keep_theirs',
+    fieldResolutions: Record<string, 'ours' | 'theirs'> | undefined,
+    userId: string,
+  ): Promise<void> {
+    const branchRows =
+      branchIds.length === 0
+        ? []
+        : await db
+            .select({ branchItem: branchItems, designId: branches.designId })
+            .from(branchItems)
+            .innerJoin(branches, eq(branchItems.branchId, branches.id))
+            .where(
+              and(
+                inArray(branchItems.branchId, branchIds),
+                eq(branchItems.itemMasterId, itemMasterId),
+                isNotNull(branchItems.changeType),
+              ),
+            )
+    if (branchRows.length === 0) {
+      throw new ValidationError(
+        'This change order holds no change to the item, so there is nothing to rebase',
+      )
+    }
+
+    const ConflictDetectionService = await getConflictDetectionService()
+    for (const { branchItem, designId } of branchRows) {
+      const mainBranch = await BranchService.getMainBranch(designId)
+      if (!mainBranch) continue
+
+      const mainCurrentItemId = await db
+        .select({ currentItemId: branchItems.currentItemId })
+        .from(branchItems)
+        .where(
+          and(
+            eq(branchItems.branchId, mainBranch.id),
+            eq(branchItems.itemMasterId, itemMasterId),
+          ),
+        )
+        .limit(1)
+        .then((rows) => rows.at(0)?.currentItemId ?? null)
+      // Main has not moved under this branch: nothing to rebase onto
+      if (!mainCurrentItemId || mainCurrentItemId === branchItem.baseItemId) {
+        continue
+      }
+
+      const attempt = await ConflictDetectionService.rebaseItem(
+        branchItem.id,
+        mainCurrentItemId,
+        userId,
+      )
+      if (attempt.success) continue
+      if (!attempt.manualResolutionRequired) {
+        throw new ValidationError(attempt.error ?? 'Rebase failed')
+      }
+
+      const resolved: Record<string, unknown> = {}
+      for (const conflict of attempt.fieldConflicts) {
+        const side =
+          fieldResolutions?.[conflict.fieldName] ??
+          (resolution === 'keep_ours' ? 'ours' : 'theirs')
+        resolved[conflict.fieldName] =
+          side === 'ours' ? conflict.ourValue : conflict.theirValue
+      }
+      const applied = await ConflictDetectionService.rebaseItem(
+        branchItem.id,
+        mainCurrentItemId,
+        userId,
+        resolved,
+      )
+      if (!applied.success) {
+        throw new ValidationError(applied.error ?? 'Rebase failed')
+      }
+    }
   }
 
   /**
@@ -1369,11 +1731,11 @@ export class ChangeOrderService {
    * still returned every linked design's name and code — one request would
    * undo the other.
    */
-  static async getEcoDesignsForViewer(
+  static async getChangeOrderDesignsForViewer(
     changeOrderId: string,
     accessDesignIds: Array<string> | null,
   ) {
-    const all = await this.getEcoDesigns(changeOrderId)
+    const all = await this.getChangeOrderDesigns(changeOrderId)
     if (accessDesignIds === null) {
       return { designs: all, hasRestricted: false }
     }
@@ -1386,7 +1748,7 @@ export class ChangeOrderService {
   /**
    * How many items a change order affects, split by the design each belongs to.
    *
-   * Pure, over rows the caller already has: `getEcoSummary` needs every design's
+   * Pure, over rows the caller already has: `getSummary` needs every design's
    * count and the ECO structure view needs one design's, and both were working
    * it out separately — the structure view with its own `COUNT`-shaped query
    * over rows it had already loaded for other reasons.
@@ -1522,7 +1884,9 @@ export class ChangeOrderService {
     // Check for blocking merge conflicts
     const ConflictDetectionService = await getConflictDetectionService()
     const conflicts =
-      await ConflictDetectionService.detectConflictsForEco(changeOrderId)
+      await ConflictDetectionService.detectConflictsForChangeOrder(
+        changeOrderId,
+      )
 
     if (conflicts.hasBlockingConflicts) {
       const blockingConflicts = conflicts.conflicts.filter(
@@ -1561,17 +1925,27 @@ export class ChangeOrderService {
       })
     }
 
-    // Merge the change order (process affected items, merge branches, etc.)
+    // Merge the change order (process affected items, merge branches, etc.).
+    // Safe to reach twice: `merge()` records what it has done — `mergeStatus`
+    // per design, `implementedAt` once the affected-item pass commits — and
+    // skips it the next time, so a release whose workflow write failed after
+    // the merge retries to completion without releasing anything a second
+    // time.
     const mergeResult = await ChangeOrderMergeService.merge(
       changeOrderId,
       userId,
     )
 
-    // Update change order metadata
+    // The first completion wins; a retry keeps the original timestamp
     await db
       .update(changeOrders)
       .set({ closedAt: new Date() })
-      .where(eq(changeOrders.itemId, changeOrderId))
+      .where(
+        and(
+          eq(changeOrders.itemId, changeOrderId),
+          isNull(changeOrders.closedAt),
+        ),
+      )
 
     return mergeResult
   }
@@ -1591,16 +1965,18 @@ export class ChangeOrderService {
       })
     }
 
-    const ecoDesigns = await this.getEcoDesigns(changeOrderId)
+    const ecoDesigns = await this.getChangeOrderDesigns(changeOrderId)
 
-    for (const ecoDesign of ecoDesigns) {
-      if (!ecoDesign.branchId) continue
+    for (const changeOrderDesign of ecoDesigns) {
+      if (!changeOrderDesign.branchId) continue
 
       // Release all checkout locks on the branch
-      await ChangeOrderMergeService.autoCheckinBranchItems(ecoDesign.branchId)
+      await ChangeOrderMergeService.autoCheckinBranchItems(
+        changeOrderDesign.branchId,
+      )
 
       // Archive the branch
-      await BranchService.archiveBranch(ecoDesign.branchId)
+      await BranchService.archiveBranch(changeOrderDesign.branchId)
     }
 
     // Set closedAt timestamp
@@ -1631,23 +2007,59 @@ export class ChangeOrderService {
   // ============================================
 
   /**
-   * Start a workflow for a change order
+   * Start a change order's workflow: the instance, its history row and the
+   * change order's own `state`, in one transaction.
+   *
+   * The state is stamped from the instance actually started, not from the
+   * type's `lifecycleDefinitionId`. `ItemService.create` stamps the latter's
+   * initial state, which is right for every change type whose instance runs
+   * that definition and wrong for any mapped elsewhere by
+   * `lifecyclesByChangeType`: a flexible (XCO) change order was created at the
+   * strict definition's `Draft` while its instance sat at its own initial
+   * state, and after one transition carried a state id the strict definition
+   * does not contain, which nothing could render.
+   *
+   * Only a Driving definition can run a change order. `startInstance` does
+   * not care what kind it is handed, and the manual-start route handed it
+   * whatever id it was given, so a Free item lifecycle could be attached to a
+   * change order.
    */
   static async startWorkflow(
     changeOrderId: string,
     workflowDefinitionId: string,
     userId: string,
   ) {
-    const WorkflowService = await getWorkflowService()
+    const LifecycleDefinitionService = await getLifecycleDefinitionService()
+    const LifecycleInstanceService = await getLifecycleInstanceService()
 
-    // Start the workflow instance
-    const instance = await WorkflowService.startInstance(
-      workflowDefinitionId,
-      changeOrderId,
-      { actorId: userId },
-    )
+    const definition =
+      await LifecycleDefinitionService.getById(workflowDefinitionId)
+    if (!definition) {
+      throw new NotFoundError('Workflow definition', workflowDefinitionId)
+    }
+    if (!isDrivingDefinition(definition)) {
+      throw new ValidationError(
+        `"${definition.name}" is not a change-order workflow (a Driving lifecycle) and cannot run a change order`,
+      )
+    }
 
-    return instance
+    return db.transaction(async (tx) => {
+      const instance = await LifecycleInstanceService.startInstance(
+        workflowDefinitionId,
+        changeOrderId,
+        { actorId: userId },
+        tx,
+      )
+      await tx
+        .update(items)
+        .set({
+          state: instance.currentState,
+          modifiedAt: new Date(),
+          modifiedBy: userId,
+        })
+        .where(eq(items.id, changeOrderId))
+      return instance
+    })
   }
 
   /**
@@ -1661,11 +2073,14 @@ export class ChangeOrderService {
    * forever. `finalKind` is the same property the release path itself keys on.
    */
   static async canReachRelease(changeOrderId: string): Promise<boolean> {
-    const WorkflowService = await getWorkflowService()
-    const instance = await WorkflowService.getInstanceByItemId(changeOrderId)
+    const LifecycleInstanceService = await getLifecycleInstanceService()
+    const instance =
+      await LifecycleInstanceService.getInstanceByItemId(changeOrderId)
     if (!instance || instance.completedAt) return false
 
-    const structure = await WorkflowService.getEffectiveStructure(instance.id)
+    const structure = await LifecycleInstanceService.getEffectiveStructure(
+      instance.id,
+    )
     return structure.transitions.some((t) => {
       if (t.fromStateId !== instance.currentState) return false
       const target = structure.states.find((s) => s.id === t.toStateId)
@@ -1690,11 +2105,14 @@ export class ChangeOrderService {
     closed: boolean
     finalKind: FinalKind | null
   }> {
-    const WorkflowService = await getWorkflowService()
-    const instance = await WorkflowService.getInstanceByItemId(changeOrderId)
+    const LifecycleInstanceService = await getLifecycleInstanceService()
+    const instance =
+      await LifecycleInstanceService.getInstanceByItemId(changeOrderId)
     if (!instance) return { closed: false, finalKind: null }
 
-    const structure = await WorkflowService.getEffectiveStructure(instance.id)
+    const structure = await LifecycleInstanceService.getEffectiveStructure(
+      instance.id,
+    )
     const current = structure.states.find((s) => s.id === instance.currentState)
 
     return {
@@ -1707,8 +2125,8 @@ export class ChangeOrderService {
    * Get workflow instance for a change order
    */
   static async getWorkflowInstance(changeOrderId: string) {
-    const WorkflowService = await getWorkflowService()
-    return WorkflowService.getInstanceByItemId(changeOrderId)
+    const LifecycleInstanceService = await getLifecycleInstanceService()
+    return LifecycleInstanceService.getInstanceByItemId(changeOrderId)
   }
 
   /**
@@ -1718,10 +2136,10 @@ export class ChangeOrderService {
    * reading and narrow for acting:
    *
    * - **Read** it: reaching *any* linked design is enough. The designs out of
-   *   reach are redacted (`resolveEcoDesignScope`), which is what lets a member
+   *   reach are redacted (`resolveChangeOrderDesignScope`), which is what lets a member
    *   of one program review the half that is theirs.
    * - **Vote** on it: membership with `canApproveEco` in *every* linked
-   *   program (`requireEcoApprovalAccess` in the change-orders route module).
+   *   program (`requireChangeOrderApprovalAccess` in the change-orders route module).
    * - **Advance** it — submit, release, cancel: reach to every linked design,
    *   which is this.
    *
@@ -1744,7 +2162,7 @@ export class ChangeOrderService {
    * `hasRestricted` is already false whenever the caller has cross-program
    * authority, so that bypass needs no branch here.
    */
-  private static assertWholeEcoReach(
+  private static assertWholeChangeOrderReach(
     scope: { hasRestricted: boolean },
     action: 'submit' | 'advance',
   ): void {
@@ -1755,9 +2173,9 @@ export class ChangeOrderService {
 
   /**
    * Execute a change-order workflow transition with correct final-state
-   * semantics. This is THE entry point for CO transitions — the API route,
-   * the AI tools, and submit/approve/reject all funnel through here so a
-   * transition into a final state always runs its release/cancel mechanics.
+   * semantics. This is THE entry point for CO transitions — the API route
+   * and the AI tools both funnel through here so a transition into a final
+   * state always runs its release/cancel mechanics.
    *
    * Final-state semantics come from the state's explicit finalKind — never
    * from its name:
@@ -1788,22 +2206,25 @@ export class ChangeOrderService {
   }> {
     // Program-membership gate, here rather than only on the route, because the
     // doc comment above is the reason: this is THE entry point, shared by the
-    // API route, the AI tools and submit/approve/reject. A route-only check
-    // would leave every other caller ungated — and a releasing transition is
+    // API route and the AI tools. A route-only check would leave every other
+    // caller ungated — and a releasing transition is
     // the single most consequential thing a change order does.
-    const requireEcoAccess = await getRequireEcoAccess()
-    const scope = await requireEcoAccess(userId, changeOrderId)
+    const requireChangeOrderAccess = await getRequireChangeOrderAccess()
+    const scope = await requireChangeOrderAccess(userId, changeOrderId)
 
-    const WorkflowService = await getWorkflowService()
+    const LifecycleInstanceService = await getLifecycleInstanceService()
 
-    const instance = await WorkflowService.getInstanceByItemId(changeOrderId)
+    const instance =
+      await LifecycleInstanceService.getInstanceByItemId(changeOrderId)
     if (!instance) {
       throw new NotFoundError('Workflow', changeOrderId, {
         detail: 'No workflow found for this change order',
       })
     }
 
-    const structure = await WorkflowService.getEffectiveStructure(instance.id)
+    const structure = await LifecycleInstanceService.getEffectiveStructure(
+      instance.id,
+    )
     const targetState = structure.states.find((s) => s.id === toStateId)
     const leavingInitialState =
       structure.states.find((s) => s.id === instance.currentState)
@@ -1812,20 +2233,24 @@ export class ChangeOrderService {
     // Non-final transitions need no release orchestration
     if (targetState?.isFinal !== true) {
       // …but leaving the initial state is still an advancing transition. See
-      // `assertWholeEcoReach` below: submit locks the ECO's scope, and the
+      // `assertWholeChangeOrderReach` below: submit locks the ECO's scope, and the
       // scope this caller would lock is not the scope they were shown.
       if (leavingInitialState) {
-        this.assertWholeEcoReach(scope, 'submit')
+        this.assertWholeChangeOrderReach(scope, 'submit')
       }
-      const result = await WorkflowService.transition(
+      const result = await LifecycleInstanceService.transition(
         instance.id,
         toStateId,
         userId,
         comments,
+        {
+          // Stamped inside the transition's own transaction, so the
+          // milestone is exactly as true as the state it records
+          afterFinalize: leavingInitialState
+            ? (tx) => this.stampSubmitted(changeOrderId, tx)
+            : undefined,
+        },
       )
-      if (result.success && leavingInitialState) {
-        await this.stampSubmitted(changeOrderId)
-      }
       return { result }
     }
 
@@ -1833,7 +2258,7 @@ export class ChangeOrderService {
     // links, so the caller has to. Checked before the finalKind validation
     // below so a partial reader is refused on access rather than being told
     // about the workflow's configuration.
-    this.assertWholeEcoReach(scope, 'advance')
+    this.assertWholeChangeOrderReach(scope, 'advance')
 
     // Fail closed: a final state without explicit semantics cannot complete
     const finalKind = targetState.finalKind
@@ -1855,7 +2280,7 @@ export class ChangeOrderService {
 
     // Take the exclusive release claim (compare-and-swap) so concurrent
     // transitions and double-fired releases are impossible
-    const claim = await WorkflowService.claimRelease(
+    const claim = await LifecycleInstanceService.claimRelease(
       instance.id,
       instance.currentState,
     )
@@ -1867,8 +2292,13 @@ export class ChangeOrderService {
 
     let mergeResult:
       Awaited<ReturnType<typeof ChangeOrderMergeService.merge>> | undefined
+    // Set once `beforeFinalize` has run to completion: from then on the merge
+    // (or the cancel's branch archival) is committed, whatever the transition
+    // itself goes on to report. Widened to `boolean` because the assignment
+    // happens inside the closure, which control-flow analysis does not see.
+    let finalized = false as boolean
     try {
-      const result = await WorkflowService.transition(
+      const result = await LifecycleInstanceService.transition(
         instance.id,
         toStateId,
         userId,
@@ -1883,32 +2313,49 @@ export class ChangeOrderService {
             } else {
               await this.cancel(changeOrderId, userId)
             }
+            finalized = true
+          },
+          // Inside the transaction that writes the final state, so the
+          // milestones are exactly as true as the state they describe
+          afterFinalize: async (tx) => {
+            if (leavingInitialState) {
+              await this.stampSubmitted(changeOrderId, tx)
+            }
+            if (finalKind === 'release') {
+              await tx
+                .update(changeOrders)
+                .set({ approvedAt: new Date(), approvedBy: userId })
+                .where(eq(changeOrders.itemId, changeOrderId))
+            }
           },
         },
       )
 
       if (!result.success) {
-        // Validation failed before beforeFinalize ran — nothing was merged.
-        // Release the claim and surface the reason.
-        await WorkflowService.releaseClaim(instance.id)
-        return { result }
-      }
-
-      if (leavingInitialState) {
-        await this.stampSubmitted(changeOrderId)
-      }
-      if (finalKind === 'release') {
-        await db
-          .update(changeOrders)
-          .set({ approvedAt: new Date(), approvedBy: userId })
-          .where(eq(changeOrders.itemId, changeOrderId))
+        // Two different failures share this shape. Either validation refused
+        // the transition before `beforeFinalize` ran — nothing was merged or
+        // cancelled — or the compare-and-swap lost: `beforeFinalize` had
+        // completed, so the merge (or the cancel's archival) is committed and
+        // recorded, while the workflow moved elsewhere under a stale claim.
+        // The second cannot be undone and must not be redone. Re-running the
+        // release from wherever the workflow now sits completes it without
+        // releasing twice: `close()` skips a merge already recorded, and the
+        // conflict gate ignores archived branches. Either way the claim's job
+        // is over.
+        await LifecycleInstanceService.releaseClaim(instance.id)
+        return finalized
+          ? { result, mergeResult, cancelled: finalKind === 'cancel' }
+          : { result }
       }
 
       return { result, mergeResult, cancelled: finalKind === 'cancel' }
     } catch (error) {
-      // close()/cancel() failed before any state write: release the claim so
-      // the ECO stays in its pre-final state and is immediately retryable
-      await WorkflowService.releaseClaim(instance.id)
+      // Thrown rather than returned: close()/cancel() failed part-way, or a
+      // write inside the transition's transaction did and rolled the whole
+      // state write back. The workflow is still pre-final either way, so
+      // release the claim and let the caller retry; whatever close() had
+      // committed before failing is recorded and skipped next time.
+      await LifecycleInstanceService.releaseClaim(instance.id)
       throw error
     }
   }
@@ -1916,9 +2363,14 @@ export class ChangeOrderService {
   /**
    * Record when a change order first left its initial state. Only ever set
    * once, so a rework round-trip through Draft keeps the original date.
+   * Written on the transition's transaction, never on its own: the date is
+   * true exactly when the state change it marks is.
    */
-  private static async stampSubmitted(changeOrderId: string): Promise<void> {
-    await db
+  private static async stampSubmitted(
+    changeOrderId: string,
+    tx: TransactionClient,
+  ): Promise<void> {
+    await tx
       .update(changeOrders)
       .set({ submittedAt: new Date() })
       .where(
@@ -1927,6 +2379,433 @@ export class ChangeOrderService {
           isNull(changeOrders.submittedAt),
         ),
       )
+  }
+
+  // ============================================
+  // BOM changes on the change order's branch
+  // ============================================
+
+  private static async requireChangeOrder(
+    changeOrderId: string,
+  ): Promise<void> {
+    const exists = await db
+      .select({ itemId: changeOrders.itemId })
+      .from(changeOrders)
+      .where(eq(changeOrders.itemId, changeOrderId))
+      .limit(1)
+      .then((r) => r.length > 0)
+    if (!exists) {
+      throw new NotFoundError('Change Order', changeOrderId)
+    }
+  }
+
+  /**
+   * A change order accepts structural edits until its workflow completes.
+   *
+   * Resolved from the workflow instance rather than by comparing the item's
+   * state against the default workflow's state names — those names are one
+   * workflow's choice, not a property of change orders, and flexible
+   * instances legitimately use entirely different ones.
+   */
+  private static async assertEditable(changeOrderId: string): Promise<void> {
+    const LifecycleInstanceService = await getLifecycleInstanceService()
+    const instance =
+      await LifecycleInstanceService.getInstanceByItemId(changeOrderId)
+    if (instance?.completedAt) {
+      throw new ValidationError(
+        'Cannot modify this change order: its workflow has been completed',
+      )
+    }
+  }
+
+  /**
+   * The affected item a BOM change's parent belongs to, matched by id or by
+   * master: the tree view may pass the branch-resolved working copy's id
+   * rather than the item id stored on the affected item.
+   */
+  private static async findBomParent(
+    changeOrderId: string,
+    parentItemId: string,
+  ): Promise<{
+    parentItem: Awaited<ReturnType<typeof ItemService.findById>>
+    affected: AffectedItem | undefined
+  }> {
+    const affectedItems = await this.getAffectedItems(changeOrderId)
+    const parentItem = await ItemService.findById(parentItemId)
+    const parentMasterId = parentItem?.masterId
+    const affected = affectedItems.find(
+      (ai) =>
+        ai.affectedItemId === parentItemId ||
+        (parentMasterId && ai.affectedItemMasterId === parentMasterId),
+    )
+    return { parentItem, affected }
+  }
+
+  /**
+   * Acquire (or verify) this user's edit lock on the parent's working copy
+   * on the change order's branch: editing a BOM is checkout-to-ECO intent.
+   * A lock held by another user rejects with 423.
+   */
+  private static async checkoutBomParent(
+    changeOrderId: string,
+    parentItem: { masterId: string; designId?: string | null },
+    userId: string,
+  ): Promise<void> {
+    if (!parentItem.designId) return
+    const changeOrderDesign = await db
+      .select({ branchId: changeOrderDesigns.branchId })
+      .from(changeOrderDesigns)
+      .where(
+        and(
+          eq(changeOrderDesigns.changeOrderId, changeOrderId),
+          eq(changeOrderDesigns.designId, parentItem.designId),
+        ),
+      )
+      .limit(1)
+      .then((r) => r.at(0))
+    if (changeOrderDesign?.branchId) {
+      await CheckoutService.checkout(
+        {
+          itemMasterId: parentItem.masterId,
+          branchId: changeOrderDesign.branchId,
+        },
+        userId,
+      )
+    }
+  }
+
+  /**
+   * Add, remove or modify a BOM relationship on the ECO's working copy of an
+   * affected item.
+   *
+   * The write goes to the ECO's working copy of the parent whenever one
+   * exists, never to the row on main: the parent is matched by master, so
+   * the client can legitimately pass the released item's id, and writing the
+   * relationship against that id edited the released baseline in place,
+   * outside the branch and outside the change order entirely. The edit lock
+   * is checked on the row being written, whichever id the client named.
+   *
+   * All three actions go through the relationship service, which records a
+   * commit on the branch. `modify` used to be a raw update of the row, so
+   * the branch history showed the child being added and never its quantity
+   * changing.
+   */
+  static async applyBomChange(
+    changeOrderId: string,
+    input: BomChangeInput,
+    userId: string,
+  ): Promise<{ message: string }> {
+    await this.requireChangeOrder(changeOrderId)
+    await this.assertEditable(changeOrderId)
+
+    const { parentItem, affected } = await this.findBomParent(
+      changeOrderId,
+      input.parentItemId,
+    )
+    if (!affected) {
+      throw new ValidationError(
+        'Parent item must be an affected item in this change order. BOM changes require a revision on the parent item.',
+      )
+    }
+    const targetId = affected.workingCopyId ?? input.parentItemId
+
+    const childItem = await ItemService.findById(input.childItemId)
+    if (!childItem) {
+      throw new NotFoundError('Item', input.childItemId)
+    }
+
+    if (parentItem?.designId) {
+      await this.checkoutBomParent(changeOrderId, parentItem, userId)
+      const target =
+        targetId === parentItem.id
+          ? parentItem
+          : await ItemService.findById(targetId)
+      if (target) {
+        await ItemService.requireContentEditable(target, userId)
+      }
+    }
+
+    if (input.action === 'add') {
+      await ItemService.addRelationship(
+        targetId,
+        input.childItemId,
+        'BOM',
+        userId,
+        { quantity: String(input.quantity), findNumber: input.findNumber },
+      )
+      return { message: 'BOM relationship added.' }
+    }
+
+    const existing = await db
+      .select({ id: itemRelationships.id })
+      .from(itemRelationships)
+      .where(
+        and(
+          eq(itemRelationships.sourceId, targetId),
+          eq(itemRelationships.targetId, input.childItemId),
+          eq(itemRelationships.relationshipType, 'BOM'),
+        ),
+      )
+
+    if (input.action === 'remove') {
+      for (const relationship of existing) {
+        await ItemRelationshipService.removeRelationship(
+          relationship.id,
+          userId,
+        )
+      }
+      return { message: 'BOM relationship removed.' }
+    }
+
+    for (const relationship of existing) {
+      await ItemRelationshipService.updateRelationship(
+        relationship.id,
+        userId,
+        { quantity: String(input.quantity), findNumber: input.findNumber },
+      )
+    }
+    return { message: 'BOM relationship updated.' }
+  }
+
+  /**
+   * Remove a BOM relationship by id from the ECO's working copy of an
+   * affected item — the checks of `applyBomChange`, keyed by the relationship
+   * rather than by parent and child.
+   */
+  static async removeBomRelationship(
+    changeOrderId: string,
+    relationshipId: string,
+    userId: string,
+  ): Promise<void> {
+    await this.requireChangeOrder(changeOrderId)
+    await this.assertEditable(changeOrderId)
+
+    const relationship = await db
+      .select()
+      .from(itemRelationships)
+      .where(eq(itemRelationships.id, relationshipId))
+      .limit(1)
+      .then((r) => r.at(0))
+    if (!relationship) {
+      throw new NotFoundError('Relationship', relationshipId)
+    }
+
+    const { parentItem, affected } = await this.findBomParent(
+      changeOrderId,
+      relationship.sourceId,
+    )
+    if (!affected) {
+      throw new ValidationError(
+        'Parent item must be an affected item in this change order to remove BOM relationships.',
+      )
+    }
+    if (parentItem?.designId) {
+      await this.checkoutBomParent(changeOrderId, parentItem, userId)
+    }
+
+    // Through the audited service, which also enforces the edit lock on the
+    // source item
+    await ItemRelationshipService.removeRelationship(relationshipId, userId)
+  }
+
+  /**
+   * The change orders in a design's or a program's scope, newest first, one
+   * page at a time — the page and its total from the same query, so they
+   * agree.
+   *
+   * These used to be collected as unordered ids from `change_order_designs`
+   * and sliced in memory, so the same offset could answer with different rows
+   * from one call to the next, and every row was then fetched on its own.
+   * The ordering has a tiebreak on id: two change orders created in the same
+   * millisecond still page deterministically.
+   */
+  static async listByScope(
+    scope: { designId: string } | { programId: string },
+    page: { limit: number; offset: number },
+  ): Promise<{
+    changeOrders: Array<
+      NonNullable<Awaited<ReturnType<typeof ItemService.findById>>>
+    >
+    total: number
+  }> {
+    const inScope =
+      'designId' in scope
+        ? eq(changeOrderDesigns.designId, scope.designId)
+        : eq(designs.programId, scope.programId)
+    const where = and(inScope, notDeleted())
+
+    const rows = await db
+      .selectDistinct({ id: items.id, createdAt: items.createdAt })
+      .from(items)
+      .innerJoin(
+        changeOrderDesigns,
+        eq(changeOrderDesigns.changeOrderId, items.id),
+      )
+      .innerJoin(designs, eq(designs.id, changeOrderDesigns.designId))
+      .where(where)
+      .orderBy(desc(items.createdAt), asc(items.id))
+      .limit(page.limit)
+      .offset(page.offset)
+
+    const total = await db
+      .select({ total: countDistinct(items.id) })
+      .from(items)
+      .innerJoin(
+        changeOrderDesigns,
+        eq(changeOrderDesigns.changeOrderId, items.id),
+      )
+      .innerJoin(designs, eq(designs.id, changeOrderDesigns.designId))
+      .where(where)
+      .then((r) => r.at(0)?.total ?? 0)
+
+    const records = (
+      await Promise.all(rows.map((row) => ItemService.findById(row.id)))
+    ).filter((co) => co !== null)
+
+    return { changeOrders: records, total }
+  }
+
+  /**
+   * Dry run of transitionWorkflow(): what the transition endpoint would
+   * decide, and what a release would do to the affected items, without
+   * doing any of it.
+   *
+   * Guards are evaluated against the change order itself — the workflow
+   * service loads it and the caller's roles, the way execution does. The
+   * route used to hand the guard evaluator an empty item "to be populated
+   * by the service", so a field guard failed here and passed on execution.
+   *
+   * changeActionMappings are the single mechanism for ECO-driven state
+   * change, applied by the merge — so a meaningful preview exists only when
+   * the target state releases (finalKind 'release'). `affectedItemErrors`
+   * are those mappings refusing the release for an affected item.
+   */
+  static async validateTransition(
+    changeOrderId: string,
+    toStateId: string,
+    userId: string,
+  ): Promise<TransitionValidation> {
+    const LifecycleInstanceService = await getLifecycleInstanceService()
+    const instance =
+      await LifecycleInstanceService.getInstanceByItemId(changeOrderId)
+    if (!instance) {
+      throw new NotFoundError('Workflow for change order', changeOrderId)
+    }
+
+    // Effective structure: flexible workflows carry instance-level overrides
+    const effectiveStructure =
+      await LifecycleInstanceService.getEffectiveStructure(instance.id)
+    const transition = effectiveStructure.transitions.find(
+      (t) =>
+        t.fromStateId === instance.currentState && t.toStateId === toStateId,
+    )
+    if (!transition) {
+      return {
+        valid: false,
+        error: 'No valid transition from current state to target state',
+      }
+    }
+
+    const canTransitionResult = await LifecycleInstanceService.canTransition(
+      instance.id,
+      toStateId,
+      { user: { id: userId } },
+    )
+    if (!canTransitionResult.allowed) {
+      return {
+        valid: false,
+        workflowGuardErrors: canTransitionResult.reasons,
+        affectedItemErrors: [],
+        affectedItemsPreview: [],
+      }
+    }
+
+    const targetState = effectiveStructure.states.find(
+      (s) => s.id === toStateId,
+    )
+    const isReleaseTarget =
+      targetState?.isFinal === true && targetState.finalKind === 'release'
+
+    const affectedItems = await this.getAffectedItems(changeOrderId)
+    // Masters the branch merge releases outright. The change-action mappings
+    // are never consulted for these, so predicting from them reports a
+    // violation for a release that will happen anyway — an item authored on
+    // the ECO branch sits in its lifecycle's initial state, which is not
+    // where `release` maps from for every type.
+    const mastersOnBranches =
+      await this.getMastersWithBranchContent(changeOrderId)
+    const affectedItemErrors: Array<string> = []
+    const affectedItemsPreview = await Promise.all(
+      affectedItems.map(async (affected): Promise<TransitionPreviewItem> => {
+        const item = affected.affectedItemDetails
+        if (!item) {
+          return {
+            itemId: affected.affectedItemId,
+            itemNumber: null,
+            changeAction: affected.changeAction,
+            currentState: null,
+            predictedTransitions: [],
+          }
+        }
+
+        const predictedTransitions: TransitionPreviewItem['predictedTransitions'] =
+          []
+        const releasedByBranchMerge =
+          affected.affectedItemMasterId != null &&
+          mastersOnBranches.has(affected.affectedItemMasterId)
+
+        if (isReleaseTarget && !releasedByBranchMerge) {
+          const validation = await LifecycleService.canApplyAction(
+            item.itemType,
+            item.state || '',
+            affected.changeAction,
+            { drivingLifecycleId: instance.workflowDefinitionId },
+          )
+          if (!validation.valid) {
+            affectedItemErrors.push(`${item.itemNumber}: ${validation.error}`)
+          } else {
+            const target = await LifecycleService.getTargetState(
+              item.itemType,
+              affected.changeAction,
+            )
+            if (target && target !== item.state) {
+              const lifecycle = await LifecycleService.getLifecycleForItemType(
+                item.itemType,
+              )
+              predictedTransitions.push({
+                fromState: item.state || '',
+                toState: target,
+                lifecycleName: lifecycle?.name || `${item.itemType} lifecycle`,
+              })
+            }
+          }
+        }
+
+        return {
+          itemId: affected.affectedItemId,
+          itemNumber: item.itemNumber,
+          changeAction: affected.changeAction,
+          currentState: item.state,
+          predictedTransitions,
+        }
+      }),
+    )
+
+    // Guard failures already returned above; what remains is whether the
+    // mappings would accept the release — a release they would reject is not
+    // a valid transition, and the preview says so up front instead of
+    // discovering it at merge time
+    return {
+      valid: affectedItemErrors.length === 0,
+      workflowGuardErrors: [],
+      affectedItemErrors,
+      affectedItemsPreview: affectedItemsPreview.filter(
+        (p) => p.predictedTransitions.length > 0,
+      ),
+      transitionName: transition.name,
+      fromState: instance.currentState,
+      toState: toStateId,
+    }
   }
 
   /**
@@ -1971,14 +2850,15 @@ export class ChangeOrderService {
    * Get workflow history for a change order
    */
   static async getWorkflowHistory(changeOrderId: string) {
-    const WorkflowService = await getWorkflowService()
+    const LifecycleInstanceService = await getLifecycleInstanceService()
 
-    const instance = await WorkflowService.getInstanceByItemId(changeOrderId)
+    const instance =
+      await LifecycleInstanceService.getInstanceByItemId(changeOrderId)
     if (!instance) {
       return []
     }
 
-    return WorkflowService.getHistory(instance.id)
+    return LifecycleInstanceService.getHistory(instance.id)
   }
 
   /**
@@ -2005,15 +2885,17 @@ export class ChangeOrderService {
     // Get ChangeOrder runtime config
     const config = ItemTypeRegistry.getRuntimeConfig('ChangeOrder')
 
-    if (!config?.workflowsByChangeType) {
-      throw new Error(
+    // Typed, because creation now depends on this: a plain Error surfaced as
+    // a 500 with nothing for the admin to act on
+    if (!config?.lifecyclesByChangeType) {
+      throw new ValidationError(
         `No workflow configuration found for ChangeOrder. Configure workflows in Admin > Item Types > ChangeOrder.`,
       )
     }
 
-    const workflowId = config.workflowsByChangeType[changeType]
+    const workflowId = config.lifecyclesByChangeType[changeType]
     if (!workflowId) {
-      throw new Error(
+      throw new ValidationError(
         `No workflow configured for change type '${changeType}'. Configure workflows in Admin > Item Types > ChangeOrder.`,
       )
     }
@@ -2048,10 +2930,10 @@ export class ChangeOrderService {
    * would skip the predicate and hand the whole table to the caller with the
    * least reach of all.
    *
-   * The predicate is `ecoAccessScopeCondition`, the same expression
+   * The predicate is `changeOrderAccessScopeCondition`, the same expression
    * `accessScopeCondition` scopes `GET /api/v1/items` and
    * `GET /api/v1/change-orders` on, and the one-query twin of
-   * `requireEcoAccess`. Reusing it is what keeps this list from answering the
+   * `requireChangeOrderAccess`. Reusing it is what keeps this list from answering the
    * ECO boundary question a second, drifting way — including its deliberate
    * treatment of a link-less ECO, which stays visible to cross-program
    * authority alone so the row can be repaired.
@@ -2073,21 +2955,23 @@ export class ChangeOrderService {
       eq(items.itemType, 'ChangeOrder'),
       notDeleted(),
       eq(items.isCurrent, true),
-      // Either no workflow instance, or scope is not locked and workflow is not completed
+      // Scope not locked and workflow not completed. The no-instance arm
+      // covers change orders created before creation started the workflow;
+      // nothing creates one without an instance any more.
       or(
-        isNull(workflowInstances.id),
+        isNull(lifecycleInstances.id),
         and(
-          eq(workflowInstances.scopeLocked, false),
-          isNull(workflowInstances.completedAt),
+          eq(lifecycleInstances.scopeLocked, false),
+          isNull(lifecycleInstances.completedAt),
         ),
       ),
     ]
 
     if (options.accessDesignIds) {
-      conditions.push(ecoAccessScopeCondition(options.accessDesignIds))
+      conditions.push(changeOrderAccessScopeCondition(options.accessDesignIds))
     }
 
-    // Build the base query with LEFT JOIN on workflowInstances
+    // Build the base query with LEFT JOIN on lifecycleInstances
     let query = db
       .select({
         id: items.id,
@@ -2098,7 +2982,7 @@ export class ChangeOrderService {
       })
       .from(items)
       .innerJoin(changeOrders, eq(items.id, changeOrders.itemId))
-      .leftJoin(workflowInstances, eq(items.id, workflowInstances.itemId))
+      .leftJoin(lifecycleInstances, eq(items.id, lifecycleInstances.itemId))
 
     // If filtering by designId, join through changeOrderDesigns
     if (options.designId) {
@@ -2132,7 +3016,7 @@ export class ChangeOrderService {
    *
    * @throws Error if scope is locked (ECO has left initial state)
    */
-  static async checkoutItemToEco(
+  static async checkoutItem(
     changeOrderId: string,
     itemId: string,
     userId: string,
@@ -2140,26 +3024,13 @@ export class ChangeOrderService {
     branchItem: typeof branchItems.$inferSelect
     branch: typeof branches.$inferSelect
   }> {
-    // Check if scope is locked (ECO has left initial state)
-    const WorkflowService = await getWorkflowService()
-    const workflowInstance =
-      await WorkflowService.getInstanceByItemId(changeOrderId)
-    if (workflowInstance?.scopeLocked) {
-      throw new ValidationError(
-        'Cannot checkout items: ECO scope is locked after leaving Draft state',
-      )
-    }
-    if (workflowInstance?.completedAt) {
-      throw new ValidationError(
-        'Cannot checkout items: ECO workflow has been completed',
-      )
-    }
+    await this.assertScopeOpen(changeOrderId, 'check out items')
 
     // 1. Verify the change order exists and is a ChangeOrder
     const changeOrder = await ItemService.findById(changeOrderId)
     if (!changeOrder) {
       throw new NotFoundError('Change Order', changeOrderId, {
-        operation: 'checkoutItemToEco',
+        operation: 'checkoutItem',
       })
     }
     if (changeOrder.itemType !== 'ChangeOrder') {
@@ -2170,20 +3041,22 @@ export class ChangeOrderService {
     const item = await ItemService.findById(itemId)
     if (!item) {
       throw new NotFoundError('Item', itemId, {
-        operation: 'checkoutItemToEco',
+        operation: 'checkoutItem',
       })
     }
     if (!item.designId) {
       throw new Error(
-        'Item is not associated with a design. Cannot checkout to ECO.',
+        'Item is not associated with a design. Cannot check it out to a change order.',
       )
     }
+    const designId = item.designId
 
-    // 2b. The action this checkout implies, and whether the lifecycle allows
-    // it. This path used to infer from the literal 'Released' and skip
-    // validation entirely, so an item in a state with no configured action
-    // (Obsolete, say) was recorded as a 'release' and only failed much later,
-    // at merge, after the ECO had been through review.
+    // 2b. The action this checkout implies. This path used to infer from the
+    // literal 'Released' and skip validation entirely, so an item in a state
+    // with no configured action (Obsolete, say) was recorded as a 'release'
+    // and only failed much later, at merge, after the ECO had been through
+    // review. Whether the lifecycle allows the action — and whether this
+    // change order's workflow may drive it — is the intake's check, below.
     const inferredAction = await this.inferChangeAction(
       item.itemType,
       item.state,
@@ -2193,166 +3066,59 @@ export class ChangeOrderService {
         `Cannot add ${item.itemNumber} to this change order: no release or revise action is configured for ${item.itemType} items in "${item.state}" state`,
       )
     }
-    const actionValidation = await LifecycleService.canApplyAction(
-      item.itemType,
-      item.state,
-      inferredAction,
-      { drivingLifecycleId: workflowInstance?.workflowDefinitionId },
-    )
-    if (!actionValidation.valid) {
-      throw new ValidationError(
-        `Cannot add ${item.itemNumber} to this change order: ${actionValidation.error}`,
-      )
-    }
 
-    // 3. Get or create changeOrderDesign record
-    let ecoDesign = await db
-      .select()
-      .from(changeOrderDesigns)
-      .where(
-        and(
-          eq(changeOrderDesigns.changeOrderId, changeOrderId),
-          eq(changeOrderDesigns.designId, item.designId),
-        ),
-      )
-      .limit(1)
-      .then((r) => r.at(0))
-
-    // 4. Get or create ECO branch for this design
-    const { branch, created } = await BranchService.getOrCreateEcoBranch(
-      item.designId,
+    // 3. Put the item in the change order's scope through the intake every
+    // affected item goes through — the design linked and branched, the
+    // working copy created for a revise, the scope row written — in one
+    // transaction. An item already in scope is this step already done; so is
+    // losing the race to another checkout of the same item, whose committed
+    // row is the row this one wanted.
+    const scoped = await this.findExistingAffectedItem(
       changeOrderId,
-      userId,
+      item.masterId,
     )
-
-    // 5. Create or update changeOrderDesign record. The read in step 3 and
-    // this write are separate statements on the pool, so two callers checking
-    // the first items out of the same design both find no link and both
-    // insert; the loser takes the winner's row rather than a raw constraint
-    // error, and `created` above is already false for it.
-    if (!ecoDesign) {
-      ecoDesign = await this.insertDesignAssociation(
-        changeOrderId,
-        item.designId,
-        branch.id,
-      )
-    } else if (!ecoDesign.branchId && created) {
-      // Update the branchId if it was just created
-      await db
-        .update(changeOrderDesigns)
-        .set({ branchId: branch.id, updatedAt: new Date() })
-        .where(eq(changeOrderDesigns.id, ecoDesign.id))
-    }
-
-    // 6. For Released items on ECO branches, create a working copy for revision
-    // This is different from a simple checkout - we're preparing for a revision
-    let branchItem: typeof branchItems.$inferSelect
-    let workingCopyId: string | null = null
-
-    if (inferredAction === 'revise') {
-      // Check if working copy already exists
-      const existingWorkingCopy = await this.findExistingWorkingCopy(
-        item.masterId,
-        branch.id,
-      )
-
-      if (existingWorkingCopy) {
-        // Reuse existing working copy
-        workingCopyId = existingWorkingCopy.id
-        // Get the branchItem
-        const [existingBranchItem] = await db
-          .select()
-          .from(branchItems)
-          .where(
-            and(
-              eq(branchItems.branchId, branch.id),
-              eq(branchItems.itemMasterId, item.masterId),
-            ),
-          )
-          .limit(1)
-        if (!existingBranchItem) {
-          throw new Error(
-            `Working copy ${existingWorkingCopy.id} exists on branch ${branch.id} but has no branchItem entry for master ${item.masterId}`,
-          )
-        }
-        branchItem = existingBranchItem
-      } else {
-        // Create working copy with proper branchItem
-        // Revision assignment happens at merge time (ECO release)
-        // Cast to items.$inferSelect since we know the item exists with required fields
-        const result = await this.createRevisionWorkingCopy(
-          item as typeof items.$inferSelect,
-          branch.id,
+    if (!scoped) {
+      try {
+        await this.addAffectedItem(
+          changeOrderId,
+          { affectedItemId: itemId, changeAction: inferredAction },
           userId,
         )
-        branchItem = result.branchItem
-        workingCopyId = result.workingCopy.id
-      }
-
-      // "Checkout to ECO" is an edit intent: acquire the edit lock on the
-      // working copy so this user can modify it (throws ResourceLockedError
-      // if another user already holds it). Working copies created by scope
-      // management (addAffectedItem) stay unlocked until someone edits.
-      branchItem = await CheckoutService.checkout(
-        { itemMasterId: item.masterId, branchId: branch.id },
-        userId,
-      )
-    } else {
-      // For non-released items, use standard checkout
-      branchItem = await CheckoutService.checkout(
-        {
-          itemMasterId: item.masterId,
-          branchId: branch.id,
-        },
-        userId,
-      )
-    }
-
-    // 7. Add to changeOrderAffectedItems if not already there
-    const existingAffected = await db
-      .select()
-      .from(changeOrderAffectedItems)
-      .where(
-        and(
-          eq(changeOrderAffectedItems.changeOrderId, changeOrderId),
-          eq(changeOrderAffectedItems.affectedItemMasterId, item.masterId),
-        ),
-      )
-      .limit(1)
-
-    if (!existingAffected.at(0)) {
-      // A first release starts at the scheme's initial revision; the old
-      // hardcoded 'A' was wrong for numeric and prefixed schemes. A revision
-      // gets its number at merge, from main's current version.
-      const targetRevision =
-        inferredAction === 'release'
-          ? RevisionService.getInitialRevision(
-              await LifecycleService.getRevisionScheme(item.itemType),
-            )
-          : undefined
-
-      // Nothing on this path runs in a transaction — the read above and this
-      // write are separate statements on the pool — so the conflict clause is
-      // the only thing standing between two concurrent checkouts of the same
-      // item and two scope rows for it. Same reasoning as
-      // `registerBranchChange`: the row the loser wanted is the row that is
-      // there, and this step is "add if not already there".
-      await db
-        .insert(changeOrderAffectedItems)
-        .values({
+      } catch (error) {
+        const raced = await this.findExistingAffectedItem(
           changeOrderId,
-          affectedItemId: itemId,
-          affectedItemMasterId: item.masterId,
-          changeAction: inferredAction,
-          currentState: item.state,
-          currentRevision: item.revision,
-          targetRevision,
-          workingCopyId,
-          isDirectlyAffected: true,
-          createdBy: userId,
-        })
-        .onConflictDoNothing(AFFECTED_ITEM_MASTER_CONFLICT)
+          item.masterId,
+        )
+        if (!raced) throw error
+      }
     }
+
+    // 4. The branch the design is linked to — created by the intake above,
+    // or by whichever path scoped the item before
+    const association = await db.transaction((tx) =>
+      this.ensureDesignAssociation(changeOrderId, designId, userId, tx),
+    )
+    if (!association.branchId) {
+      throw new InternalError(
+        `Design ${designId} is linked to change order ${changeOrderId} without a branch`,
+      )
+    }
+    const branch = await BranchService.getById(association.branchId)
+    if (!branch) {
+      throw new NotFoundError('Branch', association.branchId, {
+        operation: 'checkoutItem',
+      })
+    }
+
+    // 5. "Checkout to ECO" is an edit intent: acquire the edit lock on the
+    // item's branch row — the working copy for a revise, a standard checkout
+    // otherwise — so this user can modify it (throws ResourceLockedError if
+    // another user already holds it). Working copies created by scope
+    // management stay unlocked until someone edits.
+    const branchItem = await CheckoutService.checkout(
+      { itemMasterId: item.masterId, branchId: branch.id },
+      userId,
+    )
 
     return { branchItem, branch }
   }
@@ -2362,7 +3128,7 @@ export class ChangeOrderService {
    *
    * Workspace drafts live outside the ECO pipeline: no merge ever reads a
    * workspace branch, and an item created on one has no released version for
-   * the ECO checkout path to start from — `checkoutItemToEco` throws
+   * the ECO checkout path to start from — `checkoutItem` throws
    * NotFound for exactly the items a workspace exists to draft. Adoption
    * therefore moves the branch rows themselves: each workspace branch item
    * is re-homed onto the ECO branch, after which the ordinary merge
@@ -2380,20 +3146,8 @@ export class ChangeOrderService {
     workspaceBranchId: string,
     userId: string,
   ): Promise<{ itemsAdopted: number; itemsSkipped: number }> {
-    // Same scope gates as checkoutItemToEco: adoption grows the reviewed set
-    const WorkflowService = await getWorkflowService()
-    const workflowInstance =
-      await WorkflowService.getInstanceByItemId(changeOrderId)
-    if (workflowInstance?.scopeLocked) {
-      throw new ValidationError(
-        'Cannot adopt workspace items: ECO scope is locked after leaving Draft state',
-      )
-    }
-    if (workflowInstance?.completedAt) {
-      throw new ValidationError(
-        'Cannot adopt workspace items: ECO workflow has been completed',
-      )
-    }
+    // Same scope gate as checkoutItem: adoption grows the reviewed set
+    await this.assertScopeOpen(changeOrderId, 'adopt workspace items')
 
     const changeOrder = await ItemService.findById(changeOrderId)
     if (!changeOrder) {
@@ -2426,69 +3180,52 @@ export class ChangeOrderService {
       throw new ValidationError('Workspace has no items to adopt')
     }
 
-    // ECO branch and design association, created the same way (and in the
-    // same non-transactional position) as checkoutItemToEco: a branch left
-    // behind by a later failure is a normal, reusable state.
-    const { branch: ecoBranch, created } =
-      await BranchService.getOrCreateEcoBranch(
-        workspace.designId,
-        changeOrderId,
-        userId,
-      )
-
-    const ecoDesign = await db
-      .select()
-      .from(changeOrderDesigns)
-      .where(
-        and(
-          eq(changeOrderDesigns.changeOrderId, changeOrderId),
-          eq(changeOrderDesigns.designId, workspace.designId),
-        ),
-      )
-      .limit(1)
-      .then((r) => r.at(0))
-
-    if (!ecoDesign) {
-      await this.insertDesignAssociation(
-        changeOrderId,
-        workspace.designId,
-        ecoBranch.id,
-      )
-    } else if (!ecoDesign.branchId && created) {
-      await db
-        .update(changeOrderDesigns)
-        .set({ branchId: ecoBranch.id, updatedAt: new Date() })
-        .where(eq(changeOrderDesigns.id, ecoDesign.id))
-    }
-
-    // Masters the change order already carries, either as ECO branch content
-    // or as reviewed scope — those are skipped, never overwritten
-    // (branch_items is unique per (branchId, itemMasterId)).
-    const ecoBranchMasters = new Set(
-      (
-        await db
-          .select({ itemMasterId: branchItems.itemMasterId })
-          .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id))
-      ).map((r) => r.itemMasterId),
-    )
-    const scopeMasters = new Set(
-      (
-        await db
-          .select({
-            affectedItemMasterId: changeOrderAffectedItems.affectedItemMasterId,
-          })
-          .from(changeOrderAffectedItems)
-          .where(eq(changeOrderAffectedItems.changeOrderId, changeOrderId))
-      )
-        .map((r) => r.affectedItemMasterId)
-        .filter((id): id is string => id !== null),
-    )
-
     let itemsAdopted = 0
     let itemsSkipped = 0
 
     await db.transaction(async (tx) => {
+      // The design association and its ECO branch, created the way every
+      // other path creates them and inside this transaction: a failure below
+      // leaves neither behind, rather than a branch and a link with nothing
+      // adopted
+      const association = await this.ensureDesignAssociation(
+        changeOrderId,
+        workspace.designId,
+        userId,
+        tx,
+      )
+      if (!association.branchId) {
+        throw new InternalError(
+          `Design ${workspace.designId} is linked to change order ${changeOrderId} without a branch`,
+        )
+      }
+      const changeOrderBranchId = association.branchId
+
+      // Masters the change order already carries, either as ECO branch content
+      // or as reviewed scope — those are skipped, never overwritten
+      // (branch_items is unique per (branchId, itemMasterId)).
+      const changeOrderBranchMasters = new Set(
+        (
+          await tx
+            .select({ itemMasterId: branchItems.itemMasterId })
+            .from(branchItems)
+            .where(eq(branchItems.branchId, changeOrderBranchId))
+        ).map((r) => r.itemMasterId),
+      )
+      const scopeMasters = new Set(
+        (
+          await tx
+            .select({
+              affectedItemMasterId:
+                changeOrderAffectedItems.affectedItemMasterId,
+            })
+            .from(changeOrderAffectedItems)
+            .where(eq(changeOrderAffectedItems.changeOrderId, changeOrderId))
+        )
+          .map((r) => r.affectedItemMasterId)
+          .filter((id): id is string => id !== null),
+      )
+
       const adoptedChanges: Array<{
         itemId: string
         changeType: 'added' | 'modified' | 'deleted'
@@ -2496,7 +3233,7 @@ export class ChangeOrderService {
 
       for (const row of workspaceRows) {
         if (
-          ecoBranchMasters.has(row.itemMasterId) ||
+          changeOrderBranchMasters.has(row.itemMasterId) ||
           scopeMasters.has(row.itemMasterId)
         ) {
           itemsSkipped++
@@ -2505,7 +3242,7 @@ export class ChangeOrderService {
 
         await tx
           .update(branchItems)
-          .set({ branchId: ecoBranch.id })
+          .set({ branchId: changeOrderBranchId })
           .where(eq(branchItems.id, row.id))
 
         // Register on the reviewed scope the same way the organic ECO paths
@@ -2517,7 +3254,7 @@ export class ChangeOrderService {
             ? row.currentItemId
             : (row.baseItemId ?? row.currentItemId)
         await this.registerBranchChange(
-          ecoBranch.id,
+          changeOrderBranchId,
           row.itemMasterId,
           registerItemId,
           userId,
@@ -2538,7 +3275,7 @@ export class ChangeOrderService {
       if (adoptedChanges.length > 0) {
         await CommitService.create(
           {
-            branchId: ecoBranch.id,
+            branchId: changeOrderBranchId,
             message: `Adopted ${adoptedChanges.length} item${adoptedChanges.length === 1 ? '' : 's'} from ${workspace.name}`,
             changeOrderItemId: changeOrderId,
             itemChanges: adoptedChanges,
@@ -2555,19 +3292,19 @@ export class ChangeOrderService {
   /**
    * Get ECO summary across all designs
    */
-  static async getEcoSummary(
+  static async getSummary(
     changeOrderId: string,
     accessDesignIds: Array<string> | null,
-  ): Promise<EcoSummary> {
+  ): Promise<ChangeOrderSummary> {
     const changeOrder = await ItemService.findById(changeOrderId)
     if (!changeOrder) {
       throw new NotFoundError('Change Order', changeOrderId, {
-        operation: 'getEcoSummary',
+        operation: 'getSummary',
       })
     }
 
     // Get all designs affected by this ECO
-    const allEcoDesigns = await db
+    const allChangeOrderDesigns = await db
       .select({
         ecoDesign: changeOrderDesigns,
         design: {
@@ -2586,12 +3323,11 @@ export class ChangeOrderService {
     const allowed = accessDesignIds === null ? null : new Set(accessDesignIds)
     const ecoDesigns =
       allowed === null
-        ? allEcoDesigns
-        : allEcoDesigns.filter((d) => allowed.has(d.ecoDesign.designId))
+        ? allChangeOrderDesigns
+        : allChangeOrderDesigns.filter((d) => allowed.has(d.ecoDesign.designId))
 
-    const designSummaries: Array<EcoDesignSummary> = []
+    const designSummaries: Array<ChangeOrderDesignSummary> = []
     let totalItemsAffected = 0
-    let canSubmit = true
 
     // Visible items only, and therefore visible totals only. Reporting the
     // true total next to a shortened list would hand back the size of the
@@ -2605,7 +3341,7 @@ export class ChangeOrderService {
     } = this.countAffectedItemsByDesign(affectedItems)
 
     const hasRestricted =
-      hasRestrictedItems || ecoDesigns.length < allEcoDesigns.length
+      hasRestrictedItems || ecoDesigns.length < allChangeOrderDesigns.length
 
     // Branches and their contents, read once for every design rather than three
     // queries per design. The change-type tally and the checked-out check are
@@ -2660,16 +3396,17 @@ export class ChangeOrderService {
       branchStats.set(row.branchId, stats)
     }
 
-    for (const { ecoDesign, design } of ecoDesigns) {
-      const itemsAffected = affectedCountByDesign.get(ecoDesign.designId) ?? 0
+    for (const { ecoDesign: changeOrderDesign, design } of ecoDesigns) {
+      const itemsAffected =
+        affectedCountByDesign.get(changeOrderDesign.designId) ?? 0
       totalItemsAffected += itemsAffected
 
       const designCode = design?.code || 'Unknown'
       const designName = design?.name || design?.code || 'Unknown'
 
-      if (!ecoDesign.branchId) {
+      if (!changeOrderDesign.branchId) {
         designSummaries.push({
-          designId: ecoDesign.designId,
+          designId: changeOrderDesign.designId,
           designCode,
           designName,
           branch: null,
@@ -2682,23 +3419,18 @@ export class ChangeOrderService {
         continue
       }
 
-      const stats = branchStats.get(ecoDesign.branchId) ?? {
+      const stats = branchStats.get(changeOrderDesign.branchId) ?? {
         modified: 0,
         added: 0,
         deleted: 0,
         checkedOut: 0,
       }
 
-      // A held checkout means the branch still has work in flight
-      if (stats.checkedOut > 0) {
-        canSubmit = false
-      }
-
       designSummaries.push({
-        designId: ecoDesign.designId,
+        designId: changeOrderDesign.designId,
         designCode,
         designName,
-        branch: branchesById.get(ecoDesign.branchId) ?? null,
+        branch: branchesById.get(changeOrderDesign.branchId) ?? null,
         itemsAffected,
         itemsModified: stats.modified,
         itemsAdded: stats.added,
@@ -2718,11 +3450,17 @@ export class ChangeOrderService {
       totalItemsAffected,
       // Nothing this caller may act on can be submitted or released by them
       // alone while part of the ECO is outside their reach. These two are the
-      // hint; `assertWholeEcoReach`, called from executeWorkflowTransition, is
+      // hint; `assertWholeChangeOrderReach`, called from executeWorkflowTransition, is
       // the gate that enforces it. (This used to point at a `canAdvance`
       // helper that was never written, which is how the hint and the server
       // came to disagree.)
-      canSubmit: canSubmit && !hasRestricted,
+      //
+      // A held checkout does not block a submit: the submit transition never
+      // checked for one and the release checks the branch's items in itself,
+      // so a summary that answered false for one said "cannot submit" while
+      // the server accepted it. `hasCheckedOutItems` stays on each design,
+      // for display.
+      canSubmit: !hasRestricted,
       canRelease: canRelease && !hasRestricted,
       hasRestricted,
     }
@@ -2731,7 +3469,7 @@ export class ChangeOrderService {
   /**
    * Get all designs affected by this ECO
    */
-  static async getEcoDesigns(changeOrderId: string) {
+  static async getChangeOrderDesigns(changeOrderId: string) {
     const rows = await db
       .select({
         id: changeOrderDesigns.id,
@@ -2764,7 +3502,7 @@ export class ChangeOrderService {
   static async getMastersWithBranchContent(
     changeOrderId: string,
   ): Promise<Set<string>> {
-    const branchIds = (await this.getEcoDesigns(changeOrderId))
+    const branchIds = (await this.getChangeOrderDesigns(changeOrderId))
       .map((d) => d.branchId)
       .filter((id): id is string => id !== null)
     if (branchIds.length === 0) return new Set()
@@ -2783,9 +3521,10 @@ export class ChangeOrderService {
   }
 
   /**
-   * Add a design to an ECO and create the ECO branch immediately
+   * Add a design to a change order and create its ECO branch at once, so it
+   * shows up in branch selectors. Idempotent: an existing link is returned.
    */
-  static async addDesignToEco(
+  static async addDesign(
     changeOrderId: string,
     designId: string,
     userId: string,
@@ -2794,24 +3533,11 @@ export class ChangeOrderService {
     const changeOrder = await ItemService.findById(changeOrderId)
     if (!changeOrder) {
       throw new NotFoundError('Change Order', changeOrderId, {
-        operation: 'addDesignToEco',
+        operation: 'addDesign',
       })
     }
 
-    // Check if scope is locked (ECO has left initial state)
-    const WorkflowService = await getWorkflowService()
-    const workflowInstance =
-      await WorkflowService.getInstanceByItemId(changeOrderId)
-    if (workflowInstance?.scopeLocked) {
-      throw new ValidationError(
-        'Cannot add designs: ECO scope is locked after leaving Draft state',
-      )
-    }
-    if (workflowInstance?.completedAt) {
-      throw new ValidationError(
-        'Cannot add designs: ECO workflow has been completed',
-      )
-    }
+    await this.assertScopeOpen(changeOrderId, 'add designs')
 
     // Verify design exists
     const design = await DesignService.getById(designId)
@@ -2819,67 +3545,11 @@ export class ChangeOrderService {
       throw new Error('Design not found')
     }
 
-    // Check if already added
-    const existing = await db
-      .select()
-      .from(changeOrderDesigns)
-      .where(
-        and(
-          eq(changeOrderDesigns.changeOrderId, changeOrderId),
-          eq(changeOrderDesigns.designId, designId),
-        ),
-      )
-      .limit(1)
-
-    const existingAssociation = existing[0]
-    if (existingAssociation) {
-      return existingAssociation
-    }
-
-    // Create the ECO branch immediately so it shows up in branch selectors
-    const { branch, created } = await BranchService.getOrCreateEcoBranch(
-      designId,
-      changeOrderId,
-      userId,
+    // The association, its branch and the registration commit, as one
+    // transaction — the same path every other caller links a design through
+    return db.transaction((tx) =>
+      this.ensureDesignAssociation(changeOrderId, designId, userId, tx),
     )
-
-    // Create "ChangeOrder created" commit when design is first linked
-    // This makes the ECO visible in the program graph view for this design
-    if (created) {
-      await CommitService.create(
-        {
-          branchId: branch.id,
-          message: `ChangeOrder ${changeOrder.itemNumber} created`,
-          itemChanges: [], // No item changes, just branch/ECO registration
-        },
-        userId,
-      )
-    }
-
-    // Create the association with the branch ID
-    return this.insertDesignAssociation(changeOrderId, designId, branch.id)
-  }
-
-  // ============================================
-  // Lifecycle Integration
-  // ============================================
-
-  /**
-   * Get valid change actions for an item based on its current state.
-   * Used by UI to show only applicable actions when adding affected items.
-   *
-   * @param itemId - The item to check
-   * @returns Array of valid change actions for this item
-   */
-  static async getValidActionsForItem(
-    itemId: string,
-  ): Promise<Array<ChangeAction>> {
-    const item = await ItemService.findById(itemId)
-    if (!item) {
-      return []
-    }
-
-    return LifecycleService.getValidActions(item.itemType, item.state)
   }
 }
 
@@ -2887,7 +3557,7 @@ export class ChangeOrderService {
 // Phase 3: ECO-as-Branch Types
 // ============================================
 
-export interface EcoDesignSummary {
+export interface ChangeOrderDesignSummary {
   designId: string
   designCode: string
   designName: string
@@ -2899,9 +3569,9 @@ export interface EcoDesignSummary {
   hasCheckedOutItems: boolean
 }
 
-export interface EcoSummary {
+export interface ChangeOrderSummary {
   changeOrder: typeof items.$inferSelect
-  designs: Array<EcoDesignSummary>
+  designs: Array<ChangeOrderDesignSummary>
   /** Visible to this caller, not the ECO's true size — see `hasRestricted`. */
   totalItemsAffected: number
   canSubmit: boolean

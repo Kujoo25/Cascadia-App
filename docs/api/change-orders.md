@@ -1,10 +1,10 @@
 # Change Orders API
 
-The Change Orders (ECO) API manages Engineering Change Orders, which are the primary mechanism for making controlled changes to released items in Cascadia PLM. Each ECO gets its own isolated branch, and all state transitions go through a single workflow transition endpoint.
+The Change Orders API manages change orders -- ECO, ECN, MCO and Deviation by change type -- the primary mechanism for controlled change to released items in Cascadia PLM. Each change order gets its own isolated branch, and every state transition goes through one endpoint on the change order's lifecycle instance.
 
 ## Key Concept: ECO-as-Branch
 
-When an ECO is created, Cascadia automatically creates a Git-style branch. Items are checked out to the ECO branch, modified in isolation, and merged back to main when the ECO is approved and released. Revision letters are assigned only at merge time.
+When a change order is created, Cascadia automatically creates a Git-style branch. Items are checked out to the change-order branch, modified in isolation, and merged back to main when the change order is approved and released. Revision letters are assigned only at merge time.
 
 ## Endpoints
 
@@ -57,7 +57,7 @@ POST /api/v1/items
 | `implementationDate` | date   | No       | Target implementation date          |
 | `riskLevel`          | enum   | No       | `low`, `medium`, `high`, `critical` |
 
-A workflow is auto-started for the ECO based on its `changeType`.
+Creation starts a lifecycle instance for the change order, from the Driving definition its `changeType` maps to.
 
 ## Get Change Order
 
@@ -78,7 +78,7 @@ Requires `change_orders.read` permission.
       "revision": "A",
       "name": "Motor Housing Redesign",
       "itemType": "ChangeOrder",
-      "state": "In Review",
+      "state": "Draft",
       "changeType": "ECO",
       "priority": "high",
       "reasonForChange": "Field failures due to overheating",
@@ -133,20 +133,20 @@ Returns change orders that can still accept new affected items (scope is not yet
         "id": "eco-uuid",
         "itemNumber": "ECO-2025-001",
         "name": "Motor Housing Redesign",
-        "state": "In Work"
+        "state": "Draft"
       }
     ]
   }
 }
 ```
 
-## ECO Summary
+## Change-Order Summary
 
 ```
 GET /api/v1/change-orders/:id/summary
 ```
 
-Returns a comprehensive summary of the ECO across all affected designs. Requires `change_orders.read` permission.
+Returns a comprehensive summary of the change order across all affected designs. Requires `change_orders.read` permission.
 
 ### Response
 
@@ -176,7 +176,7 @@ Returns a comprehensive summary of the ECO across all affected designs. Requires
 GET /api/v1/change-orders/:id/affected-items
 ```
 
-Returns all items affected by this ECO. Requires `change_orders.read` permission.
+Returns all items affected by this change order. Requires `change_orders.read` permission.
 
 ### Response
 
@@ -188,7 +188,7 @@ Returns all items affected by this ECO. Requires `change_orders.read` permission
         "id": "affected-item-uuid",
         "changeOrderId": "eco-uuid",
         "affectedItemId": "item-uuid",
-        "changeAction": "modify",
+        "changeAction": "revise",
         "affectedItemDetails": {
           "itemNumber": "PRT-001",
           "name": "Motor Housing",
@@ -207,14 +207,14 @@ Returns all items affected by this ECO. Requires `change_orders.read` permission
 POST /api/v1/change-orders/:id/affected-items
 ```
 
-Add one or more items to the ECO's affected items list. Requires `change_orders.update` permission.
+Add one or more items to the change order's affected items list. Requires `change_orders.update` permission.
 
 #### Single Item
 
 ```json
 {
   "affectedItemId": "item-uuid",
-  "changeAction": "modify"
+  "changeAction": "revise"
 }
 ```
 
@@ -223,8 +223,8 @@ Add one or more items to the ECO's affected items list. Requires `change_orders.
 ```json
 {
   "items": [
-    { "affectedItemId": "item-uuid-1", "changeAction": "modify" },
-    { "affectedItemId": "item-uuid-2", "changeAction": "add" }
+    { "affectedItemId": "item-uuid-1", "changeAction": "revise" },
+    { "affectedItemId": "item-uuid-2", "changeAction": "release" }
   ]
 }
 ```
@@ -239,13 +239,13 @@ DELETE /api/v1/change-orders/:id/affected-items?itemId=AFFECTED_ITEM_UUID
 
 Removes an affected item record. Requires `change_orders.update` permission.
 
-## Checkout Item to ECO
+## Checkout Item to a Change Order
 
 ```
 POST /api/v1/change-orders/:id/checkout
 ```
 
-Checks out an existing item onto the ECO's branch, creating a branch copy for modification. Requires `change_orders.update` permission.
+Checks out an existing item onto the change order's branch, creating a branch copy for modification. Requires `change_orders.update` permission.
 
 ### Request Body
 
@@ -276,9 +276,9 @@ Checks out an existing item onto the ECO's branch, creating a branch copy for mo
 }
 ```
 
-## Workflow Transitions
+## Transitions
 
-**All ECO state changes go through a single endpoint.** There are no separate `/submit`, `/approve`, `/reject`, or `/actions` routes.
+**All change-order state changes go through a single endpoint.** There are no separate `/submit`, `/approve`, `/reject`, or `/actions` routes.
 
 ### Get Available Transitions
 
@@ -295,20 +295,41 @@ Returns transitions available from the current state, evaluating guards and role
   "data": {
     "transitions": [
       {
-        "id": "transition-uuid",
-        "name": "Submit for Review",
-        "fromStateId": "in-work",
-        "toStateId": "in-review",
-        "guards": [],
-        "allowed": true
+        "transition": {
+          "id": "t1",
+          "name": "Submit for Review",
+          "fromStateId": "Draft",
+          "toStateId": "InReview",
+          "guards": []
+        },
+        "canTransition": true,
+        "guardResults": []
       },
       {
-        "id": "transition-uuid-2",
-        "name": "Approve",
-        "fromStateId": "in-review",
-        "toStateId": "approved",
-        "guards": ["requires_approval"],
-        "allowed": false
+        "transition": {
+          "id": "t2",
+          "name": "Approve",
+          "fromStateId": "InReview",
+          "toStateId": "Approved",
+          "guards": [
+            {
+              "id": "guard-uuid",
+              "name": "Approver only",
+              "type": "user_role",
+              "config": { "requiredRoles": ["Approver"] },
+              "errorMessage": "Only an Approver can approve"
+            }
+          ]
+        },
+        "canTransition": false,
+        "guardResults": [
+          {
+            "guardId": "guard-uuid",
+            "guardName": "Approver only",
+            "passed": false,
+            "errorMessage": "Only an Approver can approve"
+          }
+        ]
       }
     ]
   }
@@ -321,12 +342,12 @@ Returns transitions available from the current state, evaluating guards and role
 POST /api/v1/change-orders/:id/workflow/transition
 ```
 
-Executes a workflow transition. Requires `change_orders.update` permission.
+Executes a transition on the change order's lifecycle instance. Requires `change_orders.update` permission.
 
 **When transitioning to a final state** (e.g., "Approved" with `isFinal: true`), this endpoint automatically:
 
-1. Executes the workflow state transition
-2. Triggers `close()` which merges the ECO branch to main
+1. Executes the transition
+2. Triggers `close()` which merges the change-order branch to main
 3. Assigns revision letters to affected items
 
 ### Request Body
@@ -338,7 +359,7 @@ Executes a workflow transition. Requires `change_orders.update` permission.
 
 ```json
 {
-  "toStateId": "in-review",
+  "toStateId": "InReview",
   "comments": "Ready for review. All affected items updated."
 }
 ```
@@ -349,8 +370,8 @@ Executes a workflow transition. Requires `change_orders.update` permission.
 {
   "data": {
     "success": true,
-    "fromState": "in-work",
-    "toState": "in-review"
+    "fromState": "Draft",
+    "toState": "InReview"
   }
 }
 ```
@@ -361,8 +382,8 @@ Executes a workflow transition. Requires `change_orders.update` permission.
 {
   "data": {
     "success": true,
-    "fromState": "in-review",
-    "toState": "approved",
+    "fromState": "InReview",
+    "toState": "Approved",
     "mergeResult": {
       "mergedDesigns": 1,
       "mergedItems": 5,
@@ -381,13 +402,13 @@ Executes a workflow transition. Requires `change_orders.update` permission.
 POST /api/v1/change-orders/:id/workflow/validate-transition
 ```
 
-Validates a transition without executing it. Returns preview of what would happen, including lifecycle effects on affected items. Requires `change_orders.read` permission.
+Validates a transition without executing it. Returns a preview of what would happen, including the change actions the release would apply to affected items. Requires `change_orders.read` permission.
 
 ### Request Body
 
 ```json
 {
-  "toStateId": "approved"
+  "toStateId": "Approved"
 }
 ```
 
@@ -398,19 +419,19 @@ Validates a transition without executing it. Returns preview of what would happe
   "data": {
     "valid": true,
     "transitionName": "Approve",
-    "fromState": "in-review",
-    "toState": "approved",
+    "fromState": "InReview",
+    "toState": "Approved",
     "workflowGuardErrors": [],
-    "lifecycleEffectErrors": [],
+    "affectedItemErrors": [],
     "affectedItemsPreview": [
       {
         "itemId": "item-uuid",
         "itemNumber": "PRT-001",
-        "changeAction": "modify",
-        "currentState": "In Review",
+        "changeAction": "release",
+        "currentState": "Draft",
         "predictedTransitions": [
           {
-            "fromState": "In Review",
+            "fromState": "Draft",
             "toState": "Released",
             "lifecycleName": "Standard Part Lifecycle"
           }
@@ -421,15 +442,15 @@ Validates a transition without executing it. Returns preview of what would happe
 }
 ```
 
-## Workflow Instance
+## Lifecycle Instance
 
-### Get Workflow
+### Get the Instance
 
 ```
 GET /api/v1/change-orders/:id/workflow
 ```
 
-Returns the workflow instance and its effective definition. Requires `change_orders.read` permission.
+Returns the lifecycle instance and its effective definition. Requires `change_orders.read` permission.
 
 ### Response
 
@@ -440,12 +461,12 @@ Returns the workflow instance and its effective definition. Requires `change_ord
       "id": "instance-uuid",
       "workflowDefinitionId": "def-uuid",
       "itemId": "eco-uuid",
-      "currentState": "in-review",
+      "currentState": "InReview",
       "startedAt": "2025-01-15T10:30:00.000Z"
     },
     "definition": {
       "id": "def-uuid",
-      "name": "ECO Approval Workflow",
+      "name": "Change Order - Standard",
       "states": [...],
       "transitions": [...]
     },
@@ -454,13 +475,13 @@ Returns the workflow instance and its effective definition. Requires `change_ord
 }
 ```
 
-### Start Workflow
+### Start an Instance
 
 ```
 POST /api/v1/change-orders/:id/workflow
 ```
 
-Manually starts a workflow for a change order (normally auto-started on creation). Requires `change_orders.update` permission.
+Starts a lifecycle instance for a change order that lost its instance -- creation starts one -- and accepts only a Driving definition. Requires `change_orders.update` permission.
 
 ### Request Body
 
@@ -472,19 +493,19 @@ Manually starts a workflow for a change order (normally auto-started on creation
 
 **Status:** `201 Created`
 
-## Workflow Structure
+## Instance Structure
 
 ```
 GET /api/v1/change-orders/:id/workflow/structure
 ```
 
-Returns the effective workflow structure, including any instance-level customizations for flexible workflows.
+Returns the effective instance structure, including any instance-level customizations for flexible definitions.
 
 ```
 PUT /api/v1/change-orders/:id/workflow/structure
 ```
 
-Updates the workflow structure for flexible workflows. Only allowed when the workflow is editable (not completed). Requires `change_orders.update` permission.
+Updates the instance structure for flexible definitions. Only allowed while the instance is editable (flexible and not completed). Requires `change_orders.update` permission.
 
 ### Request Body
 
@@ -493,11 +514,11 @@ Updates the workflow structure for flexible workflows. Only allowed when the wor
   "states": [
     { "id": "draft", "name": "Draft", "isInitial": true },
     { "id": "review", "name": "Review" },
-    { "id": "approved", "name": "Approved", "isFinal": true }
+    { "id": "Approved", "name": "Approved", "isFinal": true }
   ],
   "transitions": [
     { "fromStateId": "draft", "toStateId": "review", "name": "Submit" },
-    { "fromStateId": "review", "toStateId": "approved", "name": "Approve" }
+    { "fromStateId": "review", "toStateId": "Approved", "name": "Approve" }
   ]
 }
 ```
@@ -510,7 +531,7 @@ Instance-level transitions may carry `"approvalRequirement": { "requiredCount": 
 GET /api/v1/change-orders/:id/workflow/states/:stateId/approvers
 ```
 
-Returns the instance-level approvers for one state (the editable set for flexible workflows; definition-level approvers are reported through the `/approvals` endpoints as part of the merged status). Requires `change_orders.read` permission.
+Returns the instance-level approvers for one state (the editable set for flexible definitions; definition-level approvers are reported through the `/approvals` endpoints as part of the merged status). Requires `change_orders.read` permission.
 
 ```
 PUT /api/v1/change-orders/:id/workflow/states/:stateId/approvers
@@ -529,15 +550,15 @@ Replaces the instance-level approver set for a state. Same editability gate as t
 }
 ```
 
-Approval gating uses the union of definition-level and instance-level approvers; every required approver must hold an active approved vote before the workflow can leave the state.
+Approval gating uses the union of definition-level and instance-level approvers; every required approver must hold an active approved vote before the instance can leave the state.
 
-## Workflow History
+## Transition History
 
 ```
 GET /api/v1/change-orders/:id/workflow/history
 ```
 
-Returns the transition history for the ECO's workflow. Requires `change_orders.read` permission.
+Returns the transition history for the change order's lifecycle instance. Requires `change_orders.read` permission.
 
 ### Response
 
@@ -547,8 +568,8 @@ Returns the transition history for the ECO's workflow. Requires `change_orders.r
     "history": [
       {
         "id": "entry-uuid",
-        "fromState": "in-work",
-        "toState": "in-review",
+        "fromState": "Draft",
+        "toState": "InReview",
         "transitionedBy": "user-uuid",
         "transitionedAt": "2025-01-16T14:00:00.000Z",
         "comments": "Ready for review"
@@ -566,7 +587,7 @@ Returns the transition history for the ECO's workflow. Requires `change_orders.r
 GET /api/v1/change-orders/:id/approvals
 ```
 
-Returns approval votes grouped by workflow state. Requires `change_orders.read` permission.
+Returns approval votes grouped by lifecycle state. Requires `change_orders.read` permission.
 
 ### Response
 
@@ -574,14 +595,14 @@ Returns approval votes grouped by workflow state. Requires `change_orders.read` 
 {
   "data": {
     "instanceId": "instance-uuid",
-    "currentState": "in-review",
+    "currentState": "InReview",
     "approvals": [
       {
-        "stateId": "in-review",
+        "stateId": "InReview",
         "votes": [
           {
             "userId": "user-uuid",
-            "vote": "approved",
+            "vote": "Approved",
             "comments": "Looks good",
             "votedAt": "2025-01-16T15:00:00.000Z"
           }
@@ -613,7 +634,7 @@ Submit an approval or rejection vote for the current state. Requires `change_ord
 
 ```json
 {
-  "vote": "approved",
+  "vote": "Approved",
   "comments": "Design review complete, changes look correct"
 }
 ```
@@ -663,15 +684,15 @@ Returns the previously-generated impact report. Requires `change_orders.read` pe
 POST /api/v1/change-orders/:id/impact-assessment
 ```
 
-Runs an impact assessment to analyze what items are affected by the ECO, traversing the BOM tree. Requires `change_orders.update` permission.
+Runs an impact assessment to analyze what items are affected by the change order, traversing the BOM tree. Requires `change_orders.update` permission.
 
 ### Request Body
 
-| Field                 | Type    | Default | Description                 |
-| --------------------- | ------- | ------- | --------------------------- |
-| `maxDepth`            | integer | 15      | Maximum BOM traversal depth |
-| `includeDocuments`    | boolean | true    | Include related documents   |
-| `includeCrossChanges` | boolean | true    | Include cross-ECO impacts   |
+| Field                 | Type    | Default | Description                        |
+| --------------------- | ------- | ------- | ---------------------------------- |
+| `maxDepth`            | integer | 15      | Maximum BOM traversal depth        |
+| `includeDocuments`    | boolean | true    | Include related documents          |
+| `includeCrossChanges` | boolean | true    | Include cross-change-order impacts |
 
 ```json
 {
@@ -704,7 +725,7 @@ Runs an impact assessment to analyze what items are affected by the ECO, travers
 GET /api/v1/change-orders/:id/conflicts
 ```
 
-Detects merge conflicts for the ECO, including field-level conflicts and cross-ECO conflicts. Results are enriched with review status. Requires `change_orders.read` permission.
+Detects merge conflicts for the change order, including field-level conflicts and cross-change-order conflicts. Results are enriched with review status. Requires `change_orders.read` permission.
 
 ### Response
 
@@ -741,14 +762,14 @@ Detects merge conflicts for the ECO, including field-level conflicts and cross-E
 GET /api/v1/change-orders/:id/release
 ```
 
-Preview what would happen when the ECO is released (merged to main). Actual release is triggered by transitioning to a final workflow state. Requires `change_orders.read` permission.
+Preview what would happen when the change order is released (merged to main). Actual release is triggered by transitioning to a final state of its lifecycle. Requires `change_orders.read` permission.
 
 Each item appears once, keyed by its master — a checked-out item is one row, not
 one for the branch working copy and another for the row on main. `currentRevision`
 is the revision main holds, never the branch placeholder (`-d370051d`) a working
 copy carries, and `newRevision` is the letter the release will actually assign.
 
-A change order whose workflow has finished previews nothing: `designs` is empty,
+A change order whose lifecycle instance has finished previews nothing: `designs` is empty,
 `canRelease` is `false`, and `validationIssues` says why. `alreadyReleased` is
 `true` when it finished by releasing, as opposed to being cancelled.
 

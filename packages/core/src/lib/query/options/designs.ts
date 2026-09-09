@@ -105,8 +105,8 @@ export interface DesignTag {
  * header, the branch selector, the baselines tab) can name them instead of
  * re-narrowing the index-signature default at every use site.
  */
-/** One row of `/api/v1/designs/:id/ecos`. */
-export interface DesignEco {
+/** One row of `/api/v1/designs/:id/change-orders`. */
+export interface DesignChangeOrder {
   id: string
   itemNumber: string
   name: string
@@ -128,13 +128,13 @@ export interface DesignEco {
  *
  * Keyed beneath the design, so releasing an ECO refreshes the list.
  */
-export function designEcosQuery(designId: string) {
+export function designChangeOrdersQuery(designId: string) {
   return queryOptions({
     queryKey: qk.sub('designs', designId, 'ecos'),
-    queryFn: async (): Promise<Array<DesignEco>> => {
-      const result = await apiFetch<{ data: { ecos: Array<DesignEco> } }>(
-        `/api/v1/designs/${designId}/ecos`,
-      )
+    queryFn: async (): Promise<Array<DesignChangeOrder>> => {
+      const result = await apiFetch<{
+        data: { ecos: Array<DesignChangeOrder> }
+      }>(`/api/v1/designs/${designId}/change-orders`)
       return result.data.ecos
     },
     enabled: Boolean(designId),
@@ -164,7 +164,7 @@ export interface DesignStructureContext {
  * hierarchy.
  *
  * Generic in the node and orphan row types for the same reason
- * `ecoDesignStructureQuery` is: the concrete shapes are component types
+ * `changeOrderDesignStructureQuery` is: the concrete shapes are component types
  * (`BOMTreeNode` and the structure tab's non-structure row), and the query
  * layer has no business importing from `components/`.
  */

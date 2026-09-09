@@ -24,13 +24,13 @@
  * along, so a fresh database opens each default laid out and explained.
  */
 
-import { sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 // Laid out at module load, synchronously. That is the constraint on ever
 // replacing dagre here: an async layout library (elkjs) cannot be called
 // from a module-level constant. See the note in
 // components/versioning/graph-layout.ts.
 import dagre from 'dagre'
-import { itemTypeConfigs, users, workflowDefinitions } from '../db/schema'
+import { itemTypeConfigs, lifecycleDefinitions, users } from '../db/schema'
 import { LIFECYCLE_IDS } from './lifecycle-ids'
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import type * as schema from '../db/schema'
@@ -59,10 +59,22 @@ interface LayoutableDefinition {
 
 /**
  * The definition with dagre-positioned states, so the lifecycle editor opens
- * a shipped default laid out left-to-right instead of stacked at the origin.
+ * a shipped default laid out instead of stacked at the origin.
  * Layout edges are the manual transitions plus the moves the change-action
  * mappings describe — a Driven lifecycle has no transitions; its shape *is*
  * its mappings. Same geometry the editor's own auto-layout uses.
+ *
+ * `rankdir` must stay top-to-bottom: `StateNode` puts its target handle on
+ * the top edge and its source handle on the bottom, so a left-to-right rank
+ * order — which this shipped until the ECO lifecycle tab exposed it — makes
+ * every edge leave downward and loop back up into the next node's top. Four
+ * states was enough for the result to read as a knot of crossing lines with
+ * the transition labels stacked on top of each other.
+ *
+ * `nodesep` is wider than dagre would need for the boxes alone because
+ * `TransitionEdge` renders each transition's name as a floating label at its
+ * midpoint. Dagre knows nothing about those, so siblings that clear each
+ * other by node geometry can still collide by label.
  */
 function withLayout<T extends LayoutableDefinition>(definition: T): T {
   const edges: Array<LayoutEdge> = [...(definition.transitions ?? [])]
@@ -78,9 +90,9 @@ function withLayout<T extends LayoutableDefinition>(definition: T): T {
   const graph = new dagre.graphlib.Graph()
   graph.setDefaultEdgeLabel(() => ({}))
   graph.setGraph({
-    rankdir: 'LR',
-    ranksep: 100,
-    nodesep: 50,
+    rankdir: 'TB',
+    ranksep: 120,
+    nodesep: 120,
     marginx: 20,
     marginy: 20,
   })
@@ -1211,7 +1223,7 @@ export interface DefaultLifecycle {
    * Bump when the shipped default changes shape. Seeding upgrades an
    * existing row only when its stored version is lower, so a database
    * already holding this or a newer version — including one an admin edited
-   * through WorkflowService, which bumps the version — is left alone.
+   * through LifecycleDefinitionService, which bumps the version — is left alone.
    */
   version: number
 }
@@ -1224,7 +1236,11 @@ export interface DefaultLifecycle {
  * Versions: v2 everywhere is the layout-and-descriptions pass that made this
  * module the only source (the seed's copies carried them; now every
  * database gets them). Tool, Work Order and Requirement had already moved
- * for their own reasons and are one higher.
+ * for their own reasons and are one higher. The next bump everywhere is the
+ * top-to-bottom relayout — `withLayout` had been ranking left-to-right into
+ * nodes whose handles are top and bottom, so every shipped default opened as
+ * a tangle. An existing database only picks the new geometry up on a re-seed,
+ * and only if nobody has edited that row past the shipped version.
  */
 export const DEFAULT_ITEM_LIFECYCLES: ReadonlyArray<DefaultLifecycle> = [
   {
@@ -1232,7 +1248,8 @@ export const DEFAULT_ITEM_LIFECYCLES: ReadonlyArray<DefaultLifecycle> = [
     name: 'Part - Default Lifecycle',
     lifecycleType: 'Driven',
     definition: withLayout(PART_LIFECYCLE_DEFINITION),
-    version: 2,
+    // v3: top-to-bottom layout
+    version: 3,
   },
   {
     id: LIFECYCLE_IDS.document,
@@ -1242,7 +1259,8 @@ export const DEFAULT_ITEM_LIFECYCLES: ReadonlyArray<DefaultLifecycle> = [
       ...PART_LIFECYCLE_DEFINITION,
       applicableItemTypes: ['Document'],
     }),
-    version: 2,
+    // v3: top-to-bottom layout
+    version: 3,
   },
   {
     id: LIFECYCLE_IDS.requirement,
@@ -1251,42 +1269,48 @@ export const DEFAULT_ITEM_LIFECYCLES: ReadonlyArray<DefaultLifecycle> = [
     definition: withLayout(REQUIREMENT_LIFECYCLE_DEFINITION),
     // v2: review progress (Proposed/Approved/Rejected) absorbed from the old
     // requirements.status column; release maps from Approved. v3: layout.
-    version: 3,
+    // v4: top-to-bottom layout.
+    version: 4,
   },
   {
     id: LIFECYCLE_IDS.task,
     name: 'Task - Default Lifecycle',
     lifecycleType: 'Free',
     definition: withLayout(TASK_LIFECYCLE_DEFINITION),
-    version: 2,
+    // v3: top-to-bottom layout
+    version: 3,
   },
   {
     id: LIFECYCLE_IDS.testPlan,
     name: 'Test Plan - Default Lifecycle',
     lifecycleType: 'Free',
     definition: withLayout(TEST_PLAN_LIFECYCLE_DEFINITION),
-    version: 2,
+    // v3: top-to-bottom layout
+    version: 3,
   },
   {
     id: LIFECYCLE_IDS.testCase,
     name: 'Test Case - Default Lifecycle',
     lifecycleType: 'Free',
     definition: withLayout(TEST_CASE_LIFECYCLE_DEFINITION),
-    version: 2,
+    // v3: top-to-bottom layout
+    version: 3,
   },
   {
     id: LIFECYCLE_IDS.workInstruction,
     name: 'Work Instruction - Default Lifecycle',
     lifecycleType: 'Free',
     definition: withLayout(WORK_INSTRUCTION_LIFECYCLE_DEFINITION),
-    version: 2,
+    // v3: top-to-bottom layout
+    version: 3,
   },
   {
     id: LIFECYCLE_IDS.issue,
     name: 'Issue - Default Lifecycle',
     lifecycleType: 'Free',
     definition: withLayout(ISSUE_LIFECYCLE_DEFINITION),
-    version: 2,
+    // v3: top-to-bottom layout
+    version: 3,
   },
   {
     id: LIFECYCLE_IDS.tool,
@@ -1294,14 +1318,16 @@ export const DEFAULT_ITEM_LIFECYCLES: ReadonlyArray<DefaultLifecycle> = [
     lifecycleType: 'Free',
     definition: withLayout(TOOL_LIFECYCLE_DEFINITION),
     // v2: toolStatus absorbed — Available/In Use replace Active. v3: layout.
-    version: 3,
+    // v4: top-to-bottom layout.
+    version: 4,
   },
   {
     id: LIFECYCLE_IDS.physicalPart,
     name: 'Physical Part - Default Lifecycle',
     lifecycleType: 'Free',
     definition: withLayout(PHYSICAL_PART_LIFECYCLE_DEFINITION),
-    version: 2,
+    // v3: top-to-bottom layout
+    version: 3,
   },
   {
     id: LIFECYCLE_IDS.workOrder,
@@ -1309,36 +1335,48 @@ export const DEFAULT_ITEM_LIFECYCLES: ReadonlyArray<DefaultLifecycle> = [
     lifecycleType: 'Free',
     definition: withLayout(WORK_ORDER_LIFECYCLE_DEFINITION),
     // v2: Complete/Cancelled declare finalKind (traveler gate keys on it).
-    // v3: layout.
-    version: 3,
+    // v3: layout. v4: top-to-bottom layout.
+    version: 4,
   },
   {
     id: LIFECYCLE_IDS.changeOrder,
-    name: 'ECO - Default Workflow',
+    // One name for the definition every strict change type runs — ECO, ECN,
+    // MCO and Deviation alike. Migration 0004 renames the row on installs
+    // that do not re-seed.
+    name: 'Change Order - Standard',
     lifecycleType: 'Driving',
     definition: withLayout(CHANGE_ORDER_WORKFLOW_DEFINITION),
     // v2: the shipped workflow, which used to live only in the app seed,
-    // replaces the minimal stand-in this module carried for test databases
-    version: 2,
+    // replaces the minimal stand-in this module carried for test databases.
+    // v3: the name. v4: top-to-bottom layout.
+    version: 4,
   },
   {
     id: LIFECYCLE_IDS.flexibleChangeOrder,
-    name: 'Dynamic Change Order',
+    // The name the change-order form already gave it
+    name: 'XCO - Flexible Change Order',
     lifecycleType: 'Driving',
     workflowType: 'flexible',
     definition: withLayout(FLEXIBLE_CHANGE_ORDER_WORKFLOW_DEFINITION),
-    version: 1,
+    // v2: the name. v3: top-to-bottom layout.
+    version: 3,
   },
 ]
 
 /**
  * The item-type → default-lifecycle links this module seeds. The app seed's
- * richer ChangeOrder config (with `workflowsByChangeType`) overwrites the
+ * richer ChangeOrder config (with `lifecyclesByChangeType`) overwrites the
  * bare link on seeded databases, and CO test suites override with their own.
  */
 export const DEFAULT_LIFECYCLE_LINKS: ReadonlyArray<{
   itemType: string
   lifecycleDefinitionId: string
+  /**
+   * The Driving definition each change type runs, for the one type whose
+   * instances a change type chooses. Creation starts the workflow, so a
+   * change type with no entry cannot be created; the seed maps every one.
+   */
+  lifecyclesByChangeType?: Record<string, string>
 }> = [
   { itemType: 'Part', lifecycleDefinitionId: LIFECYCLE_IDS.part },
   { itemType: 'Document', lifecycleDefinitionId: LIFECYCLE_IDS.document },
@@ -1351,7 +1389,17 @@ export const DEFAULT_LIFECYCLE_LINKS: ReadonlyArray<{
     lifecycleDefinitionId: LIFECYCLE_IDS.workInstruction,
   },
   { itemType: 'Issue', lifecycleDefinitionId: LIFECYCLE_IDS.issue },
-  { itemType: 'ChangeOrder', lifecycleDefinitionId: LIFECYCLE_IDS.changeOrder },
+  {
+    itemType: 'ChangeOrder',
+    lifecycleDefinitionId: LIFECYCLE_IDS.changeOrder,
+    lifecyclesByChangeType: {
+      ECO: LIFECYCLE_IDS.changeOrder,
+      ECN: LIFECYCLE_IDS.changeOrder,
+      Deviation: LIFECYCLE_IDS.changeOrder,
+      MCO: LIFECYCLE_IDS.changeOrder,
+      XCO: LIFECYCLE_IDS.flexibleChangeOrder,
+    },
+  },
   // Software shares the Part lifecycle: driven, ECO-controlled release
   { itemType: 'Software', lifecycleDefinitionId: LIFECYCLE_IDS.part },
   { itemType: 'Tool', lifecycleDefinitionId: LIFECYCLE_IDS.tool },
@@ -1388,7 +1436,7 @@ export async function seedDefaultLifecycles(db: DbInstance): Promise<void> {
   for (const lifecycle of DEFAULT_ITEM_LIFECYCLES) {
     const version = lifecycle.version
     await db
-      .insert(workflowDefinitions)
+      .insert(lifecycleDefinitions)
       .values({
         id: lifecycle.id,
         name: lifecycle.name,
@@ -1400,7 +1448,7 @@ export async function seedDefaultLifecycles(db: DbInstance): Promise<void> {
         drivers: [],
       })
       .onConflictDoUpdate({
-        target: workflowDefinitions.id,
+        target: lifecycleDefinitions.id,
         set: {
           name: lifecycle.name,
           version,
@@ -1409,8 +1457,8 @@ export async function seedDefaultLifecycles(db: DbInstance): Promise<void> {
           lifecycleType: lifecycle.lifecycleType,
         },
         // Upgrade-only: rows at this version or newer — including admin
-        // edits, which bump the version through WorkflowService — stay put
-        setWhere: sql`${workflowDefinitions.version} < ${version}`,
+        // edits, which bump the version through LifecycleDefinitionService — stay put
+        setWhere: sql`${lifecycleDefinitions.version} < ${version}`,
       })
   }
 
@@ -1419,9 +1467,36 @@ export async function seedDefaultLifecycles(db: DbInstance): Promise<void> {
       .insert(itemTypeConfigs)
       .values({
         itemType: link.itemType,
-        config: { lifecycleDefinitionId: link.lifecycleDefinitionId },
+        config: {
+          lifecycleDefinitionId: link.lifecycleDefinitionId,
+          ...(link.lifecyclesByChangeType && {
+            lifecyclesByChangeType: link.lifecyclesByChangeType,
+          }),
+        },
         modifiedBy: SYSTEM_USER_ID,
       })
       .onConflictDoNothing()
+
+    // A row from before the mapping shipped keeps everything it holds and
+    // gains the mapping. Creation starts the workflow now, so a database
+    // whose ChangeOrder row lacks one could not create a change order at all.
+    if (link.lifecyclesByChangeType) {
+      await db
+        .update(itemTypeConfigs)
+        .set({
+          config: sql`${itemTypeConfigs.config} || ${JSON.stringify({
+            lifecyclesByChangeType: link.lifecyclesByChangeType,
+          })}::jsonb`,
+        })
+        .where(
+          and(
+            eq(itemTypeConfigs.itemType, link.itemType),
+            // Under either spelling: a row from before migration 0005 that
+            // carries the old key already has its mapping.
+            sql`NOT (${itemTypeConfigs.config} ? 'lifecyclesByChangeType')`,
+            sql`NOT (${itemTypeConfigs.config} ? 'workflowsByChangeType')`,
+          ),
+        )
+    }
   }
 }

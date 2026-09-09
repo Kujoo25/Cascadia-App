@@ -30,6 +30,7 @@ import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { config as loadEnv } from 'dotenv'
 import { resolveApp } from './edition.mjs'
+import { reconcileIndexPredicates } from './reconcile-index-predicates.mjs'
 
 // drizzle-kit loads `.env` from its *working directory*, and this script runs
 // it from the app directory (see above). There is no `.env` there — the only
@@ -50,12 +51,29 @@ if (args.length === 0) {
 
 const appDir = resolve(process.cwd(), 'apps', resolveApp())
 
-try {
+function runDrizzleKit() {
   execFileSync(
     'npx',
     ['drizzle-kit', ...args, '--config', 'drizzle.config.ts'],
     { cwd: appDir, stdio: 'inherit', shell: process.platform === 'win32' },
   )
+}
+
+try {
+  runDrizzleKit()
+
+  // Push is the only command that diffs against a live database, and the one
+  // thing it does not diff is an index's WHERE predicate — see
+  // reconcile-index-predicates.mjs for what that costs. Migrations replay
+  // explicit DDL and need none of this.
+  if (args[0] === 'push' && process.env.DATABASE_URL) {
+    await reconcileIndexPredicates({
+      databaseUrl: process.env.DATABASE_URL,
+      appDir,
+      push: runDrizzleKit,
+    })
+  }
 } catch (error) {
+  if (error.status === undefined) console.error(error.message)
   process.exit(error.status ?? 1)
 }

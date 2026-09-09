@@ -1,6 +1,6 @@
 # Change Management: ECO-as-Branch
 
-Cascadia's change management system is modeled after Git's branching model. Every Engineering Change Order (ECO) creates an isolated branch where engineers make changes to items without affecting the released baseline on `main`. When the ECO is approved, the branch is merged back, revision letters are assigned, and items transition to their released states. This document covers the full system from schema to service layer.
+Cascadia's change management system is modeled after Git's branching model. Every change order — ECO, ECN, MCO or Deviation by change type — creates an isolated branch where engineers make changes to items without affecting the released baseline on `main`. When the change order is approved, the branch is merged back, revision letters are assigned, and items transition to their released states. This document covers the full system from schema to service layer.
 
 ---
 
@@ -8,15 +8,15 @@ Cascadia's change management system is modeled after Git's branching model. Ever
 
 1. [Overview](#overview)
 2. [Change Order Types](#change-order-types)
-3. [ECO Workflow](#eco-workflow)
+3. [Change-Order Lifecycle](#change-order-lifecycle)
 4. [Change Actions](#change-actions)
-5. [Creating an ECO](#creating-an-eco)
+5. [Creating a Change Order](#creating-a-change-order)
 6. [Adding Affected Items](#adding-affected-items)
 7. [Making Changes](#making-changes)
 8. [Impact Analysis](#impact-analysis)
 9. [Approval and Release](#approval-and-release)
 10. [Conflict Detection](#conflict-detection)
-11. [ECO Cancellation](#eco-cancellation)
+11. [Change-Order Cancellation](#change-order-cancellation)
 12. [API Reference](#api-reference)
 13. [Key Files](#key-files)
 
@@ -24,30 +24,30 @@ Cascadia's change management system is modeled after Git's branching model. Ever
 
 ## Overview
 
-Traditional PLM systems treat change management as a metadata workflow: you fill out a form, someone clicks "Approve," and item states update in place. Cascadia takes a fundamentally different approach inspired by version control.
+Traditional PLM systems treat change management as a metadata process: you fill out a form, someone clicks "Approve," and item states update in place. Cascadia takes a fundamentally different approach inspired by version control. (Coming from Aras or Windchill? There is no separate workflow object here — a change order runs an instance of a lifecycle definition; the [lifecycle engine guide](./workflow-engine.md#coming-from-aras-or-windchill) explains the unification.)
 
 **ECO-as-Branch** means:
 
-- Each ECO gets one or more isolated branches (one per affected design).
+- Each change order gets one or more isolated branches (one per affected design).
 - Engineers edit working copies of items on the branch, not the released originals.
-- The released baseline on `main` is never touched until the ECO merges.
-- Revision letters (A, B, C...) are assigned only at merge time, preventing collisions between parallel ECOs.
+- The released baseline on `main` is never touched until the change order merges.
+- Revision letters (A, B, C...) are assigned only at merge time, preventing collisions between parallel change orders.
 - After merge, the branch is archived for audit.
 
-This gives you concurrent engineering by default. Two ECOs can modify different items in the same design simultaneously. Conflict detection catches the case where two ECOs touch the same item and the same field.
+This gives you concurrent engineering by default. Two change orders can modify different items in the same design simultaneously. Conflict detection catches the case where two change orders touch the same item and the same field.
 
 ### Core Data Tables
 
-| Table                         | Purpose                                                              |
-| ----------------------------- | -------------------------------------------------------------------- |
-| `change_orders`               | ECO-specific fields (change type, priority, reason, timestamps)      |
-| `change_order_affected_items` | Items included in the ECO with their change action                   |
-| `change_order_designs`        | Links an ECO to each design it affects, with branch and merge status |
-| `change_order_impacted_items` | Items discovered by impact analysis (not directly changed)           |
-| `change_order_risks`          | Risks identified during impact assessment                            |
-| `change_order_impact_reports` | Stored impact analysis reports                                       |
-| `branches`                    | ECO branches (`branchType = 'eco'`) forked from main                 |
-| `branch_items`                | Per-branch item overrides (working copies, change tracking)          |
+| Table                         | Purpose                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------- |
+| `change_orders`               | change-order-specific fields (change type, priority, reason, timestamps)     |
+| `change_order_affected_items` | Items included in the change order with their change action                  |
+| `change_order_designs`        | Links a change order to each design it affects, with branch and merge status |
+| `change_order_impacted_items` | Items discovered by impact analysis (not directly changed)                   |
+| `change_order_risks`          | Risks identified during impact assessment                                    |
+| `change_order_impact_reports` | Stored impact analysis reports                                               |
+| `branches`                    | change-order branches (`branchType = 'eco'`) forked from main                |
+| `branch_items`                | Per-branch item overrides (working copies, change tracking)                  |
 
 Schema definitions: `packages/core/src/lib/db/schema/items.ts` (lines 118-275).
 
@@ -61,10 +61,10 @@ Cascadia supports four change order types, defined in `packages/core/src/lib/ite
 | ----------- | -------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `ECO`       | Engineering Change Order   | Standard change to released items. Creates branch, requires approval, merges with revision assignment. |
 | `ECN`       | Engineering Change Notice  | Notification of a change. Lighter process, same underlying mechanics.                                  |
-| `MCO`       | Manufacturing Change Order | Manufacturing-specific change. Same branch workflow, different approval routing.                       |
+| `MCO`       | Manufacturing Change Order | Manufacturing-specific change. Same branch mechanics, different approval routing.                      |
 | `Deviation` | Deviation                  | Temporary departure from released configuration. May not assign new revisions.                         |
 
-All four types use the same `ChangeOrderService`, `ChangeOrderMergeService`, and branch infrastructure. The difference is in workflow routing: `ChangeOrderService.autoStartWorkflow()` looks up the workflow definition configured for each `changeType` in the ChangeOrder's `RuntimeItemTypeConfig`.
+All four types use the same `ChangeOrderService`, `ChangeOrderMergeService`, and branch infrastructure. The difference is in lifecycle routing: `ChangeOrderService.autoStartWorkflow()` looks up the lifecycle definition configured for each `changeType` in the ChangeOrder's `RuntimeItemTypeConfig`.
 
 ```typescript
 // packages/core/src/lib/items/services/ChangeOrderService.ts
@@ -74,18 +74,18 @@ static async autoStartWorkflow(
   userId: string,
 ) {
   const config = ItemTypeRegistry.getRuntimeConfig('ChangeOrder')
-  const workflowId = config.workflowsByChangeType[changeType]
+  const workflowId = config.lifecyclesByChangeType[changeType]
   return this.startWorkflow(changeOrderId, workflowId, userId)
 }
 ```
 
-Each type can map to a different workflow definition (or share one). Administrators configure this in Admin > Item Types > ChangeOrder.
+Each type can map to a different lifecycle definition (or share one). Administrators configure this in Admin > Item Types > ChangeOrder.
 
 ---
 
-## ECO Workflow
+## Change-Order Lifecycle
 
-The default ECO workflow has four states:
+The shipped `Change Order - Standard` lifecycle has four states:
 
 ```
                 Submit for Review          Approve
@@ -104,44 +104,44 @@ The default ECO workflow has four states:
 
 ### State Definitions
 
-| State       | `isFinal` | `finalKind` | Description                                                                                                  |
-| ----------- | --------- | ----------- | ------------------------------------------------------------------------------------------------------------ |
-| `Draft`     | No        | —           | ECO is being prepared. Affected items can be added/removed. Items can be checked out and edited.             |
-| `InReview`  | No        | —           | ECO is under review. Scope is locked (no new affected items). Editing continues on existing working copies.  |
-| `Approved`  | Yes       | `release`   | ECO is approved. Triggers `close()` which merges branches to main, assigns revisions, and archives branches. |
-| `Cancelled` | Yes       | `cancel`    | ECO is abandoned. Branches are archived unmerged; no revisions are consumed.                                 |
+| State       | `isFinal` | `finalKind` | Description                                                                                                               |
+| ----------- | --------- | ----------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `Draft`     | No        | —           | The change order is being prepared. Affected items can be added/removed. Items can be checked out and edited.             |
+| `InReview`  | No        | —           | The change order is under review. Scope is locked (no new affected items). Editing continues on existing working copies.  |
+| `Approved`  | Yes       | `release`   | The change order is approved. Triggers `close()` which merges branches to main, assigns revisions, and archives branches. |
+| `Cancelled` | Yes       | `cancel`    | The change order is abandoned. Branches are archived unmerged; no revisions are consumed.                                 |
 
-`Return to Draft` is rework: it sends the ECO back to the initial state and reopens its scope,
+`Return to Draft` is rework: it sends the change order back to the initial state and reopens its scope,
 so the items the reviewer asked for can actually be added.
 
 ### Scope Locking
 
-When an ECO leaves the Draft state (transitions to InReview), the workflow instance's `scopeLocked` flag is set to `true`. This prevents:
+When a change order leaves the Draft state (transitions to InReview), the lifecycle instance's `scopeLocked` flag is set to `true`. This prevents:
 
 - Adding new affected items (`ChangeOrderService.addAffectedItem()` checks `scopeLocked`)
 - Removing affected items (`ChangeOrderService.removeAffectedItem()` checks `scopeLocked`)
-- Checking out new items to the ECO (`ChangeOrderService.checkoutItemToEco()` checks `scopeLocked`)
+- Checking out new items to the change order (`ChangeOrderService.checkoutItem()` checks `scopeLocked`)
 - Adding new design associations
-- Bringing a **new** item onto the ECO's branch by any route — the plain checkout,
+- Bringing a **new** item onto the change order's branch by any route — the plain checkout,
   create-on-branch and delete-on-branch paths (`POST /api/v1/items/:id/checkout`, batch
   checkout, the AI tools) check the owning change order's scope too. Without that, content
-  could be added to an ECO already in review and would release without ever appearing in
+  could be added to a change order already in review and would release without ever appearing in
   the affected items list. Deleting counts: a delete of a master the branch does not track
   yet mints branch content for it, which is new scope like any other.
 
 Existing working copies can still be edited while scope is locked. This separation ensures reviewers evaluate a fixed scope while engineers can continue refining the details — the lock freezes _what_ the change covers, not the work on it.
 
-**Rework reopens scope.** A transition back into the workflow's initial state clears
-`scopeLocked`. A workflow that can return an ECO to Draft is asking for its scope to be
+**Rework reopens scope.** A transition back into the lifecycle's initial state clears
+`scopeLocked`. A lifecycle that can return a change order to Draft is asking for its scope to be
 corrected there, so leaving the lock set made that transition a trap.
 
-### Flexible Workflow
+### Flexible Lifecycle
 
-Cascadia also ships a "Dynamic Change Order" workflow (`workflowType: 'flexible'`) with just two states: Start and Complete. Users can add custom review steps per-instance at runtime, tailoring the process to each change order's complexity.
+Cascadia also ships an "XCO - Flexible Change Order" lifecycle (`workflowType: 'flexible'`) with just two states: Start and Complete. Users can add custom review steps per-instance at runtime, tailoring the process to each change order's complexity.
 
-### Workflow Transition Endpoint
+### Transition Endpoint
 
-All ECO state changes go through a single canonical endpoint:
+All change-order state changes go through one canonical endpoint on the lifecycle instance:
 
 ```
 POST /api/v1/change-orders/:id/workflow/transition
@@ -150,13 +150,13 @@ Body: { toStateId: "Approved", comments: "LGTM" }
 
 When the target state has `isFinal: true`, the endpoint:
 
-1. Executes the workflow transition (validates guards, records history, fires lifecycle effects)
+1. Executes the transition (validates guards, records history)
 2. Calls `ChangeOrderService.close()` which triggers `ChangeOrderMergeService.merge()`
 3. Returns the merge result including revisions assigned
 
 There are no separate `/submit`, `/approve`, `/reject` endpoints. Everything flows through the transition endpoint.
 
-**Advancing an ECO requires reach to every design it links.** Reading a change
+**Advancing a change order requires reach to every design it links.** Reading a change
 order needs reach to only one of them — the rest is redacted — but submitting,
 releasing or cancelling one needs all of them, because a release merges every
 linked branch and stamps permanent revisions across all of them and a cancel
@@ -170,7 +170,7 @@ for the full three-tier rule.
 
 ## Change Actions
 
-Change actions describe what the ECO intends to do to each affected item. They are defined in `packages/core/src/lib/items/types/change-order.ts` and their state mappings live in lifecycle definitions (`packages/core/src/lib/types/lifecycle.ts`).
+Change actions describe what the change order intends to do to each affected item. They are defined in `packages/core/src/lib/items/types/change-order.ts` and their state mappings live in lifecycle definitions (`packages/core/src/lib/types/lifecycle.ts`).
 
 ### `release`
 
@@ -185,11 +185,11 @@ Change actions describe what the ECO intends to do to each affected item. They a
 **Purpose**: Create a new revision of an already-released item.
 
 - Validates: Item must be in `Released` state.
-- At add-time: Creates a working copy on the ECO branch with a placeholder revision (`-{branchId8}`). The original stays on main unchanged.
+- At add-time: Creates a working copy on the change-order branch with a placeholder revision (`-{branchId8}`). The original stays on main unchanged.
 - At merge: Marks old revision as `Superseded` (`isCurrent = false`), assigns next revision letter (A -> B, B -> C), sets working copy to `Released` and `isCurrent = true`.
 - Use case: Changing the weight of a released part, updating a drawing.
 
-The placeholder revision format (e.g., `-abc12345`) allows multiple ECOs to have working copies of the same item simultaneously without violating the unique constraint on `(item_number, revision)`.
+The placeholder revision format (e.g., `-abc12345`) allows multiple change orders to have working copies of the same item simultaneously without violating the unique constraint on `(item_number, revision)`.
 
 ### `obsolete`
 
@@ -251,38 +251,38 @@ const partLifecycle: ChangeActionMappings = {
 
 ---
 
-## Creating an ECO
+## Creating a Change Order
 
-ECO creation is a two-phase process: first create the ChangeOrder item, then add affected items (which triggers branch creation).
+Change-order creation is a two-phase process: first create the ChangeOrder item — with its designs and its running lifecycle instance, as one step — then add affected items.
 
 ### Step 1: Create the ChangeOrder Item
 
-A ChangeOrder is an item type like Part or Document. It is created via `ItemService.create()` with `itemType: 'ChangeOrder'` and has additional fields in the `change_orders` extension table:
+A ChangeOrder is an item type like Part or Document. It is created through `ChangeOrderService.create()`, the one door, against one or more designs: creation links each design (creating its branch) and starts the lifecycle instance, and if any of that fails the change order is removed and the error raised. A change order never exists without its designs or its lifecycle instance. It has additional fields in the `change_orders` extension table:
 
 | Field               | Type                                   | Purpose                                   |
 | ------------------- | -------------------------------------- | ----------------------------------------- |
-| `changeType`        | `ECO` / `ECN` / `Deviation` / `MCO`    | Determines workflow routing               |
+| `changeType`        | `ECO` / `ECN` / `Deviation` / `MCO`    | Determines lifecycle routing              |
 | `priority`          | `low` / `medium` / `high` / `critical` | Priority level                            |
 | `reasonForChange`   | text                                   | Why the change is needed                  |
 | `impactDescription` | text                                   | Expected impact                           |
 | `isBaseline`        | boolean                                | Whether to create a design tag on release |
 | `baselineName`      | string                                 | Name for the baseline tag                 |
 
-### Step 2: Auto-Start Workflow
+### Step 2: Lifecycle Instance Start (part of creation)
 
-After creation, `ChangeOrderService.autoStartWorkflow()` is called. It looks up the workflow definition for the given `changeType` from the ChangeOrder's runtime configuration and starts a workflow instance. The ECO starts in `Draft` state.
+`ChangeOrderService.create()` calls `autoStartWorkflow()`, which looks up the lifecycle definition for the given `changeType` from the ChangeOrder's runtime configuration and starts a lifecycle instance; the change order's own `state` is stamped from that instance's initial state in the same transaction. A change type with no lifecycle configured is a creation error — reported as one — not a change order with no instance. The manual-start endpoint (`POST /api/v1/change-orders/:id/workflow`) exists to repair a change order that lost its instance, and accepts only a Driving definition.
 
 ### Step 3: Branch Creation (Lazy)
 
-Branches are **not** created when the ECO is created. They are created lazily when the first affected item is added that belongs to a design. This is handled by `ChangeOrderService.ensureDesignAssociation()`:
+Branches are **not** created when the change order is created. They are created lazily when the first affected item is added that belongs to a design. This is handled by `ChangeOrderService.ensureDesignAssociation()`:
 
-1. Checks if a `change_order_designs` record exists for this ECO + design pair.
-2. If not, calls `BranchService.getOrCreateEcoBranch(designId, changeOrderId, userId)`.
-3. `getOrCreateEcoBranch` creates a branch named `eco/{ECO-number}` forked from main's HEAD.
+1. Checks if a `change_order_designs` record exists for this change order + design pair.
+2. If not, calls `BranchService.getOrCreateChangeOrderBranch(designId, changeOrderId, userId)`.
+3. `getOrCreateChangeOrderBranch` creates a branch named `eco/{ECO-number}` forked from main's HEAD.
 4. Creates an initial "ChangeOrder created" commit on the branch.
-5. Inserts the `change_order_designs` record linking the ECO to the design with the new branch ID.
+5. Inserts the `change_order_designs` record linking the change order to the design with the new branch ID.
 
-If the ECO affects items across multiple designs, a separate branch is created for each design.
+If the change order affects items across multiple designs, a separate branch is created for each design.
 
 ```
 After ECO creation + first affected item:
@@ -298,7 +298,7 @@ Design "Motor Assembly"
 
 ## Adding Affected Items
 
-Adding an affected item is the core operation that connects an ECO to the items it will change. This is handled by `ChangeOrderService.addAffectedItem()`.
+Adding an affected item is the core operation that connects a change order to the items it will change. This is handled by `ChangeOrderService.addAffectedItem()`.
 
 ### Flow
 
@@ -308,11 +308,11 @@ such fields, and `LifecycleService.resolveActionTarget()` resolves both from the
 item's lifecycle. `GET`-equivalent preview of the same resolution is available at
 `POST /:id/affected-items/preview`, which is what the intake dialogs render.
 
-1. **Scope lock check**: If the workflow instance has `scopeLocked = true`, the operation is rejected.
+1. **Scope lock check**: If the lifecycle instance has `scopeLocked = true`, the operation is rejected.
 
 2. **Lifecycle validation**: `LifecycleService.canApplyAction()` validates the change action is valid for the item's current state (e.g., cannot `release` an already-Released item).
 
-3. **Design association**: If the item belongs to a design, `ensureDesignAssociation()` creates the ECO branch (or reuses an existing one).
+3. **Design association**: If the item belongs to a design, `ensureDesignAssociation()` creates the change-order branch (or reuses an existing one).
 
 4. **Cross-design association**: `associateRelatedDesigns()` finds all other designs that contain usage copies of the same definition item and creates `change_order_designs` records for them. This ensures cross-design impact is visible.
 
@@ -338,11 +338,11 @@ item's lifecycle. `GET`-equivalent preview of the same resolution is available a
 
 ### Batch Operations
 
-`addAffectedItemsBatch()` adds several items with deduplication — items already present in the ECO are skipped (idempotent). An item may appear at most once per change order; adding the same item twice is rejected, since two rows for one item (say `revise` and `obsolete`) would each validate on their own and then be applied in unspecified order at merge.
+`addAffectedItemsBatch()` adds several items with deduplication — items already present in the change order are skipped (idempotent). An item may appear at most once per change order; adding the same item twice is rejected, since two rows for one item (say `revise` and `obsolete`) would each validate on their own and then be applied in unspecified order at merge.
 
 > **Not atomic, by design.** Each addition commits independently — a mid-batch failure leaves
 > the earlier ones in place. This is safe because the loop is idempotent: items already on the
-> ECO are skipped, so re-running the batch completes the remainder without duplicating rows.
+> change order are skipped, so re-running the batch completes the remainder without duplicating rows.
 > (An earlier wrapping `db.transaction` was decorative — the calls inside ran on the global
 > `db` handle — and was removed rather than made real.)
 
@@ -350,7 +350,7 @@ item's lifecycle. `GET`-equivalent preview of the same resolution is available a
 
 ## Making Changes
 
-Once items are on an ECO branch, engineers edit them through the checkout/save/checkin cycle.
+Once items are on an change-order branch, engineers edit them through the checkout/save/checkin cycle.
 
 ### Checkout
 
@@ -492,7 +492,7 @@ Key properties:
 
 1. If the affected item is a usage copy (`usageOf` is set), the definition is the `usageOf` target.
 2. If the affected item is a definition (no `usageOf`), look for all items with `usageOf = item.id`.
-3. Group impacted items by their design, excluding the ECO's own designs.
+3. Group impacted items by their design, excluding the change order's own designs.
 
 The result includes relationship types: `bom_where_used`, `definition_instance`, `definition_source`, `usage_cousin`, `cross_design_ref`.
 
@@ -511,7 +511,7 @@ The where-used results are deduplicated by `masterId:depth`. When the same logic
 | Released items affected    | `quality`      | varies   |
 | Cross-design impacts found | `cross-design` | varies   |
 
-Critical risks with `requiresAcknowledgement = true` must be explicitly acknowledged before the ECO can be approved (`ChangeOrderService.approve()` checks for unacknowledged critical risks).
+Critical risks with `requiresAcknowledgement = true` must be explicitly acknowledged before the change order can be released (`ChangeOrderService.executeWorkflowTransition()` refuses a releasing transition while one is unacknowledged).
 
 ### Stored Results
 
@@ -527,7 +527,7 @@ The `change_orders` table is updated with `impactAssessmentStatus = 'completed'`
 
 ## Approval and Release
 
-When an ECO transitions to its final state (e.g., Approved), the transition endpoint triggers the release process.
+When a change order transitions to its final state (e.g., Approved), the transition endpoint triggers the release process.
 
 ### Pre-Release Checks
 
@@ -538,9 +538,9 @@ nothing to clean up. That claim is a 15-minute lease, not a permanent lock; see
 
 1. **Critical risk acknowledgement**: All risks with `severity = 'critical'` and `requiresAcknowledgement = true` must have `acknowledgedBy` set.
 
-2. **Blocking conflict check**: `ConflictDetectionService.detectConflictsForEco()` is called. If any conflicts have `severity = 'error'` — field conflicts, concurrent modification, or branch_not_found — the release is blocked with a `ValidationError` listing the conflicting items. Held checkouts are warnings: step 1 of the merge checks every item in automatically.
+2. **Blocking conflict check**: `ConflictDetectionService.detectConflictsForChangeOrder()` is called. If any conflicts have `severity = 'error'` — field conflicts, concurrent modification, or branch_not_found — the release is blocked with a `ValidationError` listing the conflicting items. Held checkouts are warnings: step 1 of the merge checks every item in automatically.
 
-Cancelling deliberately skips both: it merges nothing, and an ECO being abandoned _because_ of
+Cancelling deliberately skips both: it merges nothing, and a change order being abandoned _because_ of
 its conflicts must not be trapped by them.
 
 The merge then applies its own checks — the driver allow-list, scope reconciliation, and
@@ -554,7 +554,7 @@ in the transition dialog — show it before anyone approves, rather than at the 
 
 ### Release Flow
 
-After the workflow transition succeeds, `ChangeOrderService.close()` calls `ChangeOrderMergeService.merge()`:
+After the transition succeeds, `ChangeOrderService.close()` calls `ChangeOrderMergeService.merge()`:
 
 #### Branch Merge Path (designs with branches)
 
@@ -570,7 +570,12 @@ network call would extend the lock window for no benefit.
 
 A multi-design release is not one transaction across designs. Each design commits
 independently, and the `mergeStatus` guard makes a retry after a partial failure
-skip the designs that already landed.
+skip the designs that already landed. The affected-item pass that follows records
+its own completion the same way: it stamps `change_orders.implementedAt` inside
+its final transaction, and `merge()` returns early when it is set, so a retry
+after the lifecycle instance's own state write failed re-runs nothing — in particular not
+the branchless `revise` arm, which would otherwise base a second letter on the
+version the first pass created.
 
 For each `change_order_designs` record with a branch:
 
@@ -583,16 +588,16 @@ For each `change_order_designs` record with a branch:
    For each changed `branch_items` record:
    - **`added` items**: Creates a new released item version with the initial revision letter (e.g., `A`). Updates or creates the main branch's `branch_items` record. Marks the draft item as `isCurrent = false`.
 
-   - **`modified` items** (with working copy): If the working copy has a placeholder revision (starts with `-`), calculates the next revision from main's current version (not the base, since another ECO may have released a newer revision between branch creation and now). Updates the working copy to `Released` state with the final revision. Marks the old version on main as `Superseded`.
+   - **`modified` items** (with working copy): If the working copy has a placeholder revision (starts with `-`), calculates the next revision from main's current version (not the base, since another change order may have released a newer revision between branch creation and now). Updates the working copy to `Released` state with the final revision. Marks the old version on main as `Superseded`.
 
    - **`modified` items** (legacy, no working copy): Creates a new item version with the next revision letter. This is the fallback path for backward compatibility.
 
    - **`deleted` items**: Marks the item as `isCurrent = false` on main and sets state to `Obsolete`.
 
 4. **Create merge commit**: Records the merge on main with:
-   - `mergeParentId` pointing to the ECO branch HEAD (two-parent merge, like Git)
+   - `mergeParentId` pointing to the change-order branch HEAD (two-parent merge, like Git)
    - `revisionsAssigned`: JSONB map of `{ itemNumber: newRevision }`
-   - `changeOrderItemId` linking to the ECO
+   - `changeOrderItemId` linking to the change order
 
 5. **Update design tracking**: Sets `change_order_designs.mergeStatus = 'merged'`, records `mergedAt` and `mergeCommitId`.
 
@@ -607,14 +612,14 @@ If no branches were merged (either no branches exist or all were skipped), the s
 
 - For each affected item, applies the change action (`release`, `revise`, `obsolete`, `promote`) using `ItemService.update()` with `bypassBranchProtection: true`.
 - Creates release commits on the main branch.
-- Archives any associated ECO branches.
+- Archives any associated change-order branches.
 
 Like the branch merge, this pass is **one serializable transaction under
 `withSerializableRetry`**, and for the same reason: every action is a
 check-then-act — read the item's state and revision, decide from them, write
 both back — so at a weaker isolation level two change orders listing the same
 master each read the pre-release row and each act on it, minting one revision
-letter twice. A change order cannot race itself (the workflow claim CAS
+letter twice. A change order cannot race itself (the instance's claim CAS
 serializes repeat transitions of one instance); distinct change orders sharing
 a master is the exposure. Because a retry re-runs the whole pass, the count of
 revisions it assigned and the released-items map behind the release commits
@@ -641,7 +646,7 @@ which no retry of this pass can change.
 
 #### Scope reconciliation
 
-Before any branch merges, the release checks that every item changed on the ECO's branches
+Before any branch merges, the release checks that every item changed on the change order's branches
 appears in its affected items list, and refuses otherwise. The merge releases branch content
 while reviewers approve the affected items list, so without this the two could describe
 different changes. It is one-directional — affected items with no branch content are normal,
@@ -649,12 +654,19 @@ since `obsolete`, `promote` and `release` change state without touching a branch
 
 #### Baseline Tags
 
-If the ECO has `isBaseline = true` and a `baselineName`, a design tag is created on each affected design using `DesignService.createTag()` with `tagType: 'eco-release'`.
+If the change order has `isBaseline = true` and a `baselineName`, a design tag is created on each affected design using `DesignService.createTag()` with `tagType: 'eco-release'`.
 
 #### Post-Merge
 
-- ECO branches are archived (`BranchService.archiveBranch()`).
-- `change_orders.closedAt` is set.
+- change-order branches are archived (`BranchService.archiveBranch()`). Archived branches are
+  ignored by conflict detection: they are finished work, and walking one compared
+  its base against the very row the merge promoted onto main.
+- `change_orders.implementedAt` is set inside the affected-item pass — the record
+  that the release's work is done, which a retry reads.
+- `change_orders.closedAt` is set, once; a retry keeps the first value.
+- The lifecycle instance's final-state write follows, in one transaction with the history row
+  and the `approvedAt` milestone (see the lifecycle engine guide). If it fails, the
+  merge above stays committed and the same transition is retried to completion.
 
 ### Revision Assignment Rules
 
@@ -678,7 +690,7 @@ The revision scheme is configurable per lifecycle and per phase:
 
 ## Conflict Detection
 
-`ConflictDetectionService` in `packages/core/src/lib/services/ConflictDetectionService.ts` detects conflicts before an ECO can be approved.
+`ConflictDetectionService` in `packages/core/src/lib/services/ConflictDetectionService.ts` detects conflicts before a change order can be approved.
 
 ### Conflict Types
 
@@ -686,8 +698,8 @@ The revision scheme is configurable per lifecycle and per phase:
 | ------------------------- | --------- | -------------------------------------------------------------------------------------------------------- |
 | `checkout`                | `error`   | Item still checked out on the branch. Must be checked in before merge.                                   |
 | `concurrent_modification` | `warning` | Main changed this item after the branch was created, but different fields were modified. Suggest rebase. |
-| `field_conflict`          | `error`   | Same field modified differently on both the branch and main (or another ECO). Blocks approval.           |
-| `cross_eco`               | `warning` | Another active ECO is modifying the same item. Coordinate with that ECO's owner.                         |
+| `field_conflict`          | `error`   | Same field modified differently on both the branch and main (or another change order). Blocks approval.  |
+| `cross_eco`               | `warning` | Another active change order is modifying the same item. Coordinate with that change order's owner.       |
 | `no_changes`              | `info`    | No changes to merge. Branch is skipped during merge.                                                     |
 | `branch_not_found`        | `error`   | Invalid branch reference.                                                                                |
 
@@ -713,14 +725,14 @@ For each field (excluding metadata fields like `id`, `masterId`, `revision`, tim
 - If **both** changed the same field to **different** values: `field_conflict` (blocking).
 - If **both** changed the same field to the **same** value: no conflict.
 
-### Cross-ECO Conflict Detection
+### Cross-change-order Conflict Detection
 
-`detectCrossEcoConflicts()` finds other active ECOs (workflow not completed) that affect the same items:
+`detectCrossChangeOrderConflicts()` finds other active change orders (lifecycle instance not completed) that affect the same items:
 
-1. Gets all `branch_items` with `changeType != null` on this ECO's branches.
-2. Queries `change_order_affected_items` for other ECOs targeting the same `affectedItemMasterId`.
-3. If both ECOs have working copies, performs three-way field comparison.
-4. Field conflicts across ECOs are `severity: 'error'`. Simple co-modification is `severity: 'warning'`.
+1. Gets all `branch_items` with `changeType != null` on this change order's branches.
+2. Queries `change_order_affected_items` for other change orders targeting the same `affectedItemMasterId`.
+3. If both change orders have working copies, performs three-way field comparison.
+4. Field conflicts across change orders are `severity: 'error'`. Simple co-modification is `severity: 'warning'`.
 
 ### Resolution
 
@@ -730,16 +742,18 @@ For each field (excluding metadata fields like `id`, `masterId`, `revision`, tim
 
 Both operations use `REPEATABLE READ` transaction isolation to prevent phantom reads during conflict resolution.
 
+**From the release-conflicts dialog** (`POST /api/v1/change-orders/:id/resolve-conflicts`, `ChangeOrderService.resolveConflicts()`): the three choices map onto those operations rather than onto raw branch writes. **Keep ours** and **Keep theirs** are the rebase, with every conflicting field resolved to the branch's value or main's respectively and a per-field choice overriding the item-level one; changes made on one side only survive either way, and the item stays in scope and is released with main's changes underneath its own. **Skip item** removes the item from the change order — its scope row and its branch content — through `removeAffectedItem()`, so it is refused once the scope is locked like any other scope change; after submit, return the change order to its initial state first. Each item reports its own outcome (`207 Multi-Status` when some failed).
+
 ---
 
-## ECO Cancellation
+## Change-Order Cancellation
 
-ECO cancellation is handled through the workflow system. When an ECO transitions to a terminal/rejected state (or is abandoned), the associated branches are archived.
+Change-order cancellation is a lifecycle transition like any other. When a change order transitions to a final state whose kind is `cancel` (or is abandoned), the associated branches are archived.
 
 ### What Happens on Cancellation
 
-1. **Workflow transition**: The ECO transitions to a final state whose
-   `finalKind` is `'cancel'` (`Cancelled` in the shipped workflow). The
+1. **Transition**: The change order transitions to a final state whose
+   `finalKind` is `'cancel'` (`Cancelled` in the shipped lifecycle). The
    semantics come from `finalKind`, never from the state's name.
 
 2. **Branch archival**: `BranchService.archiveBranch()` sets `isArchived = true` and `archivedAt` on each associated branch. Archived branches:
@@ -747,9 +761,9 @@ ECO cancellation is handled through the workflow system. When an ECO transitions
    - Do not appear in branch selectors
    - Remain in the database for audit trail
 
-3. **Working copies**: Items created on the ECO branch (with `isCurrent = false` and placeholder revisions) remain in the database but are orphaned -- they are never merged to main and never become `isCurrent`. They serve as historical evidence of what was attempted.
+3. **Working copies**: Items created on the change-order branch (with `isCurrent = false` and placeholder revisions) remain in the database but are orphaned -- they are never merged to main and never become `isCurrent`. They serve as historical evidence of what was attempted.
 
-4. **No revision consumption**: Because revisions are only assigned at merge time, cancelling an ECO wastes no revision letters.
+4. **No revision consumption**: Because revisions are only assigned at merge time, cancelling a change order wastes no revision letters.
 
 5. **Checkout locks released**: The `autoCheckinBranchItems()` step during close releases any remaining checkout locks.
 
@@ -759,61 +773,61 @@ ECO cancellation is handled through the workflow system. When an ECO transitions
 
 ### Core Endpoints
 
-| Method | Path                                          | Purpose                               |
-| ------ | --------------------------------------------- | ------------------------------------- |
-| `GET`  | `/api/v1/change-orders/:id`                   | Get change order details              |
-| `GET`  | `/api/v1/change-orders/editable`              | List ECOs that can still accept items |
-| `GET`  | `/api/v1/change-orders/:id/affected-items`    | List affected items                   |
-| `POST` | `/api/v1/change-orders/:id/affected-items`    | Add affected item                     |
-| `GET`  | `/api/v1/change-orders/:id/designs`           | List associated designs and branches  |
-| `GET`  | `/api/v1/change-orders/:id/conflicts`         | Detect conflicts                      |
-| `POST` | `/api/v1/change-orders/:id/resolve-conflicts` | Resolve conflicts (rebase/pull)       |
-| `GET`  | `/api/v1/change-orders/:id/impact-assessment` | Run/get impact analysis               |
-| `GET`  | `/api/v1/change-orders/:id/risks`             | Get identified risks                  |
-| `GET`  | `/api/v1/change-orders/:id/release`           | Preview merge (dry run)               |
-| `GET`  | `/api/v1/change-orders/:id/summary`           | Get ECO summary                       |
+| Method | Path                                          | Purpose                                        |
+| ------ | --------------------------------------------- | ---------------------------------------------- |
+| `GET`  | `/api/v1/change-orders/:id`                   | Get change order details                       |
+| `GET`  | `/api/v1/change-orders/editable`              | List change orders that can still accept items |
+| `GET`  | `/api/v1/change-orders/:id/affected-items`    | List affected items                            |
+| `POST` | `/api/v1/change-orders/:id/affected-items`    | Add affected item                              |
+| `GET`  | `/api/v1/change-orders/:id/designs`           | List associated designs and branches           |
+| `GET`  | `/api/v1/change-orders/:id/conflicts`         | Detect conflicts                               |
+| `POST` | `/api/v1/change-orders/:id/resolve-conflicts` | Resolve conflicts (rebase/pull)                |
+| `GET`  | `/api/v1/change-orders/:id/impact-assessment` | Run/get impact analysis                        |
+| `GET`  | `/api/v1/change-orders/:id/risks`             | Get identified risks                           |
+| `GET`  | `/api/v1/change-orders/:id/release`           | Preview merge (dry run)                        |
+| `GET`  | `/api/v1/change-orders/:id/summary`           | Get change-order summary                       |
 
-### Workflow Endpoints
+### Lifecycle Instance Endpoints
 
-| Method | Path                                                     | Purpose                                      |
-| ------ | -------------------------------------------------------- | -------------------------------------------- |
-| `GET`  | `/api/v1/change-orders/:id/workflow`                     | Get workflow instance                        |
-| `GET`  | `/api/v1/change-orders/:id/workflow/transition`          | Get available transitions                    |
-| `POST` | `/api/v1/change-orders/:id/workflow/transition`          | Execute transition (submit, approve, reject) |
-| `GET`  | `/api/v1/change-orders/:id/workflow/history`             | Get transition history                       |
-| `GET`  | `/api/v1/change-orders/:id/workflow/validate-transition` | Validate a transition before executing       |
-| `GET`  | `/api/v1/change-orders/:id/workflow/structure`           | Get effective workflow structure             |
+| Method | Path                                                     | Purpose                                                   |
+| ------ | -------------------------------------------------------- | --------------------------------------------------------- |
+| `GET`  | `/api/v1/change-orders/:id/workflow`                     | Get lifecycle instance                                    |
+| `GET`  | `/api/v1/change-orders/:id/workflow/transition`          | Get available transitions                                 |
+| `POST` | `/api/v1/change-orders/:id/workflow/transition`          | Execute a transition (release or cancel on a final state) |
+| `GET`  | `/api/v1/change-orders/:id/workflow/history`             | Get transition history                                    |
+| `POST` | `/api/v1/change-orders/:id/workflow/validate-transition` | Validate a transition before executing                    |
+| `GET`  | `/api/v1/change-orders/:id/workflow/structure`           | Get effective instance structure                          |
 
 ### Branch and History Endpoints
 
-| Method | Path                                                    | Purpose                             |
-| ------ | ------------------------------------------------------- | ----------------------------------- |
-| `GET`  | `/api/v1/change-orders/:id/branch-history`              | Get commit history for ECO branches |
-| `GET`  | `/api/v1/change-orders/:id/branch-history/graph`        | Get visual graph data               |
-| `GET`  | `/api/v1/change-orders/:id/designs/:designId/structure` | Get design structure on ECO branch  |
-| `GET`  | `/api/v1/change-orders/:id/checkout`                    | Get checkout status                 |
-| `POST` | `/api/v1/change-orders/:id/checkout`                    | Checkout item to ECO branch         |
-| `GET`  | `/api/v1/change-orders/:id/bom-changes`                 | Get BOM changes on ECO branch       |
-| `GET`  | `/api/v1/change-orders/:id/items/:itemId/ancestors`     | Get ancestor chain for an item      |
+| Method | Path                                                    | Purpose                                      |
+| ------ | ------------------------------------------------------- | -------------------------------------------- |
+| `GET`  | `/api/v1/change-orders/:id/branch-history`              | Get commit history for change-order branches |
+| `GET`  | `/api/v1/change-orders/:id/branch-history/graph`        | Get visual graph data                        |
+| `GET`  | `/api/v1/change-orders/:id/designs/:designId/structure` | Get design structure on change-order branch  |
+| `GET`  | `/api/v1/change-orders/:id/checkout`                    | Get checkout status                          |
+| `POST` | `/api/v1/change-orders/:id/checkout`                    | Checkout item to change-order branch         |
+| `GET`  | `/api/v1/change-orders/:id/bom-changes`                 | Get BOM changes on change-order branch       |
+| `GET`  | `/api/v1/change-orders/:id/items/:itemId/ancestors`     | Get ancestor chain for an item               |
 
 ---
 
 ## Key Files
 
-| File                                                              | Purpose                                                                                        |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `packages/core/src/lib/items/services/ChangeOrderService.ts`      | Core ECO operations: add affected items, working copy creation, submit, approve, reject, close |
-| `packages/core/src/lib/services/ChangeOrderMergeService.ts`       | Branch merge and release: merge to main, revision assignment, BOM remapping                    |
-| `packages/core/src/lib/services/CheckoutService.ts`               | Item checkout, save changes, checkin, create/delete on branch                                  |
-| `packages/core/src/lib/services/ConflictDetectionService.ts`      | Three-way conflict detection, cross-ECO conflicts, rebase                                      |
-| `packages/core/src/lib/items/services/ImpactAssessmentService.ts` | Where-used traversal, cross-design impact, risk identification                                 |
-| `packages/core/src/lib/services/BranchService.ts`                 | Branch CRUD, ECO branch creation, lock, archive                                                |
-| `packages/core/src/lib/services/CommitService.ts`                 | Commit creation, merge commits, field change tracking                                          |
-| `packages/core/src/lib/services/VersionResolver.ts`               | Resolve items per-branch context                                                               |
-| `packages/core/src/lib/services/LifecycleService.ts`              | Change action validation, state transitions, revision schemes                                  |
-| `packages/core/src/lib/services/RevisionService.ts`               | Revision letter calculation (A->B, Z->AA, numeric, prefixed)                                   |
-| `packages/core/src/lib/items/types/change-order.ts`               | Type definitions: ChangeAction, ChangeOrderType, schemas                                       |
-| `packages/core/src/lib/types/lifecycle.ts`                        | Lifecycle types: ChangeActionMappings, RevisionScheme, phase config                            |
-| `packages/core/src/lib/db/schema/items.ts`                        | Schema: change_orders, change_order_affected_items, change_order_designs                       |
-| `packages/core/src/lib/db/schema/versioning.ts`                   | Schema: branches, branch_items, commits                                                        |
-| `packages/core/src/server/routes/change-orders.ts`                | Canonical transition endpoint                                                                  |
+| File                                                              | Purpose                                                                                                 |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `packages/core/src/lib/items/services/ChangeOrderService.ts`      | Core change-order operations: creation, affected items, working copies, scope gates, transitions, close |
+| `packages/core/src/lib/services/ChangeOrderMergeService.ts`       | Branch merge and release: merge to main, revision assignment, BOM remapping                             |
+| `packages/core/src/lib/services/CheckoutService.ts`               | Item checkout, save changes, checkin, create/delete on branch                                           |
+| `packages/core/src/lib/services/ConflictDetectionService.ts`      | Three-way conflict detection, cross-change-order conflicts, rebase                                      |
+| `packages/core/src/lib/items/services/ImpactAssessmentService.ts` | Where-used traversal, cross-design impact, risk identification                                          |
+| `packages/core/src/lib/services/BranchService.ts`                 | Branch CRUD, change-order branch creation, lock, archive                                                |
+| `packages/core/src/lib/services/CommitService.ts`                 | Commit creation, merge commits, field change tracking                                                   |
+| `packages/core/src/lib/services/VersionResolver.ts`               | Resolve items per-branch context                                                                        |
+| `packages/core/src/lib/services/LifecycleService.ts`              | Change action validation, state transitions, revision schemes                                           |
+| `packages/core/src/lib/services/RevisionService.ts`               | Revision letter calculation (A->B, Z->AA, numeric, prefixed)                                            |
+| `packages/core/src/lib/items/types/change-order.ts`               | Type definitions: ChangeAction, ChangeOrderType, schemas                                                |
+| `packages/core/src/lib/types/lifecycle.ts`                        | Lifecycle types: ChangeActionMappings, RevisionScheme, phase config                                     |
+| `packages/core/src/lib/db/schema/items.ts`                        | Schema: change_orders, change_order_affected_items, change_order_designs                                |
+| `packages/core/src/lib/db/schema/versioning.ts`                   | Schema: branches, branch_items, commits                                                                 |
+| `packages/core/src/server/routes/change-orders.ts`                | Canonical transition endpoint                                                                           |

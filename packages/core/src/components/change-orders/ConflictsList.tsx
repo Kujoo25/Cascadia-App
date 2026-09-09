@@ -136,7 +136,7 @@ function FieldConflictsTable({
 // Individual conflict card
 function ConflictCard({
   conflict,
-  ecoId,
+  ecoId: changeOrderId,
   onResolve,
 }: {
   conflict: EnrichedItemConflict
@@ -178,14 +178,17 @@ function ConflictCard({
   const handleMarkReviewed = async () => {
     setMarkingReviewed(true)
     try {
-      await apiFetch(`/api/v1/change-orders/${ecoId}/conflict-reviews`, {
-        method: 'POST',
-        body: JSON.stringify({
-          itemMasterId: conflict.itemMasterId,
-          conflictType: conflict.conflictType,
-          theirEcoId: conflict.theirEcoId || null,
-        }),
-      })
+      await apiFetch(
+        `/api/v1/change-orders/${changeOrderId}/conflict-reviews`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            itemMasterId: conflict.itemMasterId,
+            conflictType: conflict.conflictType,
+            theirEcoId: conflict.theirEcoId || null,
+          }),
+        },
+      )
       onResolve?.()
     } catch {
       // Failed silently
@@ -200,7 +203,7 @@ function ConflictCard({
     setMarkingReviewed(true)
     try {
       await apiFetch(
-        `/api/v1/change-orders/${ecoId}/conflict-reviews?reviewId=${conflict.review.id}`,
+        `/api/v1/change-orders/${changeOrderId}/conflict-reviews?reviewId=${conflict.review.id}`,
         {
           method: 'DELETE',
         },
@@ -438,8 +441,8 @@ function transformToMergeConflict(
 }
 
 export function ConflictsList({
-  ecoId,
-  ecoNumber,
+  ecoId: changeOrderId,
+  ecoNumber: changeOrderNumber,
   onResolve,
 }: ConflictsListProps) {
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -452,7 +455,7 @@ export function ConflictsList({
     isError,
     refetch: checkConflicts,
   } = useQuery(
-    changeOrderConflictsQuery<EnrichedConflictDetectionResult>(ecoId),
+    changeOrderConflictsQuery<EnrichedConflictDetectionResult>(changeOrderId),
   )
   const error = isError ? 'Failed to check for conflicts' : null
 
@@ -467,15 +470,19 @@ export function ConflictsList({
   ) => {
     setIsResolving(true)
     try {
-      await apiFetch(`/api/v1/change-orders/${ecoId}/resolve-conflicts`, {
-        method: 'POST',
-        body: JSON.stringify({
-          resolutions: resolutions.map((r) => ({
-            itemId: r.itemId,
-            resolution: r.resolution,
-          })),
-        }),
-      })
+      await apiFetch(
+        `/api/v1/change-orders/${changeOrderId}/resolve-conflicts`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            resolutions: resolutions.map((r) => ({
+              itemId: r.itemId,
+              resolution: r.resolution,
+              fieldResolutions: r.fieldResolutions,
+            })),
+          }),
+        },
+      )
       setDialogOpen(false)
       await handleResolve()
     } finally {
@@ -601,7 +608,7 @@ export function ConflictsList({
           <ConflictCard
             key={index}
             conflict={conflict}
-            ecoId={ecoId}
+            ecoId={changeOrderId}
             onResolve={handleResolve}
           />
         ))}
@@ -623,7 +630,7 @@ export function ConflictsList({
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         conflicts={blockingConflicts.map(transformToMergeConflict)}
-        changeOrderNumber={ecoNumber || 'this ECO'}
+        changeOrderNumber={changeOrderNumber || 'this change order'}
         onResolve={handleResolveConflicts}
         isResolving={isResolving}
       />

@@ -10,6 +10,7 @@
  * | ----------- | -------------------- | ------------------------------------ |
  * | `robot-arm` | `ROBOT-ARM`          | ~88 parts, BOM, 3D models            |
  * | `freecad`   | `PUC`, `USV`         | the whole PLM record — see the docs  |
+ * | `standard-library` | `STD-LIB`     | unreleased library components        |
  *
  * Both live in the same `Cascadia-PLM/Demo-Data` repository and ship in the
  * same demo image, so they are fetched together and seeded together.
@@ -25,7 +26,7 @@
  *   DEMO_SKIP_ECO    'true' skips the robot arm's Initial Release ECO
  *
  * Args:
- *   --only <robot-arm|freecad>   seed just that one
+ *   --only <robot-arm|freecad|standard-library>   seed just that one
  *
  * ## On failure
  *
@@ -39,6 +40,7 @@ import { describeConnection } from '../packages/core/src/lib/db/index.ts'
 import { DemoDataMissing } from './demo-seed-types.ts'
 import { seedRobotArm } from './seed-demo-robot-arm.ts'
 import { seedFreecadDemo } from './seed-freecad-demo.ts'
+import { seedLibrary } from './seed-demo-library.ts'
 import type { DatasetResult } from './demo-seed-types.ts'
 
 const DATASETS: Array<{
@@ -48,6 +50,11 @@ const DATASETS: Array<{
 }> = [
   { key: 'robot-arm', label: 'TDJ-25 robot arm', seed: seedRobotArm },
   { key: 'freecad', label: 'FreeCAD/KiCad (PUC, USV)', seed: seedFreecadDemo },
+  {
+    key: 'standard-library',
+    label: 'Standard Parts Library components',
+    seed: seedLibrary,
+  },
 ]
 
 const onlyIndex = process.argv.indexOf('--only')

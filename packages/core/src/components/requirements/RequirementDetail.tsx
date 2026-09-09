@@ -25,7 +25,7 @@ import { ItemHistoryTab } from '@/components/items/ItemHistoryTab'
 import { CheckoutDialog } from '@/components/items/CheckoutDialog'
 import { ImpactAnalysisDialog } from '@/components/impact'
 import { useVersionContext } from '@/lib/hooks/useVersionContext'
-import { useEditLock } from '@/lib/hooks/useEditLock'
+import { useEditLock, useItemEditContext } from '@/lib/hooks/useEditLock'
 import { WorkspaceContextBanner } from '@/components/workspaces/WorkspaceContextBanner'
 import {
   Badge,
@@ -209,9 +209,19 @@ export function RequirementDetail({
   const createBranchRequired =
     createDesignStatus?.protection.phase === 'post-release'
 
-  const { context, contextLabel, isEditable, setContext } = useVersionContext(
-    isCreateMode ? undefined : requirement.designId,
+  // Where the server says this item may be edited: the branch holding its
+  // edit lock, and whether main is protected for this item's TYPE (a design
+  // with released items protects main for everything in it, but a Free or
+  // Driving lifecycle stays editable there). Asked once and fed to both the
+  // version context — which decides whether main is editable at all — and the
+  // edit lock below, because neither answer is derivable from the item.
+  const editContext = useItemEditContext(
+    isCreateMode ? undefined : requirement.id,
   )
+  const { context, contextLabel, isEditable, setContext } = useVersionContext({
+    designId: isCreateMode ? undefined : requirement.designId,
+    isMainProtected: editContext?.isMainProtected ?? false,
+  })
 
   // The requirement as it stood at the selected version context. Viewing `main`
   // addresses nothing, so the query stays disabled and the caller's copy is
@@ -258,14 +268,13 @@ export function RequirementDetail({
   const needsCheckout =
     !isCreateMode && isReleasedLineage && context.type === 'main'
 
-  // The server-side edit lock behind the Edit button. Released-on-main goes
-  // through the CheckoutDialog (revise onto a branch) instead of a direct
-  // main-branch lock, so treat that case as "protected main" for the hook.
+  // The server-side edit lock behind the Edit button. The hook reads where the
+  // lock lives off `editContext`, so released-on-main resolves to no lock
+  // branch at all and the Edit button becomes Revise (the CheckoutDialog).
   const editLock = useEditLock({
     itemId: isCreateMode ? undefined : currentRequirement.id,
-    designId: isCreateMode ? undefined : requirement.designId,
     context,
-    isMainProtected: needsCheckout,
+    editContext,
   })
 
   const handleEdit = async () => {
@@ -355,14 +364,25 @@ export function RequirementDetail({
 
   // Get reason for disabled Edit button
   const getEditDisabledReason = (): string | undefined => {
+    // Ordered by what actually stops the click. Someone else's lock stops
+    // every path including Revise, so it is asked first. Then Revise: a
+    // released item on a protected main is not blocked at all, since the
+    // button opens the CheckoutDialog and revises onto a branch. What is left
+    // is the context itself.
+    if (editLock.lockedByOther) {
+      return `Checked out by ${editLock.lockHolderLabel}`
+    }
+    if (needsCheckout) {
+      return undefined
+    }
     if (!isEditable) {
       if (context.type === 'tag' || context.type === 'commit') {
         return 'Cannot edit historical versions'
       }
+      if (context.type === 'main' && editLock.isMainProtected) {
+        return 'This design has released items, so main is protected. Switch to an ECO or workspace branch to edit this item.'
+      }
       return 'Editing not available in this context'
-    }
-    if (editLock.lockedByOther) {
-      return `Checked out by ${editLock.lockHolderLabel}`
     }
     return undefined
   }
@@ -489,7 +509,10 @@ export function RequirementDetail({
                         <Button
                           variant="outline"
                           onClick={handleEdit}
-                          disabled={!isEditable || editLock.lockedByOther}
+                          disabled={
+                            (!isEditable && !needsCheckout) ||
+                            editLock.lockedByOther
+                          }
                         >
                           {needsCheckout ? (
                             <>
@@ -513,7 +536,9 @@ export function RequirementDetail({
                   <Button
                     variant="outline"
                     onClick={handleEdit}
-                    disabled={!isEditable || editLock.lockedByOther}
+                    disabled={
+                      (!isEditable && !needsCheckout) || editLock.lockedByOther
+                    }
                   >
                     {needsCheckout ? (
                       <>

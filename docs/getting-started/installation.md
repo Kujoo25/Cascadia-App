@@ -127,7 +127,7 @@ Seeding minimal database...
  Admin User (admin@cascadia.local / Cascadia)
  Standard Parts Library (Global)
  Default Lifecycles (Part, Document, Requirement, ChangeOrder)
- Flexible Workflow (Dynamic Change Order)
+ Flexible Workflow (XCO - Flexible Change Order)
  Issue Lifecycle (Free)
  Item Type Configs (with lifecycle assignments)
 

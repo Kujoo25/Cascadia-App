@@ -48,6 +48,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { sql } from 'drizzle-orm'
 import { db } from '../packages/core/src/lib/db/index.ts'
+import { clearDesignationOfNestedParts } from '../packages/core/src/lib/items/design-structure-designation.ts'
 import { generateStoragePath } from '../packages/core/src/lib/vault/utils/file-utils.ts'
 import { DemoDataMissing } from './demo-seed-types.ts'
 import type { DatasetResult } from './demo-seed-types.ts'
@@ -367,6 +368,21 @@ export async function seedFreecadDemo(): Promise<DatasetResult> {
     }
     if (manifest.sequences.length > 0) {
       console.log(`   advanced ${manifest.sequences.length} number sequences`)
+    }
+
+    // ---- Design-structure designations ---------------------------------------
+    //
+    // The bundle carries items.in_design_structure as the source database had
+    // it, and a bundle baked before nesting cleared the flag says every part
+    // is a top-level part. Apply the rule the application keeps: a part the
+    // BOM nests under a parent in its own design is not one.
+
+    const designIds = (tableRows.get('designs') ?? []).map((r) => String(r.id))
+    const cleared = await clearDesignationOfNestedParts({ designIds, tx })
+    if (cleared > 0) {
+      console.log(
+        `   cleared the top-level designation of ${cleared} nested parts`,
+      )
     }
   })
 

@@ -156,7 +156,7 @@ describe('branch-items error envelope', () => {
       changeType: 'added',
     })
 
-    const createEco = (): Promise<{ id: string }> =>
+    const createChangeOrder = (): Promise<{ id: string }> =>
       ItemService.create(
         'ChangeOrder',
         {
@@ -169,10 +169,10 @@ describe('branch-items error envelope', () => {
         } as never,
         admin.id,
       )
-    const eco = await createEco()
-    const { branch } = await BranchService.getOrCreateEcoBranch(
+    const changeOrder = await createChangeOrder()
+    const { branch } = await BranchService.getOrCreateChangeOrderBranch(
       designId,
-      eco.id,
+      changeOrder.id,
       admin.id,
     )
 

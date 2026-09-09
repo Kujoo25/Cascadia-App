@@ -19,12 +19,12 @@ import {
 } from '@/components/ui'
 import { getStateBadgeVariant } from '@/components/bom/helpers'
 import {
-  ITEM_STATE_OPTIONS,
   ITEM_TYPE_OPTIONS,
   getItemDetailPath,
   getItemTypeIcon,
   getItemTypeLabel,
 } from '@/lib/items/item-type-ui'
+import { useItemStateOptions } from '@/lib/hooks/useItemStateOptions'
 import { useServerDataGrid } from '@/lib/hooks/useServerDataGrid'
 import {
   designListQuery,
@@ -70,6 +70,9 @@ function SearchResultsPage() {
 
   const { data: programs = [] } = useQuery(programListQuery())
   const { data: designs = [] } = useQuery(designListQuery())
+  // From the lifecycle definitions, so the filter offers exactly the states
+  // an item can hold
+  const stateOptions = useItemStateOptions()
 
   const {
     items: results,
@@ -146,7 +149,7 @@ function SearchResultsPage() {
         accessorKey: 'state',
         enableFiltering: true,
         filterType: 'multiSelect',
-        filterOptions: ITEM_STATE_OPTIONS,
+        filterOptions: stateOptions,
         cell: ({ getValue }) => {
           const value = getValue() as string | null
           if (!value) return '-'
@@ -199,7 +202,7 @@ function SearchResultsPage() {
         },
       },
     ],
-    [programs, designs],
+    [programs, designs, stateOptions],
   )
 
   const term = searchParams.search?.trim()

@@ -238,3 +238,14 @@ describe('validateApiKeyPolicy', () => {
     ).toBeNull()
   })
 })
+
+describe('intersectPermissions reads the retired resource name', () => {
+  it('honours a key scoped to workflows as lifecycles', () => {
+    expect(
+      intersectPermissions(
+        { lifecycles: ['read', 'manage'] },
+        { workflows: ['read'] },
+      ),
+    ).toEqual({ lifecycles: ['read'] })
+  })
+})

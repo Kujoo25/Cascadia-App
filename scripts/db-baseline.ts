@@ -60,6 +60,12 @@
  * tree, so a future migration that this comparison could not distinguish fails
  * CI rather than being silently mis-stamped here.
  *
+ * With one deliberate exception: a migration that changes rows and nothing
+ * else. No reading of a schema can show whether such a migration has run, so
+ * the placement stops before it and says so, and `db:migrate` applies it —
+ * every migration of that kind is written, and checked, to be safe to apply
+ * to a database that already carries its effect.
+ *
  * Objects no snapshot mentions — a reporting table someone added by hand — are
  * reported and then ignored. They say nothing about which migration the
  * database is at, which is the only question being asked.
@@ -420,6 +426,34 @@ console.log(
   `Live schema matches ${satisfied[satisfied.length - 1]!.tag} ` +
     `(${satisfied.length} of ${migrations.length} migration(s) satisfied).`,
 )
+
+// A migration whose shape equals its predecessor's changed rows and nothing
+// else (the header's exception). `matched` is never one — the search above
+// takes the earliest match — so those that follow it stay pending, and those
+// inside the prefix are recorded on the strength of a later migration's
+// schema, which is the one way this stamp can overreach: a database brought
+// to that later schema by `db:push` never ran them.
+const rowsOnly = (index: number): boolean =>
+  index > 0 && sameShape(migrations[index]!.shape, migrations[index - 1]!.shape)
+for (let i = matched + 1; i < migrations.length && rowsOnly(i); i += 1) {
+  console.log(
+    `Note: ${migrations[i]!.tag} changes rows, not the schema, so nothing ` +
+      'here can tell whether it has run. It stays pending and `npm run ' +
+      'db:migrate` applies it; it is written to be applied to a database ' +
+      'that already carries its effect.',
+  )
+}
+const vouchedFor = satisfied.filter((_, i) => rowsOnly(i)).map((m) => m.tag)
+if (vouchedFor.length > 0) {
+  console.warn(
+    `Note: ${vouchedFor.join(', ')} change(s) rows, not the schema, and ` +
+      'will be recorded as applied because the schema of a later migration ' +
+      'is present. A database brought to that schema by `db:push` never ran ' +
+      'it: if that is this one, apply its SQL by hand before `db:migrate` — ' +
+      'it is written to be applied to a database that already carries its ' +
+      'effect.',
+  )
+}
 if (foreign.length > 0) {
   const tablesOnly = foreign.filter((item) => item.startsWith('table '))
   console.warn(

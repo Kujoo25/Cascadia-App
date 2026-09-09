@@ -362,7 +362,7 @@ with Phase 5 folded into the closing one. Deviations from the plan as written:
   as a private test workflow id; PhysicalPart took `…113`, WorkOrder `…114`.
 - **Free-lifecycle transitions:** the workflow-engine remediation (merged
   mid-flight) closed direct `state` writes through `ItemService.update`.
-  UI-driven transitions ride `LifecycleService.transitionFreeItem`; the
+  UI-driven transitions ride `LifecycleInstanceService.transitionFreeItem`; the
   consumption compare-and-set is an engine-level write in the same class as
   change-order release, documented in `WorkOrderMaterialService`, and the
   transition endpoint's state adoption reconciles it.

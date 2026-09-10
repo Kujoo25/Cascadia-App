@@ -8,7 +8,7 @@ Cascadia is an open-source, code-first Product Lifecycle Management (PLM) system
 
 **Key Philosophy**: Code-first configuration, TypeScript everywhere, enterprise-ready PostgreSQL backend, Git-style versioning for engineering data.
 
-The signature feature is "ECO-as-Branch" - each Engineering Change Order gets its own isolated branch for parallel development.
+The signature feature is "ECO-as-Branch" - each change order gets its own isolated branch for parallel development.
 
 **See [cascadia-feature-list.md](./cascadia-feature-list.md) for comprehensive feature documentation.**
 
@@ -68,7 +68,7 @@ packages/
     │   │   ├── db/        Drizzle schema & database utilities
     │   │   ├── items/     Item services (Parts, Documents, …)
     │   │   ├── services/  Core services (Branch, Checkout, Commit, …)
-    │   │   ├── workflows/ Workflow engine + approval registry
+    │   │   ├── lifecycles/ Lifecycle engine + approval registry
     │   │   ├── jobs/      Background job dispatch, definitions & worker
     │   │   ├── api/       apiHandler, response builders, route registry
     │   │   ├── ui/        Slot registry — named UI extension points
@@ -121,8 +121,9 @@ npm run db:baseline   # One-time stamp for pre-v0.5 push-created databases so db
 npm run db:studio     # Open Drizzle Studio GUI
 npm run db:seed       # Minimal seed (admin, roles, program, standard library)
 npm run db:seed:catalog  # Generic component catalog (fasteners, raw stock)
-npm run demo:fetch    # Fetch the demo dataset (required before db:seed:demo)
-npm run db:seed:demo  # Full TDJ-25 demo robot-arm dataset (~88 parts, BOM, CAD)
+npm run demo:fetch    # Fetch the demo datasets (required before seed:demo)
+npm run seed:demo     # All three demo datasets: TDJ-25 robot arm, FreeCAD/KiCad PUC cart + USV catamaran, and standard-library components
+npm run seed:demo -- --only robot-arm   # ...or just one of them (robot-arm | freecad | standard-library)
 
 # Database Reset (truncates all tables, then optionally reseeds)
 npm run db:reset              # Truncate all tables only (data gone, schema kept)
@@ -211,18 +212,18 @@ it is equally the mechanism any module — licensed or your own — plugs into.
 A module is a package that registers; it is never imported by core. The
 registries core provides:
 
-| Extend                   | Registry                                                                                 |
-| ------------------------ | ---------------------------------------------------------------------------------------- |
-| Approval voting (server) | `ApprovalRegistry` — `beforeVote` / `afterVote` / `buildExtras`                          |
-| ECO release (server)     | `ReleaseHookRegistry` — `afterRelease`, post-commit, warn-only                           |
-| Approval dialog (client) | `useApprovalFormSlots` — renders, gates submit, adds request fields                      |
-| Any other UI             | `registerSlot()` — core declares the named slots and their props                         |
-| API routes               | `registerRoutes(mount, path, app)` — mount points: `api-root`, `admin`, `parts`, `files` |
-| AI tools                 | `registerTool()`                                                                         |
-| Jobs                     | `JobTypeRegistry.register()` / `.registerHandler()`                                      |
-| Cache resources          | `registerResourceDependents()` + declaration merging on `ModuleResources`                |
-| Package catalog          | `registerPackage()`                                                                      |
-| Schema                   | `apps/*/src/modules.schema.ts` — a re-export, because drizzle-kit reads it statically    |
+| Extend                        | Registry                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------- |
+| Approval voting (server)      | `ApprovalRegistry` — `beforeVote` / `afterVote` / `buildExtras`                          |
+| Change-order release (server) | `ReleaseHookRegistry` — `afterRelease`, post-commit, warn-only                           |
+| Approval dialog (client)      | `useApprovalFormSlots` — renders, gates submit, adds request fields                      |
+| Any other UI                  | `registerSlot()` — core declares the named slots and their props                         |
+| API routes                    | `registerRoutes(mount, path, app)` — mount points: `api-root`, `admin`, `parts`, `files` |
+| AI tools                      | `registerTool()`                                                                         |
+| Jobs                          | `JobTypeRegistry.register()` / `.registerHandler()`                                      |
+| Cache resources               | `registerResourceDependents()` + declaration merging on `ModuleResources`                |
+| Package catalog               | `registerPackage()`                                                                      |
+| Schema                        | `apps/*/src/modules.schema.ts` — a re-export, because drizzle-kit reads it statically    |
 
 **Registration happens in a composition root**, never in core:
 `apps/*/src/modules.{server,client,schema}.ts`. Order is load-bearing — route
@@ -273,7 +274,7 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 
 - Modifying service layer code (`packages/core/src/lib/services/`, `packages/core/src/lib/items/services/`)
 - Working with versioning/branching logic
-- Changing ECO/workflow behavior
+- Changing change-order or lifecycle behavior
 - Adding or modifying item types
 - Touching database schema
 
@@ -294,14 +295,15 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 | Versioning, branches, commits           | `./docs/features/versioning.md`                |
 | `packages/core/src/lib/db/schema/`      | `./docs/development/database-patterns.md`      |
 | Database queries, Drizzle ORM           | `./docs/development/database-patterns.md`      |
-| Lifecycles, workflows, change actions   | `./docs/features/workflow-engine.md`           |
+| Lifecycles, instances, change actions   | `./docs/features/workflow-engine.md`           |
 | Item type changes                       | `./docs/development/adding-item-types.md`      |
-| ECO/Change Order logic                  | `./docs/features/change-management.md`         |
+| Change-order logic                      | `./docs/features/change-management.md`         |
 | File vault                              | `./docs/features/file-vault.md`                |
 | Auth/permissions                        | `./docs/admin/access-control.md`               |
 | UI components / forms                   | `./docs/development/ui-components.md`          |
 | Testing patterns                        | `./docs/development/testing.md`                |
 | Background jobs                         | `./docs/development/adding-background-jobs.md` |
+| Demo data and seeding                   | `./docs/development/demo-datasets.md`          |
 
 ## Architecture Quick Reference
 
@@ -312,8 +314,8 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 | I need to...                                              | Use                                              |
 | --------------------------------------------------------- | ------------------------------------------------ |
 | CRUD any item                                             | `ItemService`                                    |
-| Manage ECO affected items                                 | `ChangeOrderService`                             |
-| Release an approved ECO                                   | `ChangeOrderMergeService.merge()`                |
+| Manage change-order affected items                        | `ChangeOrderService`                             |
+| Release an approved change order                          | `ChangeOrderMergeService.merge()`                |
 | Checkout item for editing                                 | `CheckoutService.checkout()`                     |
 | Get item at a version/commit/tag                          | `VersionResolver.getItemAtContext()`             |
 | Create/manage branches                                    | `BranchService`                                  |
@@ -324,7 +326,7 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 | Manage lifecycle transitions                              | `LifecycleService`                               |
 | Derive state predicates (released family, initial, final) | `LifecycleService`                               |
 | Detect merge conflicts                                    | `ConflictDetectionService`                       |
-| Assess ECO impact on items                                | `ImpactAssessmentService`                        |
+| Assess change-order impact on items                       | `ImpactAssessmentService`                        |
 | AI chatbot conversations                                  | `SessionService` from `@/lib/ai`                 |
 | Submit background jobs                                    | `JobService.submit()`                            |
 | Register job types                                        | `JobTypeRegistry.register()`                     |
@@ -337,9 +339,9 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 
 **Two-table pattern**: Base fields in `items` table, type-specific fields in `parts`/`documents`/`change_orders`/etc. `ItemService` handles both automatically.
 
-**Branch protection**: Cannot modify items on `main` directly. All changes flow through ECO branches, merged on release.
+**Branch protection**: Cannot modify items on `main` directly. All changes flow through change-order branches, merged on release.
 
-**Revision assignment**: Revision letters (A, B, C...) are assigned only when merging ECO branch to main, not during work.
+**Revision assignment**: Revision letters (A, B, C...) are assigned only when merging a change-order branch to main, not during work.
 
 **Lifecycle states are configuration, never literals**: no state name appears in application logic. A state carries `isInitial`, `isFinal` (+ `finalKind`), and the roles it plays in change-action mappings; everything else is the configuring user's choice. Every item type has a lifecycle (defaults in `packages/core/src/lib/items/default-lifecycles.ts`). Ask `LifecycleService` — `isReleasedFamilyState`, `isInitialState`, `getFinalStateIds`, `getFinalKind`, `resolveActionStates` — never compare `state === 'Released'`; render with `StateBadge`. See `docs/features/workflow-engine.md`.
 
@@ -355,14 +357,14 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 
 **Organizational hierarchy**: Organization -> Program (permission boundary) -> Design (version container) -> Items
 
-**ECO-as-Branch workflow**:
+**ECO-as-Branch flow**:
 
-1. Create ECO -> Creates branch from main
-2. Checkout items to ECO -> Items copied to branch
+1. Create change order -> Creates branch from main
+2. Checkout items to it -> Items copied to branch
 3. Make changes -> Isolated to branch
 4. Approve & Release -> Merge to main, assign revision letters
 
-**ECO state changes**: All ECO state transitions go through `POST /api/v1/change-orders/:id/workflow/transition`. When transitioning to a final state (e.g., "Approved"), the endpoint auto-triggers `close()` which merges branches and assigns revisions. There are no separate `/submit`, `/approve`, `/reject`, or `/actions` routes.
+**Change-order state changes**: every transition of a change order goes through `POST /api/v1/change-orders/:id/workflow/transition`, the endpoint on its lifecycle instance. When transitioning to a final state (e.g., "Approved"), the endpoint auto-triggers `close()` which merges branches and assigns revisions. There are no separate `/submit`, `/approve`, `/reject`, or `/actions` routes.
 
 **Version Resolution**: Items are resolved per-branch using the `VersionResolver` service, which dynamically computes the current item per masterId per context using `branchItems` lookups and commit ancestry walks. Branch isolation ensures ECO changes don't affect main until merged.
 
@@ -617,13 +619,13 @@ const job = await JobService.submit(
 
 **Three-gate rule.** Write a test only if the file fails one of these:
 
-1. **Data integrity** — mutates multi-entity state where inconsistency would corrupt data (ECO release, branching, versioning, conflict detection, checkout)
+1. **Data integrity** — mutates multi-entity state where inconsistency would corrupt data (change-order release, branching, versioning, conflict detection, checkout)
 2. **Security** — gates access or verifies identity (auth, permissions, access-control boundaries)
-3. **Complex algorithm** — non-obvious logic where reading the code isn't enough (merge logic, workflow state machines, graph traversal)
+3. **Complex algorithm** — non-obvious logic where reading the code isn't enough (merge logic, lifecycle state machines, graph traversal)
 
 If a file passes none of the three gates, skip tests. UI components, API routes that just delegate, utilities, schemas, and query-only CRUD services do not need tests. **Deleting a low-value test is usually correct.**
 
-**Prefer invariants over call-shapes.** A good test asserts _what must always be true_ ("after ECO release, every affected item has a new revision letter"). A bad test asserts _what the code happens to do internally_ (`expect(merge).toHaveBeenCalledWith(...)`). Match error **class** (`NotFoundError`, `ValidationError`) or `error.code` — never error-message strings, which are refactor-brittle.
+**Prefer invariants over call-shapes.** A good test asserts _what must always be true_ ("after a change-order release, every affected item has a new revision letter"). A bad test asserts _what the code happens to do internally_ (`expect(merge).toHaveBeenCalledWith(...)`). Match error **class** (`NotFoundError`, `ValidationError`) or `error.code` — never error-message strings, which are refactor-brittle.
 
 ### Running tests
 
@@ -692,6 +694,22 @@ git rm --cached -r . && git reset --hard
 Verify with `git ls-files --eol` — every tracked file should report `w/lf`. A
 file reporting `w/-text` is being treated as binary (usually a stray NUL byte
 in the source) and is silently exempt from all of this.
+
+A fresh `git worktree add` lands in the same state, and does so every time: git
+only writes a working-tree file when it believes the content changed, so a file
+some other process rewrote with CRLF is stat-dirty but content-clean, and
+`checkout` never touches it again. Repair it with `npm run eol:fix`, or report
+without writing using `npm run eol:check`. `postinstall` runs the repair, so the
+`npm ci` a new worktree already needs covers it — on Linux it finds nothing and
+stays silent.
+
+Repair it rather than reasoning around it. `git status` stays **clean**
+throughout, because git normalises CRLF on the way into the index, so the only
+symptom is a tool that reads bytes off disk disagreeing with CI — and those
+disagree in both directions. A hash check reports the file as drifted content;
+a per-line regex scan terminates at the CR, matches nothing, and passes. Both
+have happened here, and the second is the dangerous one: a check that finds
+nothing looks exactly like a clean tree.
 
 ## Common Pitfalls to Avoid
 

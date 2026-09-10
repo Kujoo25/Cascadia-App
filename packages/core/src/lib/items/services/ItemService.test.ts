@@ -26,6 +26,7 @@ import type { TestUser } from '@/__tests__/fixtures/users'
 import { TestDatabase } from '@/__tests__/helpers/db'
 import { insertTestUser } from '@/__tests__/fixtures/users'
 import {
+  ItemCheckoutRequiredError,
   NotFoundError,
   PermissionDeniedError,
   ValidationError,
@@ -35,15 +36,18 @@ import { LifecycleService } from '@/lib/services/LifecycleService'
 import { seedWorkOrderLifecycle } from '@/__tests__/fixtures/lifecycles'
 import { LIFECYCLE_IDS } from '@/lib/items/lifecycle-ids'
 import {
+  branchItems,
   branches,
   changeOrders,
   commits,
   designs,
+  lifecycleHistory,
+  lifecycleInstances,
   requirements,
+  tasks,
   workOrderInstructions,
-  workflowHistory,
-  workflowInstances,
 } from '@/lib/db/schema'
+import { itemUpdateSchemaFor } from '@/lib/api/schemas'
 import { takeFirst } from '@/lib/db/take-first'
 import { DesignService } from '@/lib/services/DesignService'
 import { ProgramService } from '@/lib/services/ProgramService'
@@ -225,12 +229,12 @@ describe('ItemService', () => {
       )
 
       // Should not have any ECO branches for this change order
-      const ecoBranches = await testDb.db
+      const changeOrderBranches = await testDb.db
         .select()
         .from(branches)
         .where(eq(branches.changeOrderItemId, result.id))
 
-      expect(ecoBranches.length).toBe(0)
+      expect(changeOrderBranches.length).toBe(0)
     })
 
     it('does not create commit on main when creating a ChangeOrder', async () => {
@@ -1028,6 +1032,103 @@ describe('ItemService', () => {
       ).resolves.not.toThrow()
     })
 
+    // branch_items.current_item_id is NO ACTION, so a tracking row left
+    // behind does not dangle — it fails the delete. Which rows are a real
+    // claim on the item, and which are just a pointer to move, is the whole
+    // question.
+    describe('branch tracking rows the delete has to clear', () => {
+      async function mainBranchId(): Promise<string> {
+        return takeFirst(
+          await testDb.db
+            .select()
+            .from(branches)
+            .where(
+              and(
+                eq(branches.designId, designId),
+                eq(branches.branchType, 'main'),
+              ),
+            ),
+        ).id
+      }
+
+      it('deletes an item created on unprotected main, and its main tracking row', async () => {
+        const branchId = await mainBranchId()
+        const { item } = await ItemService.createOnBranch(
+          'Part',
+          {
+            designId,
+            itemNumber: `PN-${uniquePrefix}-MAINTRACK`,
+            name: 'Main-tracked Part',
+          } as Part,
+          branchId,
+          'create part on main',
+          user.id,
+        )
+        // BaseItem types both as optional; a persisted row always has them.
+        const itemId = item.id!
+        const masterId = item.masterId!
+
+        expect(
+          await testDb.db
+            .select()
+            .from(branchItems)
+            .where(eq(branchItems.currentItemId, itemId)),
+        ).toHaveLength(1)
+
+        await ItemService.delete(itemId, user.id)
+
+        expect(await ItemService.findById(itemId)).toBeNull()
+        expect(
+          await testDb.db
+            .select()
+            .from(branchItems)
+            .where(eq(branchItems.itemMasterId, masterId)),
+        ).toHaveLength(0)
+      })
+
+      it('still refuses an item tracked on a live workspace branch, and keeps the branch row', async () => {
+        const workspace = takeFirst(
+          await testDb.db
+            .insert(branches)
+            .values({
+              designId,
+              name: `ws-${uniquePrefix}`,
+              branchType: 'workspace',
+              ownerId: user.id,
+              createdBy: user.id,
+            })
+            .returning(),
+        )
+
+        const { item } = await ItemService.createOnBranch(
+          'Part',
+          {
+            designId,
+            itemNumber: `PN-${uniquePrefix}-WSTRACK`,
+            name: 'Workspace Part',
+          } as Part,
+          workspace.id,
+          'create part on workspace',
+          user.id,
+        )
+        const itemId = item.id!
+
+        // The live branch row is a real claim: the edit-lock gate refuses
+        // before anything is destroyed, rather than the FK doing it.
+        await expect(ItemService.delete(itemId, user.id)).rejects.toThrow(
+          ItemCheckoutRequiredError,
+        )
+
+        expect(await ItemService.findById(itemId)).not.toBeNull()
+        expect(
+          await testDb.db
+            .select()
+            .from(branchItems)
+            .where(eq(branchItems.currentItemId, itemId)),
+        ).toHaveLength(1)
+      })
+    })
+
     // The hard delete cascades from items.id — version rows, workflow
     // instance, its history and approvals, affected-item lists, traveler
     // lines. These pin what it is no longer allowed to take. Every state ID
@@ -1071,7 +1172,7 @@ describe('ItemService', () => {
           (s) => s.isInitial !== true && s.isFinal !== true,
         )
 
-        const eco = await ItemService.create(
+        const changeOrder = await ItemService.create(
           'ChangeOrder',
           {
             revision: 'A',
@@ -1086,39 +1187,39 @@ describe('ItemService', () => {
 
         const instance = takeFirst(
           await testDb.db
-            .insert(workflowInstances)
+            .insert(lifecycleInstances)
             .values({
               workflowDefinitionId: LIFECYCLE_IDS.changeOrder,
-              itemId: eco.id,
+              itemId: changeOrder.id,
               currentState: inReview,
               context: { actorId: user.id },
             })
             .returning(),
         )
-        await testDb.db.insert(workflowHistory).values({
+        await testDb.db.insert(lifecycleHistory).values({
           instanceId: instance.id,
           toState: inReview,
           action: 'Submit for Review',
           actorId: user.id,
         })
-        await putInState(eco.id, inReview)
+        await putInState(changeOrder.id, inReview)
 
-        await expect(ItemService.delete(eco.id, user.id)).rejects.toThrow(
-          ValidationError,
-        )
+        await expect(
+          ItemService.delete(changeOrder.id, user.id),
+        ).rejects.toThrow(ValidationError)
 
-        expect(await ItemService.findById(eco.id)).not.toBeNull()
+        expect(await ItemService.findById(changeOrder.id)).not.toBeNull()
         expect(
           await testDb.db
             .select()
-            .from(workflowInstances)
-            .where(eq(workflowInstances.itemId, eco.id)),
+            .from(lifecycleInstances)
+            .where(eq(lifecycleInstances.itemId, changeOrder.id)),
         ).toHaveLength(1)
         expect(
           await testDb.db
             .select()
-            .from(workflowHistory)
-            .where(eq(workflowHistory.instanceId, instance.id)),
+            .from(lifecycleHistory)
+            .where(eq(lifecycleHistory.instanceId, instance.id)),
         ).toHaveLength(1)
       })
 
@@ -1128,7 +1229,7 @@ describe('ItemService', () => {
           (s) => s.finalKind === 'release',
         )
 
-        const eco = await ItemService.create(
+        const changeOrder = await ItemService.create(
           'ChangeOrder',
           {
             revision: 'A',
@@ -1140,12 +1241,12 @@ describe('ItemService', () => {
           } as any,
           user.id,
         )
-        await putInState(eco.id, approved)
+        await putInState(changeOrder.id, approved)
 
-        await expect(ItemService.delete(eco.id, user.id)).rejects.toThrow(
-          ValidationError,
-        )
-        expect(await ItemService.findById(eco.id)).not.toBeNull()
+        await expect(
+          ItemService.delete(changeOrder.id, user.id),
+        ).rejects.toThrow(ValidationError)
+        expect(await ItemService.findById(changeOrder.id)).not.toBeNull()
       })
 
       // The regression pin: ChangeOrderService.create deletes a change order
@@ -1153,7 +1254,7 @@ describe('ItemService', () => {
       // the gate. A change order in the state `create` gave it is still
       // deletable.
       it('still deletes a change order in its initial state', async () => {
-        const eco = await ItemService.create(
+        const changeOrder = await ItemService.create(
           'ChangeOrder',
           {
             revision: 'A',
@@ -1166,9 +1267,9 @@ describe('ItemService', () => {
           user.id,
         )
 
-        await ItemService.delete(eco.id, user.id)
+        await ItemService.delete(changeOrder.id, user.id)
 
-        expect(await ItemService.findById(eco.id)).toBeNull()
+        expect(await ItemService.findById(changeOrder.id)).toBeNull()
       })
 
       // Released lineage. Branch protection already refuses this for a part
@@ -1857,6 +1958,58 @@ describe('ItemService', () => {
       expect((updated as any).priority).toBe('Critical')
       // actualHours is stored as numeric and may have decimal formatting
       expect(parseFloat((updated as any).actualHours)).toBe(4)
+    })
+
+    // The whole chain a cleared due date travels: the wire value an emptied
+    // `<input type="date">` produces, through the update schema the route
+    // picks by item type, into the type handler's write. The schema half is
+    // where this used to stop — `''` was an Invalid Date and 400'd — so the
+    // interesting assertion is on the column at the far end.
+    it('clears a due date the caller emptied', async () => {
+      const created = await ItemService.create(
+        'Task',
+        {
+          itemNumber: `TSK-${uniquePrefix}-004`,
+          revision: 'A',
+          name: 'Dated Task',
+          dueDate: new Date('2026-03-01T00:00:00.000Z'),
+        } as any,
+        user.id,
+      )
+      expect(created.dueDate).not.toBeNull()
+
+      const changes = itemUpdateSchemaFor('Task').parse({ dueDate: '' })
+      const updated = await ItemService.update(created.id, changes, user.id)
+
+      expect((updated as any).dueDate).toBeNull()
+      const [row] = await testDb.db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.itemId, created.id))
+      expect(row?.dueDate).toBeNull()
+    })
+
+    it('leaves a due date alone when the update does not mention it', async () => {
+      const dueDate = new Date('2026-03-01T00:00:00.000Z')
+      const created = await ItemService.create(
+        'Task',
+        {
+          itemNumber: `TSK-${uniquePrefix}-005`,
+          revision: 'A',
+          name: 'Dated Task',
+          dueDate,
+        } as any,
+        user.id,
+      )
+
+      const changes = itemUpdateSchemaFor('Task').parse({ name: 'Renamed' })
+      await ItemService.update(created.id, changes, user.id)
+
+      const [row] = await testDb.db
+        .select()
+        .from(tasks)
+        .where(eq(tasks.itemId, created.id))
+      expect(row?.dueDate).toEqual(dueDate)
     })
   })
 

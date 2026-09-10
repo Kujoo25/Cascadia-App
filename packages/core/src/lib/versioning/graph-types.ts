@@ -81,7 +81,7 @@ export type ProgramCommitGraphNode = Node<ProgramCommitNodeData, 'commitNode'>
 /**
  * Edge data for cross-design ECO connections
  */
-export interface EcoConnectorEdgeData extends Record<string, unknown> {
+export interface ChangeOrderConnectorEdgeData extends Record<string, unknown> {
   edgeType: 'eco-connector'
   ecoId: string
   ecoNumber: string
@@ -93,7 +93,7 @@ export interface EcoConnectorEdgeData extends Record<string, unknown> {
   targetDesignCode: string
 }
 
-export type EcoConnectorEdge = Edge<EcoConnectorEdgeData>
+export type ChangeOrderConnectorEdge = Edge<ChangeOrderConnectorEdgeData>
 
 /**
  * Design info for program graph
@@ -110,7 +110,7 @@ export interface ProgramGraphDesign {
 /**
  * Cross-design ECO info
  */
-export interface CrossDesignEco {
+export interface CrossDesignChangeOrder {
   id: string
   ecoNumber: string
   ecoName: string
@@ -131,11 +131,11 @@ export interface ProgramGraphData {
   /** Parent/merge edges within designs */
   edges: Array<CommitGraphEdge>
   /** Cross-design ECO connector edges */
-  ecoConnectorEdges: Array<EcoConnectorEdge>
+  ecoConnectorEdges: Array<ChangeOrderConnectorEdge>
   /** Design metadata for layout and headers */
   designs: Array<ProgramGraphDesign>
   /** ECOs that span multiple designs */
-  crossDesignEcos: Array<CrossDesignEco>
+  crossDesignEcos: Array<CrossDesignChangeOrder>
   /** Program metadata */
   program: {
     id: string

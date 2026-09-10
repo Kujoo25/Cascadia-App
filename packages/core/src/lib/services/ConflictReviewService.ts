@@ -133,7 +133,7 @@ export class ConflictReviewService {
    * @param changeOrderId - The ECO's item ID
    * @returns Array of review records with reviewer names
    */
-  static async getReviewsForEco(
+  static async getReviewsForChangeOrder(
     changeOrderId: string,
   ): Promise<Array<ConflictReview>> {
     const rows = await db
@@ -183,7 +183,7 @@ export class ConflictReviewService {
     conflicts: Array<ItemConflict>,
   ): Promise<Array<EnrichedItemConflict>> {
     // All reviews for this ECO, newest first
-    const reviews = await this.getReviewsForEco(changeOrderId)
+    const reviews = await this.getReviewsForChangeOrder(changeOrderId)
 
     // Group by composite key, preserving newest-first order within each group
     const reviewsByKey = new Map<string, Array<ConflictReview>>()

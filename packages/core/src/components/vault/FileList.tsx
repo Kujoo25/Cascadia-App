@@ -24,6 +24,7 @@ import type { FileCategory } from '@/lib/vault/file-categories'
 import { Badge, Button, DataGrid } from '@/components/ui'
 import { cn } from '@/lib/utils'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { useSystemAccess } from '@/lib/hooks/usePermissions'
 import { useInvalidateResources } from '@/lib/query'
 import { itemFilesQuery } from '@/lib/query/options/item-files'
@@ -88,7 +89,8 @@ export function FileList({
   onThumbnailChanged,
   className,
 }: FileListProps) {
-  const { alert, confirm } = useAlertDialog()
+  const { confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   // Offer Force Unlock to exactly the population the route charges for it:
   // `system:manage`, the same grant POST /items/:id/unlock's force branch
@@ -128,11 +130,7 @@ export function FileList({
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
     } catch (err) {
-      alert({
-        title: 'Error',
-        description: `Download failed: ${(err as Error).message}`,
-        variant: 'destructive',
-      })
+      handleError(err, { title: 'Download failed' })
     }
   }
 
@@ -157,11 +155,7 @@ export function FileList({
           await invalidate('files')
           onFileDeleted?.(fileId)
         } catch (err) {
-          alert({
-            title: 'Error',
-            description: `Delete failed: ${(err as Error).message}`,
-            variant: 'destructive',
-          })
+          handleError(err, { title: 'Delete failed' })
         }
       },
     })
@@ -182,11 +176,7 @@ export function FileList({
       await loadFiles()
       onFileCheckedOut?.(fileId)
     } catch (err) {
-      alert({
-        title: 'Error',
-        description: `Checkout failed: ${(err as Error).message}`,
-        variant: 'destructive',
-      })
+      handleError(err, { title: 'Checkout failed' })
     }
   }
 
@@ -205,11 +195,7 @@ export function FileList({
       await loadFiles()
       onFileCheckedIn?.(fileId)
     } catch (err) {
-      alert({
-        title: 'Error',
-        description: `Checkin failed: ${(err as Error).message}`,
-        variant: 'destructive',
-      })
+      handleError(err, { title: 'Checkin failed' })
     }
   }
 
@@ -235,11 +221,7 @@ export function FileList({
 
           await loadFiles()
         } catch (err) {
-          alert({
-            title: 'Error',
-            description: `Force unlock failed: ${(err as Error).message}`,
-            variant: 'destructive',
-          })
+          handleError(err, { title: 'Force unlock failed' })
         }
       },
     })
@@ -265,11 +247,7 @@ export function FileList({
       await invalidate('files')
       onThumbnailChanged?.()
     } catch (err) {
-      alert({
-        title: 'Error',
-        description: `Failed to update thumbnail: ${(err as Error).message}`,
-        variant: 'destructive',
-      })
+      handleError(err, { title: 'Failed to update thumbnail' })
     }
   }
 
@@ -293,11 +271,7 @@ export function FileList({
 
       await invalidate('files')
     } catch (err) {
-      alert({
-        title: 'Error',
-        description: `Failed to update category: ${(err as Error).message}`,
-        variant: 'destructive',
-      })
+      handleError(err, { title: 'Failed to update category' })
     }
   }
 

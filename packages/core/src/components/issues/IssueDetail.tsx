@@ -255,7 +255,7 @@ export function IssueDetail({
     })
   }
 
-  const formatDate = (date?: string | Date) => {
+  const formatDate = (date?: string | Date | null) => {
     if (!date) return '-'
     try {
       return new Date(date).toLocaleDateString()

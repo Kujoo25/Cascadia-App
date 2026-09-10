@@ -4,7 +4,7 @@
 import { Link, createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { GitBranch, Loader2, Plus, RotateCcw, Workflow } from 'lucide-react'
-import type { LifecycleType, WorkflowDefinition } from '@/lib/workflows/types'
+import type { LifecycleDefinition, LifecycleType } from '@/lib/lifecycles/types'
 import { PageContainer } from '@/components/layout'
 import {
   Badge,
@@ -16,8 +16,9 @@ import {
   CardTitle,
 } from '@/components/ui'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { LifecycleTable } from '@/components/lifecycles/LifecycleTable'
-import { resolveLifecycleType } from '@/lib/workflows/normalize'
+import { resolveLifecycleType } from '@/lib/lifecycles/normalize'
 import { lifecycleListQuery, useInvalidateResources } from '@/lib/query'
 import { apiFetch } from '@/lib/api/client'
 
@@ -28,13 +29,14 @@ export const Route = createFileRoute('/lifecycles/')({
 })
 
 function LifecyclesListPage() {
-  const { confirm, alert } = useAlertDialog()
+  const { confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   // Lifecycles and change-order workflows are one unified list
   const { data: lifecycles = [], isPending } = useQuery(lifecycleListQuery())
 
   // Legacy definitions resolve through the one sanctioned inference
-  const getLifecycleType = (lifecycle: WorkflowDefinition): LifecycleType =>
+  const getLifecycleType = (lifecycle: LifecycleDefinition): LifecycleType =>
     resolveLifecycleType(lifecycle)
 
   // Group lifecycles by type
@@ -48,7 +50,7 @@ function LifecyclesListPage() {
     (l) => getLifecycleType(l) === 'Driving',
   )
 
-  const handleDelete = (lifecycle: WorkflowDefinition) => {
+  const handleDelete = (lifecycle: LifecycleDefinition) => {
     confirm({
       title: 'Delete Lifecycle',
       description: `Are you sure you want to delete "${lifecycle.name}"? This action cannot be undone.`,
@@ -57,18 +59,13 @@ function LifecyclesListPage() {
       variant: 'destructive',
       onConfirm: async () => {
         try {
-          await apiFetch(`/api/v1/workflows/${lifecycle.id}`, {
+          await apiFetch(`/api/v1/lifecycles/${lifecycle.id}`, {
             method: 'DELETE',
           })
 
-          await invalidate('lifecycles', 'workflows')
+          await invalidate('lifecycles')
         } catch (error) {
-          console.error('Error deleting lifecycle:', error)
-          alert({
-            title: 'Error',
-            description: `Failed to delete lifecycle: ${(error as Error).message}`,
-            variant: 'destructive',
-          })
+          handleError(error, { title: 'Failed to delete lifecycle' })
         }
       },
     })

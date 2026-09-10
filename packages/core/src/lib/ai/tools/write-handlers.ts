@@ -54,10 +54,11 @@ import { db } from '@/lib/db'
 import { programs } from '@/lib/db/schema'
 import { permissionService } from '@/lib/auth/permission-service'
 import {
+  requireChangeOrderAccess as requireChangeOrderAccess,
   requireDesignAccess,
-  requireEcoAccess,
   requireItemAccess,
 } from '@/lib/auth/access'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
 
 // ============================================================================
 // Input Types (manually defined for better type inference)
@@ -160,8 +161,8 @@ interface WriteToolResponse {
   itemId?: string
   itemNumber?: string
   error?: string
-  suggestCreateEco?: boolean
-  suggestEcoMessage?: string
+  suggestCreateChangeOrder?: boolean
+  suggestChangeOrderMessage?: string
 }
 
 // ============================================================================
@@ -196,7 +197,7 @@ async function resolveDesignId(
  * Check if a design requires ECO for modifications.
  * Returns true if the design has any released items on main branch.
  */
-async function designRequiresEco(designId: string): Promise<boolean> {
+async function designRequiresChangeOrder(designId: string): Promise<boolean> {
   return BranchService.isMainBranchProtected(designId)
 }
 
@@ -227,11 +228,14 @@ function confirmationRequired(
 /**
  * Build an ECO suggestion response.
  */
-function suggestEco(itemNumber: string, designName: string): WriteToolResponse {
+function suggestChangeOrder(
+  itemNumber: string,
+  designName: string,
+): WriteToolResponse {
   return {
     requiresConfirmation: false,
-    suggestCreateEco: true,
-    suggestEcoMessage: `Item ${itemNumber} is in a released design "${designName}". Would you like me to create an ECO to make these changes?`,
+    suggestCreateChangeOrder: true,
+    suggestChangeOrderMessage: `Item ${itemNumber} is in a released design "${designName}". Would you like me to create a change order to make these changes?`,
   }
 }
 
@@ -338,7 +342,7 @@ async function withConfirmationToken<T extends WriteToolResponse>(
  * is the same resolution the REST layer performs (`routes/items/core.ts` maps
  * `item.itemType` to a resource for both the generic update and the transition
  * endpoint), and the wrapper is the only RBAC gate on the tool path: neither
- * `ItemService.update` nor `LifecycleService.transitionFreeItem` re-checks it.
+ * `ItemService.update` nor `LifecycleInstanceService.transitionFreeItem` re-checks it.
  *
  * `create_relationship` shares the same shape below via
  * `sourceItemUpdatePermission` — `ItemService.addRelationship` has no RBAC of
@@ -413,18 +417,18 @@ async function createItemHandlerImpl(
     // name or its released state coming back in the response.
     if (designId) await requireDesignAccess(context.userId, designId)
     if (input.changeOrderId) {
-      await requireEcoAccess(context.userId, input.changeOrderId)
+      await requireChangeOrderAccess(context.userId, input.changeOrderId)
     }
 
     // Step 2: Check if design requires ECO (post-release)
     if (designId && !input.changeOrderId) {
-      const requiresEco = await designRequiresEco(designId)
-      if (requiresEco) {
+      const requiresChangeOrder = await designRequiresChangeOrder(designId)
+      if (requiresChangeOrder) {
         const designName = await getDesignName(designId)
         return {
           requiresConfirmation: false,
-          suggestCreateEco: true,
-          suggestEcoMessage: `The design "${designName}" has released items and requires an ECO to add new items. Would you like me to create an ECO first?`,
+          suggestCreateChangeOrder: true,
+          suggestChangeOrderMessage: `The design "${designName}" has released items and requires a change order to add new items. Would you like me to create one first?`,
         }
       }
     }
@@ -444,7 +448,7 @@ async function createItemHandlerImpl(
               input.description
                 ? `Description: ${input.description.slice(0, 50)}...`
                 : '',
-              input.changeOrderId ? `ECO: ${input.changeOrderId}` : '',
+              input.changeOrderId ? `Change order: ${input.changeOrderId}` : '',
             ].filter(Boolean),
           },
           `Create new ${input.itemType} "${input.name}"${designName ? ` in ${designName}` : ''}?`,
@@ -487,16 +491,18 @@ async function createItemHandlerImpl(
     // If we have an ECO, create via branch checkout
     if (input.changeOrderId && designId) {
       // Get the ECO's branch for this design
-      const ecoDesigns = await ChangeOrderService.getEcoDesigns(
+      const changeOrderDesigns = await ChangeOrderService.getChangeOrderDesigns(
         input.changeOrderId,
       )
-      const ecoDesign = ecoDesigns.find((ed) => ed.designId === designId)
+      const changeOrderDesign = changeOrderDesigns.find(
+        (ed) => ed.designId === designId,
+      )
 
-      if (ecoDesign?.branchId) {
+      if (changeOrderDesign?.branchId) {
         const { item } = await ItemService.createOnBranch(
           input.itemType,
           itemData as BaseItem,
-          ecoDesign.branchId,
+          changeOrderDesign.branchId,
           `Created ${input.itemType} ${input.name}`,
           context.userId,
         )
@@ -573,10 +579,12 @@ async function updateItemHandlerImpl(
 
     if (isReleased && hasDesign && !input.changeOrderId) {
       // Check if design is protected
-      const requiresEco = await designRequiresEco(item.designId!)
-      if (requiresEco) {
+      const requiresChangeOrder = await designRequiresChangeOrder(
+        item.designId!,
+      )
+      if (requiresChangeOrder) {
         const designName = await getDesignName(item.designId!)
-        return suggestEco(item.itemNumber || 'item', designName)
+        return suggestChangeOrder(item.itemNumber || 'item', designName)
       }
     }
 
@@ -656,7 +664,7 @@ async function updateItemHandlerImpl(
         )
       }
 
-      const checkout = await ChangeOrderService.checkoutItemToEco(
+      const checkout = await ChangeOrderService.checkoutItem(
         input.changeOrderId,
         input.itemId,
         context.userId,
@@ -845,8 +853,8 @@ async function transitionItemStateHandlerImpl(
     // Step 1: Get the item and gate it.
     //
     // Only the ChangeOrder arm below is re-gated downstream
-    // (`executeWorkflowTransition` calls `requireEcoAccess`). The other arm —
-    // every non-ECO item — reaches `LifecycleService.transitionFreeItem`,
+    // (`executeWorkflowTransition` calls `requireChangeOrderAccess`). The other arm —
+    // every non-ECO item — reaches `LifecycleInstanceService.transitionFreeItem`,
     // which validates the lifecycle and the eligibility rules but checks no
     // design or program boundary, so a caller holding the tool's RBAC could
     // drive any program's item through its states by knowing an id.
@@ -916,7 +924,7 @@ async function transitionItemStateHandlerImpl(
       // same enforcement path as POST /api/v1/items/:id/transition (validated
       // against the lifecycle's transitions, recorded in history). Driven
       // items are rejected there: their state changes at ECO release.
-      const transitioned = await LifecycleService.transitionFreeItem(
+      const transitioned = await LifecycleInstanceService.transitionFreeItem(
         input.itemId,
         input.targetState,
         context.userId,
@@ -1034,11 +1042,13 @@ async function createChangeOrderHandlerImpl(
       impactDescription: input.impactDescription,
     }
 
-    // The designs are part of the creation, not a step after it. This used to
-    // create the ECO and then attach designs in a loop that logged and
-    // swallowed failures, so a run that could not attach any left a change
-    // order belonging to no design — outside every program, and therefore
-    // readable by every user in the instance.
+    // The designs and the workflow are part of the creation, not steps after
+    // it. This used to create the ECO and then attach designs in a loop that
+    // logged and swallowed failures, so a run that could not attach any left
+    // a change order belonging to no design — outside every program, and
+    // therefore readable by every user in the instance — and then started the
+    // workflow the same way, leaving a change order with no instance when the
+    // change type had none configured.
     const changeOrder = await ChangeOrderService.create(
       changeOrderData,
       resolvedDesignIds,
@@ -1047,24 +1057,10 @@ async function createChangeOrderHandlerImpl(
 
     const changeOrderId = changeOrder.id || ''
 
-    // Step 4: Auto-start workflow
-    try {
-      if (changeOrderId) {
-        await ChangeOrderService.autoStartWorkflow(
-          changeOrderId,
-          input.changeType,
-          context.userId,
-        )
-      }
-    } catch (workflowError) {
-      aiLogger.warn(
-        { err: workflowError, ecoNumber: changeOrder.itemNumber },
-        'Failed to auto-start workflow for ECO',
-      )
-    }
-
-    // Step 5: Collect the branches `create` made for each design
-    const branchIds = (await ChangeOrderService.getEcoDesigns(changeOrderId))
+    // Step 4: Collect the branches `create` made for each design
+    const branchIds = (
+      await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
+    )
       .map((d) => d.branchId)
       .filter((id): id is string => id !== null)
 
@@ -1105,7 +1101,7 @@ async function createChangeOrderHandlerImpl(
       changeOrderId: changeOrderId || undefined,
       branchIds,
       affectedItemsAdded,
-      confirmationMessage: `Created ${input.changeType} ${changeOrder.itemNumber || 'ECO'} "${input.name}"`,
+      confirmationMessage: `Created ${input.changeType} ${changeOrder.itemNumber || 'change order'} "${input.name}"`,
     }
   } catch (e) {
     return errorResponse(toErrorMessage(e, 'Failed to create change order'))

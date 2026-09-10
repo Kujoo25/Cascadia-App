@@ -80,7 +80,7 @@ describe('ConflictReviewService', () => {
   let ecoId: string
   /** A second ECO — the other side of a cross-ECO conflict, and the wrong
    * owner in the unmark-scoping test. */
-  let otherEcoId: string
+  let otherChangeOrderId: string
 
   beforeAll(async () => {
     await testDb.setup()
@@ -98,10 +98,18 @@ describe('ConflictReviewService', () => {
 
     // conflict_reviews.changeOrderId and theirEcoId both FK items.id, so the
     // ECOs have to be real rows. ECOs carry a null designId in this codebase.
-    const eco = await insertTestChangeOrder(testDb.db, null, reviewer.id)
-    ecoId = eco.item.id
-    const otherEco = await insertTestChangeOrder(testDb.db, null, reviewer.id)
-    otherEcoId = otherEco.item.id
+    const changeOrder = await insertTestChangeOrder(
+      testDb.db,
+      null,
+      reviewer.id,
+    )
+    ecoId = changeOrder.item.id
+    const otherChangeOrder = await insertTestChangeOrder(
+      testDb.db,
+      null,
+      reviewer.id,
+    )
+    otherChangeOrderId = otherChangeOrder.item.id
   })
 
   afterEach(async () => {
@@ -216,7 +224,7 @@ describe('ConflictReviewService', () => {
       // theirEcoId is non-null, so with the old conflict_reviews_unique
       // constraint still in place the second insert below would raise a
       // unique violation — this test also pins that the constraint is gone.
-      const conflict = buildConflict({ theirEcoId: otherEcoId })
+      const conflict = buildConflict({ theirEcoId: otherChangeOrderId })
 
       const first = await ConflictReviewService.markAsReviewed(
         ecoId,
@@ -288,7 +296,7 @@ describe('ConflictReviewService', () => {
       )
       await ConflictReviewService.markAsReviewed(
         ecoId,
-        { ...conflict, theirEcoId: otherEcoId },
+        { ...conflict, theirEcoId: otherChangeOrderId },
         reviewer.id,
       )
 
@@ -310,7 +318,7 @@ describe('ConflictReviewService', () => {
     })
 
     it('flags a conflict that changed under its acknowledgement as needing re-review', async () => {
-      const conflict = buildConflict({ theirEcoId: otherEcoId })
+      const conflict = buildConflict({ theirEcoId: otherChangeOrderId })
       const review = await ConflictReviewService.markAsReviewed(
         ecoId,
         conflict,
@@ -342,7 +350,7 @@ describe('ConflictReviewService', () => {
     })
 
     it('surfaces the newest acknowledgement and keeps older ones as history', async () => {
-      const conflict = buildConflict({ theirEcoId: otherEcoId })
+      const conflict = buildConflict({ theirEcoId: otherChangeOrderId })
 
       const first = await ConflictReviewService.markAsReviewed(
         ecoId,
@@ -375,7 +383,7 @@ describe('ConflictReviewService', () => {
     })
 
     it('judges staleness against the newest acknowledgement only', async () => {
-      const conflict = buildConflict({ theirEcoId: otherEcoId })
+      const conflict = buildConflict({ theirEcoId: otherChangeOrderId })
 
       // First acknowledgement covers the conflict as it originally stood…
       const first = await ConflictReviewService.markAsReviewed(
@@ -410,7 +418,7 @@ describe('ConflictReviewService', () => {
 
       const enriched = takeFirst(
         await ConflictReviewService.enrichConflictsWithReviewStatus(
-          otherEcoId,
+          otherChangeOrderId,
           [conflict],
         ),
       )
@@ -422,7 +430,7 @@ describe('ConflictReviewService', () => {
 
   describe('unmarkReview', () => {
     it('retracts one acknowledgement and lets the previous one stand again', async () => {
-      const conflict = buildConflict({ theirEcoId: otherEcoId })
+      const conflict = buildConflict({ theirEcoId: otherChangeOrderId })
 
       const first = await ConflictReviewService.markAsReviewed(
         ecoId,
@@ -458,7 +466,7 @@ describe('ConflictReviewService', () => {
       )
 
       // A review id on its own is not authority over someone else's ECO.
-      await ConflictReviewService.unmarkReview(review.id, otherEcoId)
+      await ConflictReviewService.unmarkReview(review.id, otherChangeOrderId)
       expect(await storedReviews()).toHaveLength(1)
 
       // …and the guard is scoping, not inertness: the owner can still clear it.

@@ -13,6 +13,9 @@ import type {
 import type { CADFileEntry } from './cad-types'
 import { itemCadFilesQuery } from '@/lib/query/options/item-files'
 
+/** Shared empty, so "no files yet" is the same array on every render. */
+const NO_FILES: Array<CADFileEntry> = []
+
 /**
  * Everything the 3D viewer needs to be driven, in one place.
  *
@@ -92,7 +95,10 @@ export function useCADViewerState({
       ),
     [itemId, branchId, mainBranchId, enabled],
   )
-  const { data: files = [] } = useQuery(options)
+  // The shared empty matters: `files` is a dependency of the selection effect
+  // below, and a fresh `[]` on every render would run that effect (and enqueue
+  // a `setSelectedFile`) after every commit while the query has no data.
+  const { data: files = NO_FILES } = useQuery(options)
 
   const [selectedFile, setSelectedFile] = useState<CADFileEntry | null>(null)
   const [modelStats, setModelStats] = useState<Partial<CADModelStats>>({})

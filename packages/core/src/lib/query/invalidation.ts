@@ -46,7 +46,7 @@ const RESOURCE_DEPENDENTS: Partial<Record<Resource, ReadonlyArray<Resource>>> =
       'branch-items',
       'commits',
       'designs',
-      'workflows',
+      'lifecycles',
     ],
 
     // ---- Cross-item aggregates ------------------------------------------
@@ -70,8 +70,7 @@ const RESOURCE_DEPENDENTS: Partial<Record<Resource, ReadonlyArray<Resource>>> =
     tags: ['items', 'commits'],
 
     // ---- Workflow & lifecycle -------------------------------------------
-    workflows: ['items', 'change-orders', 'dashboard'],
-    lifecycles: ['items', 'workflows'],
+    lifecycles: ['items', 'change-orders', 'dashboard'],
 
     // ---- Sourcing --------------------------------------------------------
     'manufacturer-parts': ['parts', 'items'],
@@ -85,7 +84,7 @@ const RESOURCE_DEPENDENTS: Partial<Record<Resource, ReadonlyArray<Resource>>> =
     // their role assignments, so changing either has to restage it.
     users: ['admin', 'roles', 'programs', 'designs', 'auth'],
     roles: ['admin', 'users', 'auth'],
-    admin: ['items', 'lifecycles', 'workflows'],
+    admin: ['items', 'lifecycles'],
     setup: ['auth', 'programs', 'users', 'tools'],
     auth: ['setup'],
 
@@ -104,8 +103,8 @@ const contributed = new Map<Resource, Array<Resource>>()
  *
  * Additive in both directions, which is the point: a module both introduces its
  * own resources *and* adds edges to core's. Advanced Auditing needs
- * `signatures → workflows` because a signature changes what an approval panel
- * shows, and equally `workflows → signatures`, because core has no reason to
+ * `signatures → lifecycles` because a signature changes what an approval panel
+ * shows, and equally `lifecycles → signatures`, because core has no reason to
  * know that approving something produces a signature.
  *
  * Call from a composition root at boot, before the first invalidation.

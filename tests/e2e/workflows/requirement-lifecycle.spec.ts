@@ -4,7 +4,7 @@
 /**
  * Requirement Lifecycle E2E Journey
  *
- * One journey, end to end, in the eco-workflow.spec.ts style: create a
+ * One journey, end to end, in the change-order-workflow.spec.ts style: create a
  * requirement through the UI, drive its lifecycle through whatever transition
  * the seeded default lifecycle offers, and assert the move in both places it
  * is visible — the badge and the API row.

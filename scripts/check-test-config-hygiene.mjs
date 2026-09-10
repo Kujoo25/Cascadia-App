@@ -33,7 +33,7 @@
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 
-const SHARED_TABLES = ['itemTypeConfigs', 'workflowDefinitions']
+const SHARED_TABLES = ['itemTypeConfigs', 'lifecycleDefinitions']
 const HELPER = 'overrideItemTypeConfig'
 /** Visible, reviewable opt-out: `// test-config-hygiene: <why>`. */
 const EXEMPTION = 'test-config-hygiene:'

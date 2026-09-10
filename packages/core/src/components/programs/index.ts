@@ -3,8 +3,9 @@
 
 export * from './DesignColumnHeader'
 export * from './DesignHeaderNode'
-export * from './EcoConnectorEdge'
+export * from './ChangeOrderConnectorEdge'
 export * from './ProgramForm'
 export * from './ProgramHistoryGraphView'
+export * from './ProgramModelViewer'
 export * from './ProgramTable'
 export * from './ProgramTeamCard'

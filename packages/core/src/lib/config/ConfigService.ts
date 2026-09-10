@@ -8,9 +8,19 @@ import { itemTypeConfigs, items } from '../db/schema'
 import { notDeleted } from '../db/filters'
 import { ConflictError, NotFoundError, ValidationError } from '../errors'
 import { ItemTypeRegistry } from '../items/registry'
-import { WorkflowService } from '../workflows/WorkflowService'
-import { resolveLifecycleType } from '../workflows/normalize'
+import { LifecycleDefinitionService } from '../lifecycles/LifecycleDefinitionService'
+import { resolveLifecycleType } from '../lifecycles/normalize'
 import type { RuntimeItemTypeConfig } from '../db/schema'
+
+const lifecyclesByChangeTypeSchema = z
+  .object({
+    ECO: z.string().uuid().optional(),
+    ECN: z.string().uuid().optional(),
+    Deviation: z.string().uuid().optional(),
+    MCO: z.string().uuid().optional(),
+    XCO: z.string().uuid().optional(),
+  })
+  .optional()
 
 /**
  * Schema for validating runtime configuration updates
@@ -44,18 +54,37 @@ const runtimeConfigSchema = z.object({
     .optional(),
   fieldMetadata: z.record(z.string(), z.unknown()).optional(),
   /**
-   * For ChangeOrder item type only: Maps change order types to workflow definition UUIDs.
-   * All change types must have a workflow assigned - null values are not allowed.
+   * ChangeOrder only: the Driving definition each change type runs. Every
+   * change type an install creates needs an entry; null is not a value.
    */
-  workflowsByChangeType: z
-    .object({
-      ECO: z.string().uuid().optional(),
-      ECN: z.string().uuid().optional(),
-      Deviation: z.string().uuid().optional(),
-      MCO: z.string().uuid().optional(),
-    })
-    .optional(),
+  lifecyclesByChangeType: lifecyclesByChangeTypeSchema,
+  /**
+   * The key the mapping shipped under, accepted for one release and moved
+   * to `lifecyclesByChangeType` before anything is stored (CM-25).
+   */
+  workflowsByChangeType: lifecyclesByChangeTypeSchema,
 })
+
+/**
+ * One key for the change-type mapping, whichever a row or a request carries.
+ *
+ * The mapping shipped as `workflowsByChangeType`; migration 0005 renames the
+ * stored key and clients follow, but a row an older build wrote after the
+ * migration, or a request from an older client, still says the old name for
+ * one release. Applied on every read and every write, so nothing past this
+ * service sees two spellings. The newer key wins where both appear.
+ */
+export function normalizeRuntimeConfig<T extends RuntimeItemTypeConfig>(
+  config: T,
+): T {
+  if (config.workflowsByChangeType === undefined) return config
+  const { workflowsByChangeType, ...rest } = config
+  return {
+    ...rest,
+    lifecyclesByChangeType:
+      config.lifecyclesByChangeType ?? workflowsByChangeType,
+  } as T
+}
 
 /**
  * Result of lifecycle swap validation
@@ -93,7 +122,10 @@ export class ConfigService {
       .from(itemTypeConfigs)
       .where(eq(itemTypeConfigs.isActive, true))
 
-    return configs
+    return configs.map((row) => ({
+      ...row,
+      config: normalizeRuntimeConfig(row.config),
+    }))
   }
 
   /**
@@ -108,7 +140,8 @@ export class ConfigService {
       .where(eq(itemTypeConfigs.itemType, itemType))
       .limit(1)
 
-    return result[0] ? result[0] : null
+    const row = result[0]
+    return row ? { ...row, config: normalizeRuntimeConfig(row.config) } : null
   }
 
   /**
@@ -144,6 +177,9 @@ export class ConfigService {
     }
 
     const existing = await this.getConfig(itemType)
+    const normalized = normalizeRuntimeConfig(
+      parseResult.data as RuntimeItemTypeConfig,
+    )
 
     let result
     if (existing) {
@@ -151,7 +187,7 @@ export class ConfigService {
       const updated = await db
         .update(itemTypeConfigs)
         .set({
-          config: parseResult.data as RuntimeItemTypeConfig,
+          config: normalized,
           version: existing.version + 1,
           modifiedBy: userId,
           modifiedAt: new Date(),
@@ -166,7 +202,7 @@ export class ConfigService {
         .insert(itemTypeConfigs)
         .values({
           itemType,
-          config: parseResult.data as RuntimeItemTypeConfig,
+          config: normalized,
           modifiedBy: userId,
         })
         .returning()
@@ -293,7 +329,8 @@ export class ConfigService {
     }
 
     // Validate target lifecycle exists and is a lifecycle type
-    const targetLifecycle = await WorkflowService.getById(targetLifecycleId)
+    const targetLifecycle =
+      await LifecycleDefinitionService.getById(targetLifecycleId)
     if (!targetLifecycle) {
       return {
         valid: false,
@@ -364,7 +401,8 @@ export class ConfigService {
     // Get current lifecycle name for logging (if exists)
     let currentLifecycleName: string | undefined
     if (currentLifecycleId) {
-      const currentLifecycle = await WorkflowService.getById(currentLifecycleId)
+      const currentLifecycle =
+        await LifecycleDefinitionService.getById(currentLifecycleId)
       currentLifecycleName = currentLifecycle?.name
     }
 

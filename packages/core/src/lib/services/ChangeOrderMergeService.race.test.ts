@@ -116,13 +116,13 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
    * has a working copy, the affected-items list is registered, and the merge
    * has nothing to complain about except what the test is aiming at.
    */
-  async function ecoWithEdit(
+  async function changeOrderWithEdit(
     user: TestUser,
     designId: string,
     part: { id?: string; masterId?: string | null },
     label: string,
   ) {
-    const eco = await ChangeOrderService.create(
+    const changeOrder = await ChangeOrderService.create(
       { revision: 'A', changeType: 'ECO', name: `Race ECO ${label}` },
       [designId],
       user.id,
@@ -132,7 +132,7 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
       .from(changeOrderDesigns)
       .where(
         and(
-          eq(changeOrderDesigns.changeOrderId, eco.id!),
+          eq(changeOrderDesigns.changeOrderId, changeOrder.id!),
           eq(changeOrderDesigns.designId, designId),
         ),
       )
@@ -155,7 +155,7 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
       user.id,
     )
 
-    return { ecoId: eco.id!, branchId, editedName }
+    return { ecoId: changeOrder.id!, branchId, editedName }
   }
 
   async function mainCurrentItem(mainBranchId: string, itemMasterId: string) {
@@ -214,33 +214,43 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
    * `validateMerge` reports 'no_changes', `mergeBranches` skips it, and
    * `merge()` falls through to `applyAffectedItems` — the pass under test.
    */
-  async function branchlessReleaseEco(
+  async function branchlessReleaseChangeOrder(
     user: TestUser,
     designId: string,
     part: { id?: string },
     label: string,
   ) {
-    const eco = await ChangeOrderService.create(
+    const changeOrder = await ChangeOrderService.create(
       { revision: 'A', changeType: 'ECO', name: `Branchless ECO ${label}` },
       [designId],
       user.id,
     )
     await ChangeOrderService.addAffectedItem(
-      eco.id!,
+      changeOrder.id!,
       { affectedItemId: part.id!, changeAction: 'release' },
       user.id,
     )
-    return { ecoId: eco.id! }
+    return { ecoId: changeOrder.id! }
   }
 
   it('lets exactly one of two concurrent conflicting releases win', async () => {
     const { user, designId, part, mainBranchId } = await seededReleasedPart()
-    const ecoA = await ecoWithEdit(user, designId, part, 'ECO-A')
-    const ecoB = await ecoWithEdit(user, designId, part, 'ECO-B')
+    const changeOrderA = await changeOrderWithEdit(
+      user,
+      designId,
+      part,
+      'ECO-A',
+    )
+    const changeOrderB = await changeOrderWithEdit(
+      user,
+      designId,
+      part,
+      'ECO-B',
+    )
 
     const outcomes = await Promise.allSettled([
-      ChangeOrderMergeService.merge(ecoA.ecoId, user.id),
-      ChangeOrderMergeService.merge(ecoB.ecoId, user.id),
+      ChangeOrderMergeService.merge(changeOrderA.ecoId, user.id),
+      ChangeOrderMergeService.merge(changeOrderB.ecoId, user.id),
     ])
 
     const fulfilledIdx = outcomes.flatMap((o, i) =>
@@ -262,7 +272,7 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
 
     // Main holds the winner's content — nothing reverted, nothing superseded
     // by stale data — and the master has exactly one current version.
-    const winner = fulfilledIdx[0] === 0 ? ecoA : ecoB
+    const winner = fulfilledIdx[0] === 0 ? changeOrderA : changeOrderB
     const current = await mainCurrentItem(mainBranchId, part.masterId!)
     expect(current).toBeDefined()
     expect(current!.name).toBe(winner.editedName)
@@ -283,33 +293,48 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
     // re-check inside the transaction stands between B's release and being
     // silently superseded by A's stale branch.
     const { user, designId, part, mainBranchId } = await seededReleasedPart()
-    const ecoA = await ecoWithEdit(user, designId, part, 'ECO-A')
-    const ecoB = await ecoWithEdit(user, designId, part, 'ECO-B')
+    const changeOrderA = await changeOrderWithEdit(
+      user,
+      designId,
+      part,
+      'ECO-A',
+    )
+    const changeOrderB = await changeOrderWithEdit(
+      user,
+      designId,
+      part,
+      'ECO-B',
+    )
 
     const validation = await ChangeOrderMergeService.validateMerge(
-      ecoA.branchId,
+      changeOrderA.branchId,
     )
     expect(validation.canMerge).toBe(true)
 
-    await ChangeOrderMergeService.merge(ecoB.ecoId, user.id)
+    await ChangeOrderMergeService.merge(changeOrderB.ecoId, user.id)
 
     await expect(
       ChangeOrderMergeService.mergeBranchToMain(
-        ecoA.branchId,
-        ecoA.ecoId,
+        changeOrderA.branchId,
+        changeOrderA.ecoId,
         user.id,
       ),
     ).rejects.toThrow(MergeConflictError)
 
     // B's release is intact.
     const current = await mainCurrentItem(mainBranchId, part.masterId!)
-    expect(current!.name).toBe(ecoB.editedName)
+    expect(current!.name).toBe(changeOrderB.editedName)
     expect(current!.revision).toBe('B')
   })
 
   it('reports a retried release once, not once per attempt', async () => {
     const { user, designId, part } = await seededReleasedPart()
-    const eco = await ecoWithEdit(user, designId, part, 'ECO-RETRY')
+    const changeOrder = await changeOrderWithEdit(
+      user,
+      designId,
+      part,
+      'ECO-RETRY',
+    )
 
     // Force one serialization failure late in the transaction body — after
     // the item loop has filled every accumulator — then let the retry run
@@ -321,7 +346,10 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
       })
     })
 
-    const result = await ChangeOrderMergeService.merge(eco.ecoId, user.id)
+    const result = await ChangeOrderMergeService.merge(
+      changeOrder.ecoId,
+      user.id,
+    )
 
     // The retry actually happened — attempt one aborted at archiveBranch,
     // attempt two ran it for real.
@@ -345,7 +373,7 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
       .where(and(eq(items.masterId, part.masterId!), eq(items.isCurrent, true)))
     expect(released).toHaveLength(1)
     expect(released[0]!.revision).toBe('B')
-    expect(released[0]!.name).toBe(eco.editedName)
+    expect(released[0]!.name).toBe(changeOrder.editedName)
   })
 
   it('settles two concurrent branchless releases on one revision letter', async () => {
@@ -358,12 +386,22 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
     // released row and correctly does nothing.
     const { user, designId, part, mainBranchId } =
       await seededDraftPart('branchless-race')
-    const ecoA = await branchlessReleaseEco(user, designId, part, 'A')
-    const ecoB = await branchlessReleaseEco(user, designId, part, 'B')
+    const changeOrderA = await branchlessReleaseChangeOrder(
+      user,
+      designId,
+      part,
+      'A',
+    )
+    const changeOrderB = await branchlessReleaseChangeOrder(
+      user,
+      designId,
+      part,
+      'B',
+    )
 
     const outcomes = await Promise.allSettled([
-      ChangeOrderMergeService.merge(ecoA.ecoId, user.id),
-      ChangeOrderMergeService.merge(ecoB.ecoId, user.id),
+      ChangeOrderMergeService.merge(changeOrderA.ecoId, user.id),
+      ChangeOrderMergeService.merge(changeOrderB.ecoId, user.id),
     ])
 
     // Nothing raw escapes. A release either lands, or loses with the conflict
@@ -404,7 +442,12 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
 
   it('reports a retried branchless release once, not once per attempt', async () => {
     const { user, designId, part } = await seededDraftPart('branchless-retry')
-    const eco = await branchlessReleaseEco(user, designId, part, 'RETRY')
+    const changeOrder = await branchlessReleaseChangeOrder(
+      user,
+      designId,
+      part,
+      'RETRY',
+    )
 
     // Force one serialization failure at the end of the pass — after the
     // release has been applied and the accumulator filled. archiveBranch is
@@ -417,7 +460,10 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
       })
     })
 
-    const result = await ChangeOrderMergeService.merge(eco.ecoId, user.id)
+    const result = await ChangeOrderMergeService.merge(
+      changeOrder.ecoId,
+      user.id,
+    )
 
     // Attempt one aborted at archiveBranch; attempt two ran it for real.
     expect(archiveSpy.mock.calls.length).toBeGreaterThanOrEqual(2)
@@ -439,7 +485,7 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
     const releaseCommits = await concurrent.db
       .select()
       .from(commits)
-      .where(eq(commits.changeOrderItemId, eco.ecoId))
+      .where(eq(commits.changeOrderItemId, changeOrder.ecoId))
     expect(releaseCommits).toHaveLength(1)
   })
 
@@ -449,7 +495,12 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
     // now the same retry, so it needs the same proof. The change order does
     // both — a branch edit to one part, a state-only release of another.
     const { user, designId, part } = await seededReleasedPart()
-    const eco = await ecoWithEdit(user, designId, part, 'ECO-MIXED')
+    const changeOrder = await changeOrderWithEdit(
+      user,
+      designId,
+      part,
+      'ECO-MIXED',
+    )
 
     const stateOnly = await ItemService.create<Part>(
       'Part',
@@ -462,7 +513,7 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
       user.id,
     )
     await ChangeOrderService.addAffectedItem(
-      eco.ecoId,
+      changeOrder.ecoId,
       { affectedItemId: stateOnly.id!, changeAction: 'release' },
       user.id,
     )
@@ -485,7 +536,10 @@ describe('ChangeOrderMergeService — releases under real concurrency', () => {
       },
     )
 
-    const result = await ChangeOrderMergeService.merge(eco.ecoId, user.id)
+    const result = await ChangeOrderMergeService.merge(
+      changeOrder.ecoId,
+      user.id,
+    )
 
     expect(injected).toBe(true)
 

@@ -53,7 +53,7 @@ export {
 export type { ItemFilters } from './options/items'
 export {
   designBranchesQuery,
-  designEcosQuery,
+  designChangeOrdersQuery as designChangeOrdersQuery,
   designCountsQuery,
   designDetailQuery,
   designFamiliesQuery,
@@ -68,7 +68,7 @@ export {
 export type {
   DesignBranch,
   DesignCounts,
-  DesignEco,
+  DesignChangeOrder as DesignChangeOrder,
   DesignFamily,
   DesignScopeGraphParams,
   DesignStructure,
@@ -82,19 +82,19 @@ export {
   changeOrderApprovalsQuery,
   changeOrderDesignsQuery,
   changeOrderDetailQuery,
-  ecoDesignStructureQuery,
+  changeOrderDesignStructureQuery as changeOrderDesignStructureQuery,
   changeOrderSummaryQuery,
-  changeOrderWorkflowStructureQuery,
+  changeOrderLifecycleStructureQuery,
   editableChangeOrdersQuery,
 } from './options/change-orders'
 export type {
   ChangeOrderApprovals,
-  ChangeOrderWorkflowStructure,
-  EcoDesignStructure,
-  EcoAffectedItem,
-  EcoDesign,
-  EcoDesignSummary,
-  EcoSummary,
+  ChangeOrderLifecycleStructure,
+  ChangeOrderDesignStructure as EcoDesignStructure,
+  ChangeOrderAffectedItem as ChangeOrderAffectedItem,
+  ChangeOrderDesign as ChangeOrderDesign,
+  ChangeOrderDesignSummary as EcoDesignSummary,
+  ChangeOrderSummary as EcoSummary,
   EditableChangeOrder,
 } from './options/change-orders'
 export {
@@ -208,12 +208,20 @@ export type {
   DashboardStats,
 } from './options/dashboard'
 export {
+  changeOrderLifecycleQuery,
+  changeOrderTransitionsQuery,
   itemTransitionsQuery,
+  lifecycleDefinitionQuery,
   lifecycleListQuery,
   lifecycleByItemTypeQuery,
   releasedFamilyStateIds,
+  stateApproversQuery,
 } from './options/lifecycles'
-export type { ItemTypeLifecycle } from './options/lifecycles'
+export type {
+  ChangeOrderLifecycle,
+  ChangeOrderLifecycleInstance,
+  ItemTypeLifecycle,
+} from './options/lifecycles'
 export {
   aiSettingsQuery,
   settingQuery,
@@ -249,7 +257,7 @@ export type {
   ItemTypeRelationship,
   ItemTypeRuntimeConfig,
   ItemTypeState,
-  WorkflowsByChangeType,
+  LifecyclesByChangeType,
 } from './options/item-types'
 export {
   catalogCategoryListQuery,
@@ -289,7 +297,6 @@ export type { SearchResultRow } from './options/enterprise-search'
 export { itemSearchQuery, itemTextSearchQuery } from './options/item-search'
 export type { ItemSearchParams } from './options/item-search'
 export { itemHistoryQuery } from './options/item-history'
-export { workflowDefinitionQuery } from './options/workflows'
 export { upstreamChangesQuery } from './options/mbom'
 export type { UpstreamChange } from './options/mbom'
 export { aiSessionMessagesQuery, aiSessionsQuery } from './options/ai'

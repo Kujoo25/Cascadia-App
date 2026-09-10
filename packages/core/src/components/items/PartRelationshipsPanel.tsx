@@ -36,6 +36,7 @@ import {
   TabsTrigger,
 } from '@/components/ui'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { useTheme } from '@/lib/theme'
 import { apiFetch } from '@/lib/api/client'
 import { entityQuery, useInvalidateResources } from '@/lib/query'
@@ -77,7 +78,8 @@ export function PartRelationshipsPanel({
   readOnly = false,
 }: PartRelationshipsPanelProps) {
   const { theme } = useTheme()
-  const { alert, confirm } = useAlertDialog()
+  const { confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   const [activeView, setActiveView] = useState<ViewMode>('bom')
 
@@ -163,14 +165,7 @@ export function PartRelationshipsPanel({
           })
           await invalidate('relationships')
         } catch (error) {
-          alert({
-            title: 'Failed to remove relationship',
-            description:
-              error instanceof Error
-                ? error.message
-                : 'Failed to remove relationship',
-            variant: 'destructive',
-          })
+          handleError(error, { title: 'Failed to remove relationship' })
         }
       },
     })

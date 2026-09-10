@@ -2,13 +2,10 @@
 // Copyright (c) 2026 Cascadia PLM LLC
 
 import { useCallback, useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import type { VersionContext } from '@/lib/hooks/useVersionContext'
 import { apiFetch } from '@/lib/api/client'
-
-interface BranchSummary {
-  id: string
-  branchType: string
-}
+import { itemEditContextQuery } from '@/lib/query'
 
 export interface EditLockStatus {
   isCheckedOut: boolean
@@ -16,12 +13,44 @@ export interface EditLockStatus {
   checkedOutAt?: string | Date
 }
 
+/**
+ * Where the server says this item may be edited: the branch carrying its edit
+ * lock, and whether main is protected *for this item's type*.
+ *
+ * Both answers are the server's to give. Protection is a property of the
+ * design (one released item protects main for everything in it) crossed with
+ * the item type's lifecycle kind (a Free or Driving lifecycle is exempt and
+ * stays editable on that same protected main), and the lock branch follows the
+ * item's own branch row when it has one. A client cannot derive any of that
+ * from the fields on the item, and every page that tried got it wrong in a
+ * different way.
+ */
+export interface ItemEditContext {
+  lockBranchId: string | null
+  branchType: string | null
+  isBranchLocked: boolean
+  isMainProtected: boolean
+  checkedOutBy: { id: string; name: string | null; email: string } | null
+  state: string | null
+  designId: string | null
+}
+
+/** Read the edit context for an item. Shares a cache key with `useEditLock`. */
+export function useItemEditContext(
+  itemId: string | undefined,
+): ItemEditContext | null {
+  const { data } = useQuery(
+    itemEditContextQuery<ItemEditContext>(itemId ?? '', Boolean(itemId)),
+  )
+  return data ?? null
+}
+
 export interface UseEditLockOptions {
   /** Current item version id (the id the detail page loaded) */
   itemId: string | undefined
-  designId: string | null | undefined
   context: VersionContext
-  isMainProtected: boolean
+  /** From `useItemEditContext`. Passed in so the page can gate on it too. */
+  editContext: ItemEditContext | null
   currentUserId?: string
 }
 
@@ -34,21 +63,19 @@ export interface UseEditLockOptions {
  * status, and exposes acquire/checkin/cancel operations:
  *
  * - branch context: the lock lives on that branch
- * - unprotected main: the lock lives on the design's main branch
- * - protected main: no direct lock — editing goes through the CheckoutDialog
- *   (revise onto an ECO/workspace branch) instead
+ * - main context: wherever `editContext.lockBranchId` says — the item's own
+ *   branch row if it has one, else main while main is unprotected
+ * - protected main: no lock branch at all, so `canLock` is false — a released
+ *   item revises through the CheckoutDialog, and anything else has to move to
+ *   an ECO or workspace branch first
  * - tag/commit: read-only, no lock
  */
 export function useEditLock({
   itemId,
-  designId,
   context,
-  isMainProtected,
+  editContext,
   currentUserId,
 }: UseEditLockOptions) {
-  const [mainBranchId, setMainBranchId] = useState<string | undefined>(
-    undefined,
-  )
   const [status, setStatus] = useState<EditLockStatus | null>(null)
   const [sessionUserId, setSessionUserId] = useState<string | undefined>(
     undefined,
@@ -74,38 +101,16 @@ export function useEditLock({
 
   const effectiveUserId = currentUserId ?? sessionUserId
 
-  const needsMainBranch =
-    context.type === 'main' && !isMainProtected && !!designId
-
-  useEffect(() => {
-    if (!needsMainBranch || !designId) {
-      setMainBranchId(undefined)
-      return
-    }
-    let cancelled = false
-    apiFetch<{ data: { branches: Array<BranchSummary> } }>(
-      `/api/v1/designs/${designId}/branches`,
-    )
-      .then((res) => {
-        if (!cancelled) {
-          setMainBranchId(
-            res.data.branches.find((b) => b.branchType === 'main')?.id,
-          )
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setMainBranchId(undefined)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [needsMainBranch, designId])
-
+  // The version context decides which branch is being edited; the server
+  // decides whether that branch can hold a lock. On main both halves come
+  // from `editContext`, which is null (no lock branch) exactly when main is
+  // protected for this item's type — the case that used to resolve to the
+  // main branch id and fail on the POST.
   const lockBranchId =
     context.type === 'branch'
       ? context.branchId
-      : needsMainBranch
-        ? mainBranchId
+      : context.type === 'main'
+        ? (editContext?.lockBranchId ?? undefined)
         : undefined
 
   const refreshStatus =
@@ -185,6 +190,8 @@ export function useEditLock({
     lockBranchId,
     /** Whether a direct lock can be taken in this context */
     canLock: !!(itemId && lockBranchId),
+    /** Whether main is protected for this item's type (server's answer) */
+    isMainProtected: editContext?.isMainProtected ?? false,
     status,
     heldByMe,
     lockedByOther,

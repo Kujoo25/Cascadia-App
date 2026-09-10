@@ -13,8 +13,8 @@ import type { BaseItem } from '@/lib/items/types/base'
 import type {
   ApprovalsByState,
   CanApproveResult,
-  EffectiveWorkflowStructure,
-} from '@/lib/workflows/types'
+  EffectiveLifecycleStructure,
+} from '@/lib/lifecycles/types'
 import { apiFetch } from '@/lib/api/client'
 
 /**
@@ -56,7 +56,7 @@ export function editableChangeOrdersQuery(designId?: string) {
 }
 
 /** A design pulled into an ECO, joined to the design it points at. */
-export interface EcoDesign {
+export interface ChangeOrderDesign {
   id: string
   changeOrderId: string
   designId: string
@@ -81,16 +81,16 @@ export interface EcoDesign {
  * Anonymous by design: no count, no names. Someone who did not expect the
  * boundary asks for access to whatever else the ECO touches.
  */
-export interface EcoDesignScope {
-  designs: Array<EcoDesign>
+export interface ChangeOrderDesignScope {
+  designs: Array<ChangeOrderDesign>
   hasRestricted: boolean
 }
 
 export function changeOrderDesignsQuery(id: string) {
   return queryOptions({
     queryKey: qk.sub('change-orders', id, 'designs'),
-    queryFn: async (): Promise<EcoDesignScope> => {
-      const result = await apiFetch<{ data: EcoDesignScope }>(
+    queryFn: async (): Promise<ChangeOrderDesignScope> => {
+      const result = await apiFetch<{ data: ChangeOrderDesignScope }>(
         `/api/v1/change-orders/${id}/designs`,
       )
       return result.data
@@ -99,11 +99,13 @@ export function changeOrderDesignsQuery(id: string) {
 }
 
 /** An affected-item row with the item it points at resolved. */
-export type EcoAffectedItem = AffectedItem & { affectedItemDetails?: BaseItem }
+export type ChangeOrderAffectedItem = AffectedItem & {
+  affectedItemDetails?: BaseItem
+}
 
 /** Items an ECO affects, with the change action recorded for each. */
 export function changeOrderAffectedItemsQuery(id: string) {
-  return entitySubQuery<EcoAffectedItem>(
+  return entitySubQuery<ChangeOrderAffectedItem>(
     'change-orders',
     id,
     'affected-items',
@@ -137,7 +139,7 @@ export function changeOrderApprovalsQuery(id: string) {
   })
 }
 
-export interface EcoDesignSummary {
+export interface ChangeOrderDesignSummary {
   designId: string
   designCode: string
   designName: string
@@ -149,14 +151,14 @@ export interface EcoDesignSummary {
   hasCheckedOutItems: boolean
 }
 
-export interface EcoSummary {
+export interface ChangeOrderSummary {
   changeOrder: {
     id: string
     itemNumber: string
     name: string | null
     state: string
   }
-  designs: Array<EcoDesignSummary>
+  designs: Array<ChangeOrderDesignSummary>
   totalItemsAffected: number
   canSubmit: boolean
   canRelease: boolean
@@ -167,8 +169,8 @@ export interface EcoSummary {
 export function changeOrderSummaryQuery(id: string) {
   return queryOptions({
     queryKey: qk.sub('change-orders', id, 'summary'),
-    queryFn: async (): Promise<EcoSummary> => {
-      const result = await apiFetch<{ data: EcoSummary }>(
+    queryFn: async (): Promise<ChangeOrderSummary> => {
+      const result = await apiFetch<{ data: ChangeOrderSummary }>(
         `/api/v1/change-orders/${id}/summary`,
       )
       return result.data
@@ -176,7 +178,7 @@ export function changeOrderSummaryQuery(id: string) {
   })
 }
 
-export type ChangeOrderWorkflowStructure = EffectiveWorkflowStructure & {
+export type ChangeOrderLifecycleStructure = EffectiveLifecycleStructure & {
   currentState: string
   instanceId: string
 }
@@ -187,11 +189,11 @@ export type ChangeOrderWorkflowStructure = EffectiveWorkflowStructure & {
  * A change order with no workflow attached 404s; callers render the empty case
  * from `undefined` rather than from a sentinel.
  */
-export function changeOrderWorkflowStructureQuery(id: string, enabled = true) {
+export function changeOrderLifecycleStructureQuery(id: string, enabled = true) {
   return queryOptions({
     queryKey: qk.sub('change-orders', id, 'workflow-structure'),
-    queryFn: async (): Promise<ChangeOrderWorkflowStructure> => {
-      const result = await apiFetch<{ data: ChangeOrderWorkflowStructure }>(
+    queryFn: async (): Promise<ChangeOrderLifecycleStructure> => {
+      const result = await apiFetch<{ data: ChangeOrderLifecycleStructure }>(
         `/api/v1/change-orders/${id}/workflow/structure`,
       )
       return result.data
@@ -234,7 +236,7 @@ export function changeActionOptionsQuery(
   })
 }
 
-export interface EcoDesignStructure<TNode, TOrphan, TBranch> {
+export interface ChangeOrderDesignStructure<TNode, TOrphan, TBranch> {
   roots: Array<TNode>
   orphans: Array<TOrphan>
   ecoBranch: TBranch | null
@@ -248,7 +250,7 @@ export interface EcoDesignStructure<TNode, TOrphan, TBranch> {
  * refreshes the tree — it previously relied on a `key=` remount driven by a
  * refresh counter in the parent.
  */
-export function ecoDesignStructureQuery<TNode, TOrphan, TBranch>(
+export function changeOrderDesignStructureQuery<TNode, TOrphan, TBranch>(
   changeOrderId: string,
   designId: string,
 ) {
@@ -259,9 +261,11 @@ export function ecoDesignStructureQuery<TNode, TOrphan, TBranch>(
       'design-structure',
       designId,
     ),
-    queryFn: async (): Promise<EcoDesignStructure<TNode, TOrphan, TBranch>> => {
+    queryFn: async (): Promise<
+      ChangeOrderDesignStructure<TNode, TOrphan, TBranch>
+    > => {
       const result = await apiFetch<{
-        data: EcoDesignStructure<TNode, TOrphan, TBranch>
+        data: ChangeOrderDesignStructure<TNode, TOrphan, TBranch>
       }>(`/api/v1/change-orders/${changeOrderId}/designs/${designId}/structure`)
       return {
         roots: result.data.roots,

@@ -474,17 +474,17 @@ describe('GET /api/items/:id/graph — derived domains', () => {
 
     it('scopes branch-pinned files to the viewed branch', async () => {
       const part = await createPart('Bracket', 'none')
-      const ecoBranch = await insertBranch(`eco/ECO-A-${Date.now()}`)
+      const changeOrderBranch = await insertBranch(`eco/ECO-A-${Date.now()}`)
       const otherBranch = await insertBranch(`eco/ECO-B-${Date.now()}`)
       const globalFile = await insertFile(part.id!)
       const branchFile = await insertFile(part.id!, {
-        branchId: ecoBranch.id,
+        branchId: changeOrderBranch.id,
       })
 
       // Viewed on the pinning branch: both visible.
       const onBranch = await fetchGraph(
         part.id!,
-        `depth=1&includeFiles=true&branch=${ecoBranch.id}`,
+        `depth=1&includeFiles=true&branch=${changeOrderBranch.id}`,
       )
       expect(onBranch.nodes.map((n) => n.id)).toContain(globalFile.id)
       expect(onBranch.nodes.map((n) => n.id)).toContain(branchFile.id)

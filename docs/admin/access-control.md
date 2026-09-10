@@ -63,7 +63,7 @@ Permissions are defined as resource-action pairs. Each role specifies which acti
 | `work_instructions` | Work instruction items                             |
 | `work_orders`       | Work order items                                   |
 | `issues`            | Issue items                                        |
-| `workflows`         | Workflow definitions and instances                 |
+| `lifecycles`        | Lifecycle definitions and instances                |
 | `users`             | User accounts                                      |
 | `roles`             | Role definitions                                   |
 | `programs`          | Program management                                 |
@@ -78,14 +78,14 @@ The complete permission matrix for each role:
 | ----------------- | ------------- | ---------- | -------- | ---- | --------- |
 | parts             | CRUDA         | CRUD       | RUA      | CRU  | R         |
 | documents         | CRUDA         | CRUD       | RUA      | CRU  | R         |
-| change_orders     | CRUDA         | CRUD       | RUA      | CR   | R         |
+| change_orders     | CRUD          | CRUD       | RU       | CR   | R         |
 | designs           | CRUD          | CRUD       | RU       | CRU  | R         |
 | requirements      | CRUDA         | CRUD       | RUA      | CRU  | R         |
 | tasks             | CRUD          | CRUD       | RU       | CRU  | R         |
 | work_instructions | CRUD          | CRUD       | RUA      | CRU  | R         |
 | work_orders       | CRUD          | CRUD       | RUA      | CRU  | R         |
 | issues            | CRUDA         | CRUD       | RUA      | CRU  | R         |
-| workflows         | CRUDM         | RM         | R        | R    | R         |
+| lifecycles        | CRUDM         | RM         | R        | R    | R         |
 | users             | CRUDM         | R          | R        | R    | R         |
 | roles             | CRUDM         | R          | R        | R    | R         |
 | programs          | CRUDM         | R          | R        | R    | R         |
@@ -104,7 +104,7 @@ gate at all: the sidebar offered those pages to a View Only account and they
 403'd on arrival.
 
 Note the pages behind it are _not_ gated by narrowing `users:read`,
-`roles:read` or `workflows:read`. Those stay readable by every role on purpose
+`roles:read` or `lifecycles:read`. Those stay readable by every role on purpose
 — approver and assignee pickers, program team management and item state
 resolution all read them from ordinary pages, so tightening them would have
 broken non-System features.

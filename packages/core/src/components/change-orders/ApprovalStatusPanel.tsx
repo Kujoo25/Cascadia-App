@@ -14,7 +14,7 @@ import {
   X,
 } from 'lucide-react'
 import { ApprovalDialog } from './ApprovalDialog'
-import type { ApprovalStatus, CanApproveResult } from '@/lib/workflows/types'
+import type { ApprovalStatus, CanApproveResult } from '@/lib/lifecycles/types'
 import {
   Badge,
   Button,
@@ -65,7 +65,7 @@ export function ApprovalStatusPanel({
   }
 
   const handleApprovalSubmitted = async () => {
-    await invalidate('workflows')
+    await invalidate('lifecycles')
   }
 
   const openApprovalDialog = (stateId: string) => {

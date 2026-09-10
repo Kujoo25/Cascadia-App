@@ -20,7 +20,10 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { rowDependentStatements } from './migration-row-dependence.mjs'
+import {
+  isDataOnly,
+  rowDependentStatements,
+} from './migration-row-dependence.mjs'
 
 /** What the classifier makes of a migration built from these statements. */
 function classify(...sql: Array<string>): Array<string> {
@@ -133,5 +136,39 @@ describe('tables the migration creates itself', () => {
         'ALTER TABLE "old" ADD CONSTRAINT "old_ck" CHECK ("id" IS NOT NULL)',
       ),
     ).toEqual(['ADD CONSTRAINT on "old"'])
+  })
+})
+
+describe('data-only migrations', () => {
+  /** Whether a migration built from these statements changes rows only. */
+  const dataOnly = (...sql: Array<string>) => isDataOnly({ sql })
+
+  it('is one where every statement is a write', () => {
+    expect(
+      dataOnly(
+        `-- a note
+UPDATE "t" SET "c" = 1 WHERE "c" = 'a; b'`,
+        'DELETE FROM "t" WHERE "c" IS NULL',
+        'INSERT INTO "t" VALUES (1)',
+      ),
+    ).toBe(true)
+  })
+
+  it('is not one that carries DDL beside the writes, however it is split', () => {
+    expect(
+      dataOnly('UPDATE "t" SET "c" = 1', 'ALTER TABLE "t" DROP COLUMN "d"'),
+    ).toBe(false)
+    expect(
+      dataOnly('UPDATE "t" SET "c" = 1; CREATE INDEX "i" ON "t" ("c")'),
+    ).toBe(false)
+  })
+
+  it('reads a DO block as DDL, whatever it contains', () => {
+    expect(dataOnly('DO $$ BEGIN UPDATE "t" SET "c" = 1; END $$')).toBe(false)
+  })
+
+  it('is not an empty migration', () => {
+    expect(dataOnly()).toBe(false)
+    expect(dataOnly('-- nothing but a comment')).toBe(false)
   })
 })

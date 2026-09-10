@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
+import type { LifecycleState } from '@/lib/lifecycles/types'
 import { Badge } from '@/components/ui'
 import { getStateBadgeVariant } from '@/components/bom/helpers'
 import { useLifecyclePhases } from '@/lib/hooks/useLifecyclePhases'
@@ -9,6 +10,11 @@ interface StateBadgeProps {
   itemType?: string
   state: string | null | undefined
   className?: string
+  /**
+   * The states to resolve against, from the definition the item actually
+   * runs. When given, the per-item-type lookup is skipped.
+   */
+  states?: Array<Pick<LifecycleState, 'id' | 'name' | 'color'>>
 }
 
 /**
@@ -90,13 +96,24 @@ export function useLifecycleState(
  * lifecycles keep id === name, so this only changes what renders when they
  * differ. Falls back to the raw value when no lifecycle or matching state
  * exists.
+ *
+ * A caller that knows the definition the item actually runs passes its
+ * `states` — a change order's own workflow instance, which may run a
+ * definition other than the type's or carry per-instance states of its own —
+ * and the per-item-type lookup is skipped.
  */
-export function StateBadge({ itemType, state, className }: StateBadgeProps) {
-  const { data } = useLifecyclePhases(itemType)
+export function StateBadge({
+  itemType,
+  state,
+  className,
+  states,
+}: StateBadgeProps) {
+  const { data } = useLifecyclePhases(states ? undefined : itemType)
 
   if (!state) return null
 
-  const match = data?.states.find((s) => s.id === state || s.name === state)
+  const known = states ?? data?.states
+  const match = known?.find((s) => s.id === state || s.name === state)
   const variant = match?.color
     ? (VARIANT_BY_LIFECYCLE_COLOR[match.color] ?? 'default')
     : getStateBadgeVariant(match?.id ?? state)

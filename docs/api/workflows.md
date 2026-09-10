@@ -1,11 +1,21 @@
-# Workflows API
+# Lifecycles API
 
-The Workflows API manages workflow definitions and their runtime instances. Workflows define state machines that govern item lifecycle transitions and change order approval processes.
+> **Paths:** these routes live at `/api/v1/lifecycles`. `/api/v1/lifecycles`,
+> the path they shipped under, stays mounted as a deprecated alias with the
+> same handlers; the response keys keep their v1 spelling (`workflows`,
+> `workflow`). Readers arriving from Aras or Windchill: what other systems
+> call a workflow is a lifecycle definition of the Driving kind here — see the
+> [lifecycle engine guide](../features/workflow-engine.md#coming-from-aras-or-windchill).
 
-Cascadia supports two workflow categories:
+The Lifecycles API manages lifecycle definitions: the state machines that govern item states and the review and release of change orders. Instances, transitions and approvals on a change order are served by the [Change Orders API](./change-orders.md).
 
-- **Lifecycle** workflows -- govern item state transitions (e.g., Draft -> In Review -> Released)
-- **Workflow** (approval) workflows -- govern change order approval processes (e.g., In Work -> Submitted -> Approved)
+A definition's `lifecycleType` says what kind it is:
+
+- **Free** -- self-controlled; items transition by hand (Issues, Tasks, Work Orders)
+- **Driven** -- change-order-controlled; a release applies its change actions (Parts, Documents, Requirements)
+- **Driving** -- a change order's own review and release process (`Change Order - Standard`, `XCO - Flexible Change Order`)
+
+`?type=workflow` selects the Driving definitions and `?type=lifecycle` the rest; `?lifecycleType=` selects one kind by name.
 
 ## Endpoints
 
@@ -20,24 +30,25 @@ hand-written table does:
 
 See [the API README](./README.md) for the versioning policy that governs all three.
 
-For workflow instances on change orders, see the [Change Orders API](./change-orders.md).
+For lifecycle instances on change orders, see the [Change Orders API](./change-orders.md).
 
-## List Workflow Definitions
+## List Lifecycle Definitions
 
 ```
-GET /api/v1/workflows
+GET /api/v1/lifecycles
 ```
 
-Lists all workflow definitions with optional filtering. Auth required.
+Lists all lifecycle definitions with optional filtering. Requires `lifecycles.read` permission.
 
 ### Query Parameters
 
-| Parameter  | Type    | Values                  | Description                   |
-| ---------- | ------- | ----------------------- | ----------------------------- |
-| `isActive` | string  | `true`, `false`         | Filter by active status       |
-| `type`     | string  | `lifecycle`, `workflow` | Filter by definition type     |
-| `limit`    | integer | 1-500                   | Max results (default 100)     |
-| `offset`   | integer | 0+                      | Pagination offset (default 0) |
+| Parameter       | Type    | Values                      | Description                                         |
+| --------------- | ------- | --------------------------- | --------------------------------------------------- |
+| `isActive`      | string  | `true`, `false`             | Filter by active status                             |
+| `type`          | string  | `lifecycle`, `workflow`     | `workflow` = Driving, `lifecycle` = Driven and Free |
+| `lifecycleType` | string  | `Free`, `Driven`, `Driving` | Filter by kind                                      |
+| `limit`         | integer | 1-500                       | Max results (default 100)                           |
+| `offset`        | integer | 0+                          | Pagination offset (default 0)                       |
 
 ### Response
 
@@ -83,43 +94,47 @@ Lists all workflow definitions with optional filtering. Auth required.
 ### Example
 
 ```bash
-# List all active lifecycle workflows
-curl /api/v1/workflows?isActive=true&type=lifecycle
+# List the active item lifecycles (Driven and Free)
+curl /api/v1/lifecycles?isActive=true&type=lifecycle
 
-# List all approval workflows
-curl /api/v1/workflows?type=workflow
+# List the change-order lifecycles (Driving)
+curl /api/v1/lifecycles?type=workflow
+
+# One kind by name
+curl /api/v1/lifecycles?lifecycleType=Driven
 ```
 
-## Create Workflow Definition
+## Create Lifecycle Definition
 
 ```
-POST /api/v1/workflows
+POST /api/v1/lifecycles
 ```
 
-Creates a new workflow definition. Requires `workflows.create` permission.
+Creates a new lifecycle definition. Requires `lifecycles.create` permission.
 
 ### Request Body
 
-| Field                 | Type    | Required | Description                                   |
-| --------------------- | ------- | -------- | --------------------------------------------- |
-| `name`                | string  | Yes      | Workflow name                                 |
-| `lifecycleType`       | string  | No       | `Free` (default), `Driven`, or `Driving`      |
-| `workflowType`        | string  | No       | `strict` (default) or `flexible`              |
-| `description`         | string  | No       | Description                                   |
-| `applicableItemTypes` | array   | No       | Item types this workflow applies to           |
-| `states`              | array   | No       | Array of state definitions                    |
-| `transitions`         | array   | No       | Array of transition definitions               |
-| `isActive`            | boolean | No       | Whether the workflow is active (default true) |
+| Field                 | Type    | Required | Description                                     |
+| --------------------- | ------- | -------- | ----------------------------------------------- |
+| `name`                | string  | Yes      | Definition name                                 |
+| `lifecycleType`       | string  | No       | `Free` (default), `Driven`, or `Driving`        |
+| `workflowType`        | string  | No       | `strict` (default) or `flexible`                |
+| `description`         | string  | No       | Description                                     |
+| `applicableItemTypes` | array   | No       | Item types this lifecycle applies to            |
+| `states`              | array   | No       | Array of state definitions                      |
+| `transitions`         | array   | No       | Array of transition definitions                 |
+| `isActive`            | boolean | No       | Whether the definition is active (default true) |
 
 ### State Definition
 
-| Field       | Type    | Required | Description                 |
-| ----------- | ------- | -------- | --------------------------- |
-| `id`        | string  | Yes      | Unique state identifier     |
-| `name`      | string  | Yes      | Display name                |
-| `isInitial` | boolean | No       | True for the starting state |
-| `isFinal`   | boolean | No       | True for terminal states    |
-| `color`     | string  | No       | Display color               |
+| Field       | Type    | Required       | Description                                                                                              |
+| ----------- | ------- | -------------- | -------------------------------------------------------------------------------------------------------- |
+| `id`        | string  | Yes            | Unique state identifier                                                                                  |
+| `name`      | string  | Yes            | Display name                                                                                             |
+| `isInitial` | boolean | No             | True for the starting state                                                                              |
+| `isFinal`   | boolean | No             | True for terminal states                                                                                 |
+| `finalKind` | string  | Driving finals | `release` or `cancel`: what completing here means. Required on every final state of a Driving definition |
+| `color`     | string  | No             | Display color                                                                                            |
 
 ### Transition Definition
 
@@ -134,40 +149,40 @@ Creates a new workflow definition. Requires `workflows.create` permission.
 ### Example
 
 ```bash
-curl -X POST /api/v1/workflows \
+curl -X POST /api/v1/lifecycles \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "ECO Approval Workflow",
+    "name": "Change Order - Two-Step Review",
     "lifecycleType": "Driving",
     "workflowType": "strict",
-    "description": "Standard ECO approval process",
+    "description": "Change-order review with a rework loop",
     "applicableItemTypes": ["ChangeOrder"],
     "states": [
-      { "id": "in-work", "name": "In Work", "isInitial": true },
-      { "id": "in-review", "name": "In Review" },
-      { "id": "approved", "name": "Approved", "isFinal": true },
-      { "id": "rejected", "name": "Rejected", "isFinal": true }
+      { "id": "Draft", "name": "Draft", "isInitial": true },
+      { "id": "InReview", "name": "In Review" },
+      { "id": "Approved", "name": "Approved", "isFinal": true, "finalKind": "release" },
+      { "id": "Rejected", "name": "Rejected", "isFinal": true, "finalKind": "cancel" }
     ],
     "transitions": [
       {
         "name": "Submit for Review",
-        "fromStateId": "in-work",
-        "toStateId": "in-review"
+        "fromStateId": "Draft",
+        "toStateId": "InReview"
       },
       {
         "name": "Approve",
-        "fromStateId": "in-review",
-        "toStateId": "approved"
+        "fromStateId": "InReview",
+        "toStateId": "Approved"
       },
       {
         "name": "Reject",
-        "fromStateId": "in-review",
-        "toStateId": "rejected"
+        "fromStateId": "InReview",
+        "toStateId": "Rejected"
       },
       {
-        "name": "Rework",
-        "fromStateId": "rejected",
-        "toStateId": "in-work"
+        "name": "Return to Draft",
+        "fromStateId": "InReview",
+        "toStateId": "Draft"
       }
     ]
   }'
@@ -175,13 +190,13 @@ curl -X POST /api/v1/workflows \
 
 **Status:** `201 Created`
 
-## Get Workflow Definition
+## Get Lifecycle Definition
 
 ```
-GET /api/v1/workflows/:id
+GET /api/v1/lifecycles/:id
 ```
 
-Returns a single workflow definition by ID. Auth required.
+Returns a single lifecycle definition by ID. Requires `lifecycles.read` permission.
 
 ### Response
 
@@ -205,13 +220,13 @@ Returns a single workflow definition by ID. Auth required.
 }
 ```
 
-## Update Workflow Definition
+## Update Lifecycle Definition
 
 ```
-PUT /api/v1/workflows/:id
+PUT /api/v1/lifecycles/:id
 ```
 
-Updates a workflow definition. Auth required.
+Updates a lifecycle definition. Requires `lifecycles.manage` permission.
 
 ### Request Body
 
@@ -228,13 +243,13 @@ All fields are optional:
 }
 ```
 
-## Delete Workflow Definition
+## Delete Lifecycle Definition
 
 ```
-DELETE /api/v1/workflows/:id
+DELETE /api/v1/lifecycles/:id
 ```
 
-Deletes a workflow definition. Auth required.
+Deletes a lifecycle definition. Requires `lifecycles.manage` permission. Refused while an active instance or an item type still references it.
 
 ### Response
 
@@ -251,10 +266,10 @@ Deletes a workflow definition. Auth required.
 ### Get All Approvers
 
 ```
-GET /api/v1/workflows/:id/approvers
+GET /api/v1/lifecycles/:id/approvers
 ```
 
-Returns approvers configured for all states in a workflow definition. Auth required.
+Returns approvers configured for all states in a lifecycle definition. Requires `lifecycles.read` permission. The write endpoints below require `lifecycles.manage`; `PUT .../states/:stateId/approvers` replaces a state's whole approver set and `PATCH .../approvers/:approverId` changes one approver's `isRequired`.
 
 ### Response
 
@@ -283,69 +298,71 @@ Returns approvers configured for all states in a workflow definition. Auth requi
 ### Get State Approvers
 
 ```
-GET /api/v1/workflows/:id/states/:stateId/approvers
+GET /api/v1/lifecycles/:id/states/:stateId/approvers
 ```
 
-Returns approvers for a specific workflow state.
+Returns approvers for a specific lifecycle state.
 
 ### Add Approver
 
 ```
-POST /api/v1/workflows/:id/states/:stateId/approvers
+POST /api/v1/lifecycles/:id/states/:stateId/approvers
 ```
 
-Adds an approver (user or role) to a workflow state.
+Adds an approver (user or role) to a lifecycle state.
 
 ### Request Body
 
 ```json
 {
-  "userId": "user-uuid",
-  "roleId": "role-uuid"
+  "type": "user",
+  "id": "user-uuid",
+  "isRequired": true
 }
 ```
 
-Provide either `userId` (user-based approval) or `roleId` (role-based approval) or both.
+`type` is `user` or `role`, `id` is that user's or role's id, and `isRequired` (default `true`) says whether the approval is required or advisory.
 
 ### Remove Approver
 
 ```
-DELETE /api/v1/workflows/:id/states/:stateId/approvers/:approverId
+DELETE /api/v1/lifecycles/:id/states/:stateId/approvers/:approverId
 ```
 
-Removes an approver from a workflow state.
+Removes an approver from a lifecycle state.
 
-## Workflow Types
+## Strict and Flexible Definitions
 
-### Strict Workflows
+The `workflowType` property (`strict` or `flexible`) says whether an instance may carry a structure of its own. It is orthogonal to `lifecycleType`, the definition's kind.
 
-Strict workflows enforce that transitions can only follow the defined state machine. All states and transitions are fixed at definition time.
+### Strict
 
-### Flexible Workflows
+Strict definitions enforce that transitions can only follow the defined state machine. All states and transitions are fixed at definition time.
 
-Flexible workflows allow per-instance customization of states and transitions. When a workflow instance is started from a flexible definition, the instance gets its own copy of states and transitions that can be modified.
+### Flexible
 
-Use `PUT /api/v1/change-orders/:id/workflow/structure` to modify the structure of a flexible workflow instance.
+Flexible definitions allow per-instance customization of states and transitions. When a lifecycle instance is started from a flexible definition, the instance gets its own copy of states and transitions that can be modified.
 
-## Workflow Guards
+Use `PUT /api/v1/change-orders/:id/workflow/structure` to modify the structure of a flexible lifecycle instance.
+
+## Guards
 
 Transitions can have guard conditions that must be met before the transition is allowed:
 
-| Guard Type           | Description                                |
-| -------------------- | ------------------------------------------ |
-| `requires_approval`  | Requires approval votes before transition  |
-| `role_required`      | Only users with specific roles can execute |
-| `all_items_reviewed` | All affected items must be reviewed        |
+| Guard Type    | Config                                           | Description                                                                           |
+| ------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------- |
+| `field_value` | `fieldName`, `operator`, `value`                 | A field of the item must satisfy the operator (equals, is_not_empty, greater_than, …) |
+| `user_role`   | `requiredRoles`, `requireAll` (default: any one) | The actor must hold one of the roles, or all of them                                  |
 
-Guards are evaluated by `GET /api/v1/change-orders/:id/workflow/transition` and returned in the `allowed` field.
+Guards are evaluated against the change order itself by `GET /api/v1/change-orders/:id/workflow/transition`, which reports each transition's `canTransition` and `guardResults`; approval votes are a separate mechanism (state approvers), not a guard.
 
-## ECO-Driven Item State
+## Change-Order-Driven Item State
 
 Affected items change state through their Driven lifecycle's `changeActionMappings`, applied by the merge when a change order completes in a `finalKind: 'release'` state — never through per-transition configuration. (The former `lifecycleEffects` transition field was removed in remediation Phase 3; see `docs/features/workflow-engine.md` for the mappings model.)
 
-## Workflow Instance Endpoints
+## Lifecycle Instance Endpoints
 
-Workflow instances are managed through the change order API. See the [Change Orders API](./change-orders.md) for:
+Lifecycle instances are managed through the Change Orders API. See the [Change Orders API](./change-orders.md) for:
 
 - `GET /api/v1/change-orders/:id/workflow` -- get instance
 - `POST /api/v1/change-orders/:id/workflow` -- start instance

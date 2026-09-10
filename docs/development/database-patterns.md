@@ -383,22 +383,37 @@ Then apply:
 npm run db:push       # Applies to dev database
 ```
 
-### Manual Migrations
+### Data-only migrations
 
-For complex migrations (data backfills, index changes), create a temporary script:
+A backfill, a dedup, a rename of seeded rows — anything that changes rows
+and not the schema — is a committed migration like any other, minted empty
+and written by hand, in both editions:
 
-```typescript
-// scripts/migrate-xyz.ts
-import { db } from '../src/lib/db'
-import { sql } from 'drizzle-orm'
-
-await db.execute(sql`ALTER TABLE parts ADD COLUMN new_field VARCHAR(100)`)
-await db.execute(
-  sql`UPDATE parts SET new_field = 'default' WHERE new_field IS NULL`,
-)
+```bash
+node scripts/drizzle.mjs generate --custom --name=<what_it_changes>
+CASCADIA_APP=cascadia node scripts/drizzle.mjs generate --custom --name=<what_it_changes>
 ```
 
-Run with: `npx tsx scripts/migrate-xyz.ts`
+Two rules follow from how such a migration reaches an install:
+
+- **It must be safe to apply twice.** `db:baseline` places a pre-v0.5
+  database by its schema, which a data-only migration leaves untouched, so
+  the stamp stops before it and `db:migrate` applies it — possibly to a
+  database that already carries its effect. Guard every statement
+  (`WHERE name = 'the old name'`, `WHERE settings ? 'oldKey'`) so the second
+  run matches nothing.
+- **It ships with a scenario** in `scripts/check-migration-backfills.mjs`,
+  which seeds the rows it exists to handle, applies it and asserts — and,
+  for a migration with no DDL, applies it again and asserts again. The
+  ratchet there refuses a row-dependent migration that has none.
+
+The row statements at the top of
+`0004_change_management_and_design_structure` in either edition's `drizzle/`
+are the shape to copy — each one guarded so the second run matches nothing.
+That file itself is no longer data-only: it is five migrations folded into one
+before publication, and two of them tightened a column. See "Consolidating unpublished migrations" in
+[the upgrade guide](../deployment/upgrading.md) for what a fold does to this
+classification, and to the second-application proof that goes with it.
 
 ### Self-Referencing Foreign Keys
 

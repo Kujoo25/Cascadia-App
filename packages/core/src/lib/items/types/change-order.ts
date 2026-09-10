@@ -98,7 +98,7 @@ export interface ChangeOrder extends BaseItem {
   description?: string // General description (optional, separate from reasonForChange)
   reasonForChange?: string
   impactDescription?: string
-  implementationDate?: Date | string
+  implementationDate?: Date | string | null
   submittedAt?: Date | string
   approvedAt?: Date | string
   approvedBy?: string
@@ -119,7 +119,7 @@ export const changeOrderSchema = baseItemSchema.extend({
   description: z.string().max(10000).optional(),
   reasonForChange: z.string().max(10000).optional(),
   impactDescription: z.string().max(10000).optional(),
-  implementationDate: z.union([z.date(), z.string()]).optional(),
+  implementationDate: z.union([z.date(), z.string()]).nullable().optional(),
   submittedAt: z.union([z.date(), z.string()]).optional(),
   approvedAt: z.union([z.date(), z.string()]).optional(),
   approvedBy: z.string().uuid().optional(),
@@ -132,63 +132,11 @@ export const changeOrderSchema = baseItemSchema.extend({
   baselineName: z.string().max(100).optional(),
 })
 
-// Change order states
-export const changeOrderStates = [
-  {
-    id: 'Draft',
-    name: 'Draft',
-    color: 'gray',
-    description: 'Change order is being drafted',
-  },
-  {
-    id: 'Submitted',
-    name: 'Submitted',
-    color: 'blue',
-    description: 'Change order has been submitted',
-  },
-  {
-    id: 'ImpactAssessment',
-    name: 'Impact Assessment',
-    color: 'indigo',
-    description: 'Impact assessment in progress',
-  },
-  {
-    id: 'Review',
-    name: 'Review',
-    color: 'yellow',
-    description: 'Change order under review',
-  },
-  {
-    id: 'Approved',
-    name: 'Approved',
-    color: 'green',
-    description: 'Change order approved',
-  },
-  {
-    id: 'Rejected',
-    name: 'Rejected',
-    color: 'red',
-    description: 'Change order rejected',
-  },
-  {
-    id: 'Implementation',
-    name: 'Implementation',
-    color: 'purple',
-    description: 'Change order being implemented',
-  },
-  {
-    id: 'Implemented',
-    name: 'Implemented',
-    color: 'cyan',
-    description: 'Change order implemented',
-  },
-  {
-    id: 'Closed',
-    name: 'Closed',
-    color: 'slate',
-    description: 'Change order closed',
-  },
-]
+// A change order's states are not declared here. They come from the Driving
+// definition its change type runs (`lifecyclesByChangeType`), and the list
+// that used to sit here — nine states that never matched any shipped
+// workflow — was still fed to the AI assistant and the global state filter.
+// `LifecycleService.getRenderableStates('ChangeOrder')` is the answer now.
 
 // Affected item schema
 export const affectedItemSchema = z.object({

@@ -28,7 +28,6 @@ import {
 import {
   changeOrderRelationships,
   changeOrderSchema,
-  changeOrderStates,
 } from './types/change-order'
 import {
   testPlanRelationships,
@@ -185,7 +184,10 @@ export const ITEM_TYPE_DEFINITIONS: Record<string, SharedItemTypeDef> = {
     icon: 'GitBranch',
     table: 'change_orders',
     schema: changeOrderSchema,
-    states: changeOrderStates,
+    // None in code: a change order's states are those of the Driving
+    // definition its change type runs. Resolved through the lifecycle
+    // service, never from a list here.
+    states: [],
     lifecycleDefinitionId: LIFECYCLE_IDS.changeOrder,
     relationships: changeOrderRelationships,
     permissions: {

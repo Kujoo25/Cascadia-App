@@ -3,6 +3,7 @@
 
 import { SHA256 } from '@oslojs/crypto/sha2'
 import { encodeHexLowerCase } from '@oslojs/encoding'
+import { canonicalResource } from './permissions'
 
 const API_KEY_PREFIX = 'csc_'
 
@@ -51,7 +52,9 @@ export function intersectPermissions(
 
   const result: Record<string, Array<string>> = {}
 
-  for (const [resource, keyActions] of Object.entries(keyScope)) {
+  for (const [stored, keyActions] of Object.entries(keyScope)) {
+    // A scope that still says `workflows` counts as `lifecycles` (CM-27)
+    const resource = canonicalResource(stored)
     const userActions = userPermissions[resource]
     if (!userActions) continue
 

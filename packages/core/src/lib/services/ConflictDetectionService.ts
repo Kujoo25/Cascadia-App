@@ -16,7 +16,7 @@ import {
   branches,
   changeOrderAffectedItems,
   items,
-  workflowInstances,
+  lifecycleInstances,
 } from '../db/schema'
 import { ItemService } from '../items/services/ItemService'
 import { ItemRelationshipService } from '../items/services/ItemRelationshipService'
@@ -192,10 +192,19 @@ const IGNORED_COMPARISON_FIELDS = [
  */
 export class ConflictDetectionService {
   /**
-   * Detect conflicts for an ECO before it can be approved/released
+   * Detect conflicts for an ECO before it can be approved/released.
+   *
+   * Only live branches are walked, here and in the cross-ECO pass. An
+   * archived branch is finished work — released or cancelled — and cannot
+   * conflict with anything; walking one described the release it had already
+   * done as a conflict: its base is the row the merge replaced and main now
+   * carries the row it promoted, so the two differ, and the release read as
+   * a concurrent modification of itself. That blocked the retry of a release
+   * whose workflow write had failed after the merge, the exact case the
+   * release gate exists to let through.
    */
-  static async detectConflictsForEco(
-    ecoId: string,
+  static async detectConflictsForChangeOrder(
+    changeOrderId: string,
   ): Promise<ConflictDetectionResult> {
     const result: ConflictDetectionResult = {
       hasConflicts: false,
@@ -206,25 +215,27 @@ export class ConflictDetectionService {
     }
 
     // Get all ECO branches
-    const ecoBranches = await db
+    const changeOrderBranches = await db
       .select()
       .from(branches)
       .where(
         and(
-          eq(branches.changeOrderItemId, ecoId),
+          eq(branches.changeOrderItemId, changeOrderId),
           eq(branches.branchType, 'eco'),
+          eq(branches.isArchived, false),
         ),
       )
 
     // Check each branch for conflicts
-    for (const branch of ecoBranches) {
+    for (const branch of changeOrderBranches) {
       const branchConflicts = await this.detectConflictsForBranch(branch.id)
       result.conflicts.push(...branchConflicts.conflicts)
     }
 
     // Also check for conflicts between this ECO and other active ECOs
-    const crossEcoConflicts = await this.detectCrossEcoConflicts(ecoId)
-    result.conflicts.push(...crossEcoConflicts)
+    const crossChangeOrderConflicts =
+      await this.detectCrossChangeOrderConflicts(changeOrderId)
+    result.conflicts.push(...crossChangeOrderConflicts)
 
     // Update summary
     result.hasConflicts = result.conflicts.length > 0
@@ -746,8 +757,8 @@ export class ConflictDetectionService {
    * Performs field-level comparison to detect actual conflicts (not just co-modification).
    * Field conflicts are blocking errors; simple co-modification is a warning.
    */
-  private static async detectCrossEcoConflicts(
-    ecoId: string,
+  private static async detectCrossChangeOrderConflicts(
+    changeOrderId: string,
   ): Promise<Array<ItemConflict>> {
     const conflicts: Array<ItemConflict> = []
 
@@ -757,8 +768,9 @@ export class ConflictDetectionService {
       .from(branches)
       .where(
         and(
-          eq(branches.changeOrderItemId, ecoId),
+          eq(branches.changeOrderItemId, changeOrderId),
           eq(branches.branchType, 'eco'),
+          eq(branches.isArchived, false),
         ),
       )
 
@@ -793,7 +805,7 @@ export class ConflictDetectionService {
     }
 
     // Find other active ECOs affecting the same items
-    // Join to workflowInstances and check completedAt IS NULL to exclude closed ECOs
+    // Join to lifecycleInstances and check completedAt IS NULL to exclude closed ECOs
     const otherAffectedItems = await db
       .select({
         affectedItem: changeOrderAffectedItems,
@@ -801,12 +813,12 @@ export class ConflictDetectionService {
       })
       .from(changeOrderAffectedItems)
       .innerJoin(items, eq(changeOrderAffectedItems.changeOrderId, items.id))
-      .innerJoin(workflowInstances, eq(workflowInstances.itemId, items.id))
+      .innerJoin(lifecycleInstances, eq(lifecycleInstances.itemId, items.id))
       .where(
         and(
-          ne(changeOrderAffectedItems.changeOrderId, ecoId),
+          ne(changeOrderAffectedItems.changeOrderId, changeOrderId),
           inArray(changeOrderAffectedItems.affectedItemMasterId, ourMasterIds),
-          isNull(workflowInstances.completedAt),
+          isNull(lifecycleInstances.completedAt),
         ),
       )
 
@@ -825,7 +837,7 @@ export class ConflictDetectionService {
     }
 
     // For each conflicting item, get working copies and compare fields
-    for (const [masterId, otherEcos] of conflictsByItem) {
+    for (const [masterId, otherChangeOrders] of conflictsByItem) {
       // Get our working copy and base for this item
       const ourModified = ourModifiedItems.find(
         (m) => m.branchItem.itemMasterId === masterId,
@@ -843,21 +855,22 @@ export class ConflictDetectionService {
       ])
       if (!ourFullItem || !baseItem) continue
 
-      for (const other of otherEcos) {
+      for (const other of otherChangeOrders) {
         // Get the other ECO's branch and working copy for this item
-        const otherEcoBranches = await db
+        const otherChangeOrderBranches = await db
           .select()
           .from(branches)
           .where(
             and(
               eq(branches.changeOrderItemId, other.ecoItem.id),
               eq(branches.branchType, 'eco'),
+              eq(branches.isArchived, false),
             ),
           )
 
-        if (otherEcoBranches.length === 0) continue
+        if (otherChangeOrderBranches.length === 0) continue
 
-        const otherBranchIds = otherEcoBranches.map((b) => b.id)
+        const otherBranchIds = otherChangeOrderBranches.map((b) => b.id)
         const otherBranchItem = await db
           .select()
           .from(branchItems)

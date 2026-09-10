@@ -13,6 +13,7 @@ import {
 import { BranchService } from '../../services/BranchService'
 import { LifecycleService } from '../../services/LifecycleService'
 import { isBranchProtectionExempt } from '../branch-protection'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 /**
  * Who may edit an item's content right now.
@@ -106,7 +107,10 @@ export class ItemEditPolicy {
       .where(
         and(
           eq(branchItems.currentItemId, itemId),
-          inArray(branches.branchType, ['eco', 'workspace']),
+          inArray(branches.branchType, [
+            BRANCH_TYPES.changeOrder,
+            BRANCH_TYPES.workspace,
+          ]),
           eq(branches.isArchived, false),
         ),
       )

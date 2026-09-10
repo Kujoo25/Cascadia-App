@@ -42,7 +42,7 @@ parameter or reusing a token yields a fresh preview instead of executing.
 
 Cascadia uses ECO-as-Branch versioning: released items in protected designs
 cannot be modified directly. When a write tool responds with
-suggestCreateEco, create a change order first (create_change_order), then
+suggestCreateChangeOrder, create a change order first (create_change_order), then
 pass its changeOrderId to the write call.`
 
 /**

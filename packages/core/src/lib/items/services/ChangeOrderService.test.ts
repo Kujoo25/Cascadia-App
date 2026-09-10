@@ -19,27 +19,41 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from 'vitest'
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { ChangeOrderService } from './ChangeOrderService'
 import { ItemService } from './ItemService'
+import type { Part } from '@/lib/items/types/part'
 import type { TestUser } from '@/__tests__/fixtures/users'
+import { RevisionService } from '@/lib/services/RevisionService'
+import { CommitService } from '@/lib/services/CommitService'
 import { TestDatabase } from '@/__tests__/helpers/db'
 import { insertTestUser } from '@/__tests__/fixtures/users'
 import {
   branchItems as branchItemsTable,
   branches,
+  changeOrderAffectedItems,
   changeOrderDesigns,
   changeOrderRisks,
   changeOrders,
   commits,
   designs,
+  itemFieldChanges,
+  itemRelationships,
+  itemVersions,
   items as itemsTable,
+  programs,
 } from '@/lib/db/schema'
 import {
-  workflowDefinitions,
-  workflowInstances,
-} from '@/lib/db/schema/workflows'
+  lifecycleDefinitions,
+  lifecycleHistory,
+  lifecycleInstances,
+} from '@/lib/db/schema/lifecycles'
+import { ConflictDetectionService } from '@/lib/services/ConflictDetectionService'
+import { LifecycleService } from '@/lib/services/LifecycleService'
+import { LIFECYCLE_IDS } from '@/lib/items/lifecycle-ids'
+import { ItemTypeRegistry } from '@/lib/items/registry'
 import {
   SYSTEM_USER_ID,
   overrideItemTypeConfig,
@@ -47,6 +61,7 @@ import {
 } from '@/__tests__/fixtures/lifecycles'
 import { NotFoundError, ValidationError } from '@/lib/errors'
 import { takeFirst } from '@/lib/db/take-first'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
 
 // Import to register item types
 import '@/lib/items/registerItemTypes.server'
@@ -199,8 +214,41 @@ const changeOrderWorkflowDefinition = {
       description: 'Close the released ECO',
     },
   ],
-  definitionType: 'workflow',
   description: 'Simplified test workflow for Engineering Change Orders',
+  applicableItemTypes: ['ChangeOrder'],
+}
+
+// A flexible Driving definition whose state ids share nothing with the strict
+// one above. Claimed by this file like TEST_WORKFLOW_ID; not a real lifecycle.
+const FLEXIBLE_WORKFLOW_ID = '00000000-0000-4000-8000-00000000c0f1'
+
+const flexibleChangeOrderWorkflowDefinition = {
+  states: [
+    {
+      id: 'start',
+      name: 'Start',
+      color: 'gray',
+      isInitial: true,
+      isFinal: false,
+    },
+    {
+      id: 'complete',
+      name: 'Complete',
+      color: 'green',
+      isInitial: false,
+      isFinal: true,
+      finalKind: 'release',
+    },
+  ],
+  transitions: [
+    {
+      id: 'f1',
+      name: 'Complete',
+      fromStateId: 'start',
+      toStateId: 'complete',
+    },
+  ],
+  description: 'Flexible test workflow for XCO change orders',
   applicableItemTypes: ['ChangeOrder'],
 }
 
@@ -219,7 +267,7 @@ describe('ChangeOrderService', () => {
     // ECO workflow is specific to this test file — uses a unique ID to avoid
     // races with other test files that seed their own ECO workflows.
     await testDb.db
-      .insert(workflowDefinitions)
+      .insert(lifecycleDefinitions)
       .values({
         id: TEST_WORKFLOW_ID,
         name: 'ECO - CO Test Workflow',
@@ -230,10 +278,33 @@ describe('ChangeOrderService', () => {
         lifecycleType: 'Driving',
       })
       .onConflictDoUpdate({
-        target: workflowDefinitions.id,
+        target: lifecycleDefinitions.id,
         set: {
           definition: changeOrderWorkflowDefinition,
           workflowType: 'strict',
+          lifecycleType: 'Driving',
+        },
+      })
+
+    // A second Driving definition with state ids of its own, mapped to XCO:
+    // the shape in which a change order was stamped from the type's
+    // definition while its instance ran this one.
+    await testDb.db
+      .insert(lifecycleDefinitions)
+      .values({
+        id: FLEXIBLE_WORKFLOW_ID,
+        name: 'XCO - CO Test Flexible Workflow',
+        version: 1,
+        workflowType: 'flexible',
+        definition: flexibleChangeOrderWorkflowDefinition,
+        isActive: true,
+        lifecycleType: 'Driving',
+      })
+      .onConflictDoUpdate({
+        target: lifecycleDefinitions.id,
+        set: {
+          definition: flexibleChangeOrderWorkflowDefinition,
+          workflowType: 'flexible',
           lifecycleType: 'Driving',
         },
       })
@@ -244,11 +315,12 @@ describe('ChangeOrderService', () => {
       'ChangeOrder',
       {
         lifecycleDefinitionId: TEST_WORKFLOW_ID,
-        workflowsByChangeType: {
+        lifecyclesByChangeType: {
           ECO: TEST_WORKFLOW_ID,
           ECN: TEST_WORKFLOW_ID,
           Deviation: TEST_WORKFLOW_ID,
           MCO: TEST_WORKFLOW_ID,
+          XCO: FLEXIBLE_WORKFLOW_ID,
         },
       },
       SYSTEM_USER_ID,
@@ -368,7 +440,7 @@ describe('ChangeOrderService', () => {
     )
 
     // Start workflow instance for the change order
-    await testDb.db.insert(workflowInstances).values({
+    await testDb.db.insert(lifecycleInstances).values({
       workflowDefinitionId: TEST_WORKFLOW_ID,
       itemId: changeOrder.id,
       currentState: 'Draft',
@@ -440,6 +512,105 @@ describe('ChangeOrderService', () => {
       .where(eq(designs.id, d.id))
     return d.id
   }
+
+  describe('create', () => {
+    const input = (changeType: string, name: string) => ({
+      revision: 'A',
+      name,
+      changeType,
+      priority: 'medium',
+      reasonForChange: 'Test',
+    })
+
+    it('creates the change order with its workflow running and its state stamped from it', async () => {
+      const changeOrder = await ChangeOrderService.create(
+        input('ECO', 'Created ECO'),
+        [designId],
+        user.id,
+      )
+      const changeOrderInstance = await ChangeOrderService.getWorkflowInstance(
+        changeOrder.id!,
+      )
+      expect(changeOrderInstance?.workflowDefinitionId).toBe(TEST_WORKFLOW_ID)
+      expect(changeOrderInstance?.currentState).toBe('Draft')
+      expect(changeOrder.state).toBe('Draft')
+
+      // A change type mapped to another definition starts that one, and the
+      // state follows it rather than the type's definition
+      const xco = await ChangeOrderService.create(
+        input('XCO', 'Created XCO'),
+        [designId],
+        user.id,
+      )
+      const xcoInstance = await ChangeOrderService.getWorkflowInstance(xco.id!)
+      expect(xcoInstance?.workflowDefinitionId).toBe(FLEXIBLE_WORKFLOW_ID)
+      expect(xcoInstance?.currentState).toBe('start')
+      expect(xco.state).toBe('start')
+      expect((await ItemService.findById(xco.id!))?.state).toBe('start')
+    })
+
+    it('creates nothing when the change type has no workflow configured', async () => {
+      const original = ItemTypeRegistry.getRuntimeConfig.bind(ItemTypeRegistry)
+      const config = vi
+        .spyOn(ItemTypeRegistry, 'getRuntimeConfig')
+        .mockImplementation((name) =>
+          name === 'ChangeOrder'
+            ? {
+                ...original(name),
+                lifecyclesByChangeType: { ECO: TEST_WORKFLOW_ID },
+              }
+            : original(name),
+        )
+      const liveBranches = () =>
+        testDb.db
+          .select({ id: branches.id })
+          .from(branches)
+          .where(
+            and(
+              eq(branches.designId, designId),
+              eq(branches.isArchived, false),
+            ),
+          )
+      const liveBefore = await liveBranches()
+
+      try {
+        await expect(
+          ChangeOrderService.create(
+            input('MCO', 'Unconfigured MCO'),
+            [designId],
+            user.id,
+          ),
+        ).rejects.toThrow(ValidationError)
+      } finally {
+        config.mockRestore()
+      }
+
+      // Rolled back whole: no change order, and the branch its design link
+      // made is not left open on the design
+      const rows = await testDb.db
+        .select({ id: itemsTable.id })
+        .from(itemsTable)
+        .where(eq(itemsTable.name, 'Unconfigured MCO'))
+      expect(rows).toHaveLength(0)
+      expect(await liveBranches()).toHaveLength(liveBefore.length)
+    })
+
+    it('refuses an unknown change type before creating anything', async () => {
+      await expect(
+        ChangeOrderService.create(
+          input('Bogus', 'Bogus change type'),
+          [designId],
+          user.id,
+        ),
+      ).rejects.toThrow(ValidationError)
+
+      const rows = await testDb.db
+        .select({ id: itemsTable.id })
+        .from(itemsTable)
+        .where(eq(itemsTable.name, 'Bogus change type'))
+      expect(rows).toHaveLength(0)
+    })
+  })
 
   describe('addAffectedItem', () => {
     it('adds an affected item with release action', async () => {
@@ -554,7 +725,9 @@ describe('ChangeOrderService', () => {
       )
 
       // Get the ECO designs for this change order
-      const ecoDesigns = await ChangeOrderService.getEcoDesigns(changeOrder.id)
+      const ecoDesigns = await ChangeOrderService.getChangeOrderDesigns(
+        changeOrder.id,
+      )
       expect(ecoDesigns.length).toBe(1)
 
       // Find commits on the ECO branch
@@ -598,7 +771,9 @@ describe('ChangeOrderService', () => {
       // Only the definition's OWN design is associated with the release ECO —
       // the usage-copy design must NOT be pulled in (it has no affected items,
       // and associating it would leak the ECO's baseline onto it).
-      const ecoDesigns = await ChangeOrderService.getEcoDesigns(changeOrder.id)
+      const ecoDesigns = await ChangeOrderService.getChangeOrderDesigns(
+        changeOrder.id,
+      )
       expect(ecoDesigns.map((d) => d.designId)).toEqual([designId])
     })
   })
@@ -661,12 +836,12 @@ describe('ChangeOrderService', () => {
     })
 
     it('refuses to remove an affected item belonging to another change order', async () => {
-      const ownerEco = await createChangeOrder()
-      const otherEco = await createChangeOrder()
+      const ownerChangeOrder = await createChangeOrder()
+      const otherChangeOrder = await createChangeOrder()
       const part = await createPart()
 
       const affected = await ChangeOrderService.addAffectedItem(
-        ownerEco.id,
+        ownerChangeOrder.id,
         { affectedItemId: part.id, changeAction: 'release' },
         user.id,
       )
@@ -674,10 +849,15 @@ describe('ChangeOrderService', () => {
       // An affected-item row id is not authority to delete it: the ECO that
       // owns the row is what scopes the delete.
       await expect(
-        ChangeOrderService.removeAffectedItem(otherEco.id, affected.id!),
+        ChangeOrderService.removeAffectedItem(
+          otherChangeOrder.id,
+          affected.id!,
+        ),
       ).rejects.toThrow(NotFoundError)
 
-      const stillThere = await ChangeOrderService.getAffectedItems(ownerEco.id)
+      const stillThere = await ChangeOrderService.getAffectedItems(
+        ownerChangeOrder.id,
+      )
       expect(stillThere).toHaveLength(1)
     })
 
@@ -728,7 +908,9 @@ describe('ChangeOrderService', () => {
 
       // The branch no longer reports a change for this master, so the merge
       // has nothing to release for it.
-      const ecoDesigns = await ChangeOrderService.getEcoDesigns(changeOrder.id)
+      const ecoDesigns = await ChangeOrderService.getChangeOrderDesigns(
+        changeOrder.id,
+      )
       const branchIds = ecoDesigns
         .map((d) => d.branchId)
         .filter((id): id is string => id !== null)
@@ -752,9 +934,9 @@ describe('ChangeOrderService', () => {
       )
 
       await testDb.db
-        .update(workflowInstances)
+        .update(lifecycleInstances)
         .set({ scopeLocked: true, scopeLockedAt: new Date() })
-        .where(eq(workflowInstances.itemId, changeOrder.id))
+        .where(eq(lifecycleInstances.itemId, changeOrder.id))
 
       await expect(
         ChangeOrderService.removeAffectedItem(changeOrder.id, affected.id!),
@@ -991,7 +1173,7 @@ describe('ChangeOrderService', () => {
   })
 
   describe('close', () => {
-    // Note: close() calls releaseEco() which requires 'Approved' state
+    // Note: close() calls releaseChangeOrder() which requires 'Approved' state
     // In simplified workflow, close() from Approved state stays in Approved (no transition)
     // The ECO-as-branch workflow just processes affected items and sets closedAt
     it('processes release and stays in Approved state for simplified workflow', async () => {
@@ -1005,7 +1187,7 @@ describe('ChangeOrderService', () => {
         user.id,
       )
 
-      // close() uses releaseEco() which handles branch merging
+      // close() uses releaseChangeOrder() which handles branch merging
       // It requires 'Approved' state, not 'Implemented'
       await transitionTo(changeOrder.id, 'InReview')
       await transitionTo(changeOrder.id, 'Approved')
@@ -1041,11 +1223,13 @@ describe('ChangeOrderService', () => {
     })
   })
 
-  describe('getEcoDesigns', () => {
+  describe('getChangeOrderDesigns', () => {
     it('returns empty array when no designs associated', async () => {
       const changeOrder = await createChangeOrder()
 
-      const ecoDesigns = await ChangeOrderService.getEcoDesigns(changeOrder.id)
+      const ecoDesigns = await ChangeOrderService.getChangeOrderDesigns(
+        changeOrder.id,
+      )
 
       expect(ecoDesigns).toEqual([])
     })
@@ -1249,11 +1433,11 @@ describe('ChangeOrderService', () => {
         .where(eq(changeOrderDesigns.changeOrderId, changeOrder.id))
       expect(associations).toHaveLength(0)
 
-      const ecoBranches = await testDb.db
+      const changeOrderBranches = await testDb.db
         .select()
         .from(branches)
         .where(eq(branches.changeOrderItemId, changeOrder.id))
-      expect(ecoBranches).toHaveLength(0)
+      expect(changeOrderBranches).toHaveLength(0)
 
       // And the change order is still usable: the same valid item adds cleanly
       const retry = await ChangeOrderService.addAffectedItemsBatch(
@@ -1294,32 +1478,32 @@ describe('ChangeOrderService', () => {
     })
   })
 
-  describe('addDesignToEco', () => {
+  describe('addDesign', () => {
     it('adds a design to an ECO and creates branch', async () => {
       const changeOrder = await createChangeOrder()
 
-      const ecoDesign = await ChangeOrderService.addDesignToEco(
+      const changeOrderDesign = await ChangeOrderService.addDesign(
         changeOrder.id,
         designId,
         user.id,
       )
 
-      expect(ecoDesign).toBeDefined()
-      expect(ecoDesign.designId).toBe(designId)
-      expect(ecoDesign.branchId).toBeDefined()
-      expect(ecoDesign.mergeStatus).toBe('pending')
+      expect(changeOrderDesign).toBeDefined()
+      expect(changeOrderDesign.designId).toBe(designId)
+      expect(changeOrderDesign.branchId).toBeDefined()
+      expect(changeOrderDesign.mergeStatus).toBe('pending')
     })
 
     it('returns existing record if already added', async () => {
       const changeOrder = await createChangeOrder()
 
-      const first = await ChangeOrderService.addDesignToEco(
+      const first = await ChangeOrderService.addDesign(
         changeOrder.id,
         designId,
         user.id,
       )
 
-      const second = await ChangeOrderService.addDesignToEco(
+      const second = await ChangeOrderService.addDesign(
         changeOrder.id,
         designId,
         user.id,
@@ -1330,7 +1514,7 @@ describe('ChangeOrderService', () => {
 
     it('throws error when change order not found', async () => {
       await expect(
-        ChangeOrderService.addDesignToEco(
+        ChangeOrderService.addDesign(
           '00000000-0000-0000-0000-000000000000',
           designId,
           user.id,
@@ -1352,33 +1536,33 @@ describe('ChangeOrderService', () => {
       await transitionTo(changeOrder.id, 'Approved')
 
       await expect(
-        ChangeOrderService.addDesignToEco(changeOrder.id, designId, user.id),
+        ChangeOrderService.addDesign(changeOrder.id, designId, user.id),
       ).rejects.toThrow(ValidationError)
     })
 
     it('creates a ChangeOrder created commit when design is first linked', async () => {
       const changeOrder = await createChangeOrder()
 
-      const ecoDesign = await ChangeOrderService.addDesignToEco(
+      const changeOrderDesign = await ChangeOrderService.addDesign(
         changeOrder.id,
         designId,
         user.id,
       )
 
       // Get the branch and check for commits
-      const ecoBranch = await testDb.db
+      const changeOrderBranch = await testDb.db
         .select()
         .from(branches)
-        .where(eq(branches.id, ecoDesign.branchId!))
+        .where(eq(branches.id, changeOrderDesign.branchId!))
         .limit(1)
 
-      expect(ecoBranch[0]).toBeDefined()
+      expect(changeOrderBranch[0]).toBeDefined()
 
       // Find commits on this branch
       const branchCommits = await testDb.db
         .select()
         .from(commits)
-        .where(eq(commits.branchId, ecoDesign.branchId!))
+        .where(eq(commits.branchId, changeOrderDesign.branchId!))
 
       // Should have at least one commit with "ChangeOrder xxx created" message
       const creationCommit = branchCommits.find(
@@ -1395,7 +1579,7 @@ describe('ChangeOrderService', () => {
       const changeOrder = await createChangeOrder()
 
       // First call - should create commit
-      const first = await ChangeOrderService.addDesignToEco(
+      const first = await ChangeOrderService.addDesign(
         changeOrder.id,
         designId,
         user.id,
@@ -1408,7 +1592,7 @@ describe('ChangeOrderService', () => {
         .where(eq(commits.branchId, first.branchId!))
 
       // Second call - should NOT create another commit
-      await ChangeOrderService.addDesignToEco(changeOrder.id, designId, user.id)
+      await ChangeOrderService.addDesign(changeOrder.id, designId, user.id)
 
       // Get final commit count
       const finalCommits = await testDb.db
@@ -1421,44 +1605,14 @@ describe('ChangeOrderService', () => {
     })
   })
 
-  describe('getValidActionsForItem', () => {
-    it('returns valid actions for Draft item', async () => {
-      const part = await createPart({ state: 'Draft' })
-
-      const actions = await ChangeOrderService.getValidActionsForItem(part.id)
-
-      expect(actions).toContain('release')
-    })
-
-    it('returns valid actions for Released item', async () => {
-      const part = await createPart({ state: 'Released' })
-
-      const actions = await ChangeOrderService.getValidActionsForItem(part.id)
-
-      expect(actions).toContain('revise')
-      expect(actions).toContain('obsolete')
-    })
-
-    it('returns empty array for non-existent item', async () => {
-      const actions = await ChangeOrderService.getValidActionsForItem(
-        '00000000-0000-0000-0000-000000000000',
-      )
-
-      expect(actions).toEqual([])
-    })
-  })
-
   // `null` as the access scope is cross-program authority — these cover the
   // summary's own arithmetic, not the redaction that scope drives. The
   // scoped behaviour is pinned in program-isolation.permissions.test.ts.
-  describe('getEcoSummary', () => {
+  describe('getSummary', () => {
     it('returns summary for ECO with no designs', async () => {
       const changeOrder = await createChangeOrder()
 
-      const summary = await ChangeOrderService.getEcoSummary(
-        changeOrder.id,
-        null,
-      )
+      const summary = await ChangeOrderService.getSummary(changeOrder.id, null)
 
       expect(summary.changeOrder).toBeDefined()
       expect(summary.designs).toEqual([])
@@ -1468,7 +1622,7 @@ describe('ChangeOrderService', () => {
 
     it('throws error for non-existent change order', async () => {
       await expect(
-        ChangeOrderService.getEcoSummary(
+        ChangeOrderService.getSummary(
           '00000000-0000-0000-0000-000000000000',
           null,
         ),
@@ -1486,8 +1640,9 @@ describe('ChangeOrderService', () => {
         user.id,
       )
 
-      const [ecoDesign] = await ChangeOrderService.getEcoDesigns(changeOrder.id)
-      const branchId = ecoDesign!.branchId!
+      const [changeOrderDesign] =
+        await ChangeOrderService.getChangeOrderDesigns(changeOrder.id)
+      const branchId = changeOrderDesign!.branchId!
 
       // Three more branch rows, one of each change type
       for (const [i, changeType] of (
@@ -1506,10 +1661,7 @@ describe('ChangeOrderService', () => {
           .onConflictDoNothing()
       }
 
-      const summary = await ChangeOrderService.getEcoSummary(
-        changeOrder.id,
-        null,
-      )
+      const summary = await ChangeOrderService.getSummary(changeOrder.id, null)
 
       expect(summary.designs).toHaveLength(1)
       const [designSummary] = summary.designs
@@ -1522,7 +1674,7 @@ describe('ChangeOrderService', () => {
       expect(designSummary?.branch?.id).toBe(branchId)
     })
 
-    it('reports a held checkout and refuses to submit while one is open', async () => {
+    it('reports a held checkout without refusing to submit', async () => {
       const changeOrder = await createChangeOrder()
       const part = await createPart()
 
@@ -1532,13 +1684,11 @@ describe('ChangeOrderService', () => {
         user.id,
       )
 
-      const [ecoDesign] = await ChangeOrderService.getEcoDesigns(changeOrder.id)
-      const branchId = ecoDesign!.branchId!
+      const [changeOrderDesign] =
+        await ChangeOrderService.getChangeOrderDesigns(changeOrder.id)
+      const branchId = changeOrderDesign!.branchId!
 
-      const before = await ChangeOrderService.getEcoSummary(
-        changeOrder.id,
-        null,
-      )
+      const before = await ChangeOrderService.getSummary(changeOrder.id, null)
       expect(before.canSubmit).toBe(true)
       expect(before.designs[0]?.hasCheckedOutItems).toBe(false)
 
@@ -1553,8 +1703,11 @@ describe('ChangeOrderService', () => {
         checkedOutBy: user.id,
       })
 
-      const after = await ChangeOrderService.getEcoSummary(changeOrder.id, null)
-      expect(after.canSubmit).toBe(false)
+      // Reported, not blocking: the submit transition never checked for a
+      // held checkout, so a summary that refused here disagreed with the
+      // server that accepted the submit
+      const after = await ChangeOrderService.getSummary(changeOrder.id, null)
+      expect(after.canSubmit).toBe(true)
       expect(after.designs[0]?.hasCheckedOutItems).toBe(true)
     })
   })
@@ -1618,12 +1771,12 @@ describe('ChangeOrderService', () => {
     })
   })
 
-  describe('checkoutItemToEco', () => {
+  describe('checkoutItem', () => {
     it('checkouts a Draft item to ECO branch', async () => {
       const changeOrder = await createChangeOrder()
       const part = await createPart({ state: 'Draft' })
 
-      const result = await ChangeOrderService.checkoutItemToEco(
+      const result = await ChangeOrderService.checkoutItem(
         changeOrder.id,
         part.id,
         user.id,
@@ -1638,7 +1791,7 @@ describe('ChangeOrderService', () => {
       const changeOrder = await createChangeOrder()
       const part = await createPart({ state: 'Released' })
 
-      const result = await ChangeOrderService.checkoutItemToEco(
+      const result = await ChangeOrderService.checkoutItem(
         changeOrder.id,
         part.id,
         user.id,
@@ -1652,7 +1805,7 @@ describe('ChangeOrderService', () => {
       const part = await createPart()
 
       await expect(
-        ChangeOrderService.checkoutItemToEco(
+        ChangeOrderService.checkoutItem(
           '00000000-0000-0000-0000-000000000000',
           part.id,
           user.id,
@@ -1666,7 +1819,7 @@ describe('ChangeOrderService', () => {
 
       // Try to use a Part as change order
       await expect(
-        ChangeOrderService.checkoutItemToEco(part1.id, part2.id, user.id),
+        ChangeOrderService.checkoutItem(part1.id, part2.id, user.id),
       ).rejects.toThrow(ValidationError)
     })
 
@@ -1689,7 +1842,7 @@ describe('ChangeOrderService', () => {
       const anotherPart = await createPart({ name: 'Another Part' })
 
       await expect(
-        ChangeOrderService.checkoutItemToEco(
+        ChangeOrderService.checkoutItem(
           changeOrder.id,
           anotherPart.id,
           user.id,
@@ -1701,12 +1854,278 @@ describe('ChangeOrderService', () => {
       const changeOrder = await createChangeOrder()
 
       await expect(
-        ChangeOrderService.checkoutItemToEco(
+        ChangeOrderService.checkoutItem(
           changeOrder.id,
           '00000000-0000-0000-0000-000000000000',
           user.id,
         ),
       ).rejects.toThrow(NotFoundError)
+    })
+  })
+
+  describe('states a change order can hold', () => {
+    it('come from every workflow a change type runs, never from a list in code', async () => {
+      const ids = (await ItemTypeRegistry.getStatesForType('ChangeOrder')).map(
+        (s) => s.id,
+      )
+
+      // Both mapped definitions, in one list
+      expect(ids).toEqual(
+        expect.arrayContaining([
+          'Draft',
+          'InReview',
+          'Approved',
+          'start',
+          'complete',
+        ]),
+      )
+      // The nine-state flow the code used to declare, and fed to the AI
+      // assistant and the global state filter as fact
+      for (const fictional of [
+        'Submitted',
+        'ImpactAssessment',
+        'Review',
+        'Implementation',
+      ]) {
+        expect(ids).not.toContain(fictional)
+      }
+    })
+  })
+
+  describe('resolveConflicts', () => {
+    async function releaseChangeOrder(changeOrderId: string) {
+      for (const state of ['InReview', 'Approved', 'Implemented', 'Closed']) {
+        await transitionTo(changeOrderId, state)
+      }
+    }
+
+    /**
+     * One released part, two change orders. Ours checks it out first; theirs
+     * checks it out, edits it and releases, so main has moved under our
+     * branch; then ours makes its own edits. Theirs releases before ours
+     * edits so the cross-change-order check does not block it.
+     */
+    async function branchBehindMain(edits: {
+      ours: Record<string, unknown>
+      theirs: Record<string, unknown>
+    }) {
+      const part = await createPart({
+        state: 'Released',
+        name: 'Base name',
+        description: 'Base description',
+      })
+      const ours = await createChangeOrder()
+      const { branchItem } = await ChangeOrderService.checkoutItem(
+        ours.id,
+        part.id,
+        user.id,
+      )
+
+      const theirs = await createChangeOrder()
+      const theirCheckout = await ChangeOrderService.checkoutItem(
+        theirs.id,
+        part.id,
+        user.id,
+      )
+      await ItemService.update(
+        theirCheckout.branchItem.currentItemId!,
+        edits.theirs,
+        user.id,
+      )
+      await releaseChangeOrder(theirs.id)
+
+      await ItemService.update(branchItem.currentItemId!, edits.ours, user.id)
+
+      return { part, ours, workingCopyId: branchItem.currentItemId! }
+    }
+
+    async function currentVersionOf(masterId: string): Promise<Part> {
+      const row = takeFirst(
+        await testDb.db
+          .select({ id: itemsTable.id })
+          .from(itemsTable)
+          .where(
+            and(
+              eq(itemsTable.masterId, masterId),
+              eq(itemsTable.isCurrent, true),
+            ),
+          ),
+      )
+      return (await ItemService.findById(row.id)) as unknown as Part
+    }
+
+    it('keep_ours merges main under our changes instead of overwriting it at release', async () => {
+      const { part, ours, workingCopyId } = await branchBehindMain({
+        ours: { description: 'Ours description' },
+        theirs: { name: 'Their name' },
+      })
+
+      const outcomes = await ChangeOrderService.resolveConflicts(
+        ours.id,
+        [{ itemId: part.masterId, resolution: 'keep_ours' }],
+        user.id,
+      )
+      expect(outcomes).toEqual([
+        { itemId: part.masterId, resolution: 'keep_ours', success: true },
+      ])
+
+      // The working copy now carries both sides...
+      const workingCopy = (await ItemService.findById(
+        workingCopyId,
+      )) as unknown as Part
+      expect(workingCopy.name).toBe('Their name')
+      expect(workingCopy.description).toBe('Ours description')
+
+      // ...and so does what the release puts on main. Before, keep_ours
+      // only repointed the branch's base, and the release then reverted
+      // the other change order's edit.
+      await releaseChangeOrder(ours.id)
+      const released = await currentVersionOf(part.masterId)
+      expect(released.revision).toBe('C')
+      expect(released.name).toBe('Their name')
+      expect(released.description).toBe('Ours description')
+    })
+
+    it('keep_theirs takes main where both sides changed a field and keeps ours elsewhere', async () => {
+      const { part, ours } = await branchBehindMain({
+        ours: { name: 'Our name', description: 'Ours description' },
+        theirs: { name: 'Their name' },
+      })
+
+      const [outcome] = await ChangeOrderService.resolveConflicts(
+        ours.id,
+        [{ itemId: part.masterId, resolution: 'keep_theirs' }],
+        user.id,
+      )
+      expect(outcome?.success).toBe(true)
+
+      // Before, keep_theirs dropped the branch's change entirely, and the
+      // release minted a revision with none of our edits in it.
+      await releaseChangeOrder(ours.id)
+      const released = await currentVersionOf(part.masterId)
+      expect(released.name).toBe('Their name')
+      expect(released.description).toBe('Ours description')
+    })
+
+    it('honours a per-field choice over the item-level one', async () => {
+      const { part, ours } = await branchBehindMain({
+        ours: { name: 'Our name', description: 'Our description' },
+        theirs: { name: 'Their name', description: 'Their description' },
+      })
+
+      const [outcome] = await ChangeOrderService.resolveConflicts(
+        ours.id,
+        [
+          {
+            itemId: part.masterId,
+            resolution: 'keep_ours',
+            fieldResolutions: { description: 'theirs' },
+          },
+        ],
+        user.id,
+      )
+      expect(outcome?.success).toBe(true)
+
+      await releaseChangeOrder(ours.id)
+      const released = await currentVersionOf(part.masterId)
+      expect(released.name).toBe('Our name')
+      expect(released.description).toBe('Their description')
+    })
+
+    it('skip removes the item from the change order, so the release mints it no revision', async () => {
+      const changeOrder = await createChangeOrder()
+      const skipped = await createPart({ state: 'Released', name: 'Skipped' })
+      const { branchItem } = await ChangeOrderService.checkoutItem(
+        changeOrder.id,
+        skipped.id,
+        user.id,
+      )
+      await ItemService.update(
+        branchItem.currentItemId!,
+        { name: 'Edited, then skipped' },
+        user.id,
+      )
+      // Something else for the change order to release
+      const kept = await createPart()
+      await ChangeOrderService.addAffectedItem(
+        changeOrder.id,
+        { affectedItemId: kept.id, changeAction: 'release' },
+        user.id,
+      )
+
+      const [outcome] = await ChangeOrderService.resolveConflicts(
+        changeOrder.id,
+        [{ itemId: skipped.masterId, resolution: 'skip' }],
+        user.id,
+      )
+      expect(outcome?.success).toBe(true)
+
+      // Out of scope, and no longer a change on the branch
+      const scope = await ChangeOrderService.getAffectedItems(changeOrder.id)
+      expect(scope.map((a) => a.affectedItemMasterId)).toEqual([kept.masterId])
+      const branchRow = await testDb.db
+        .select()
+        .from(branchItemsTable)
+        .where(eq(branchItemsTable.id, branchItem.id))
+        .then((rows) => rows.at(0))
+      expect(branchRow?.changeType ?? null).toBeNull()
+
+      // Before, skip deleted the branch row and left the scope row, and the
+      // release read "revise, no content" as a revision to mint.
+      await releaseChangeOrder(changeOrder.id)
+      const versions = await testDb.db
+        .select({ revision: itemsTable.revision })
+        .from(itemsTable)
+        .where(eq(itemsTable.masterId, skipped.masterId))
+      // The working copy the checkout minted stays behind as an orphaned
+      // row under its branch-scoped working revision, as it always has after
+      // removeAffectedItem; it is not a released version.
+      const releasedVersions = versions.filter(
+        (v) => !RevisionService.isWorkingRevision(v.revision),
+      )
+      expect(releasedVersions.map((v) => v.revision)).toEqual(['A'])
+      expect((await currentVersionOf(skipped.masterId)).revision).toBe('A')
+      expect((await ItemService.findById(kept.id))?.state).toBe('Released')
+    })
+
+    it('refuses skip once the scope is locked, and changes nothing', async () => {
+      const changeOrder = await createChangeOrder()
+      const part = await createPart({ state: 'Released' })
+      const { branchItem } = await ChangeOrderService.checkoutItem(
+        changeOrder.id,
+        part.id,
+        user.id,
+      )
+      await transitionTo(changeOrder.id, 'InReview')
+
+      const [outcome] = await ChangeOrderService.resolveConflicts(
+        changeOrder.id,
+        [{ itemId: part.masterId, resolution: 'skip' }],
+        user.id,
+      )
+      expect(outcome?.success).toBe(false)
+
+      const scope = await ChangeOrderService.getAffectedItems(changeOrder.id)
+      expect(scope.map((a) => a.affectedItemMasterId)).toEqual([part.masterId])
+      const branchRow = takeFirst(
+        await testDb.db
+          .select()
+          .from(branchItemsTable)
+          .where(eq(branchItemsTable.id, branchItem.id)),
+      )
+      expect(branchRow.changeType).toBe('modified')
+    })
+
+    it('reports an item the change order does not change as a failed resolution', async () => {
+      const changeOrder = await createChangeOrder()
+      const part = await createPart()
+
+      const [outcome] = await ChangeOrderService.resolveConflicts(
+        changeOrder.id,
+        [{ itemId: part.masterId, resolution: 'keep_ours' }],
+        user.id,
+      )
+      expect(outcome?.success).toBe(false)
     })
   })
 
@@ -1736,6 +2155,358 @@ describe('ChangeOrderService', () => {
       expect(instance.itemId).toBe(changeOrder.id)
       expect(instance.workflowDefinitionId).toBe(TEST_WORKFLOW_ID)
     })
+
+    /** A change order with no instance yet, the way `ItemService.create` leaves it. */
+    async function createBareChangeOrder(changeType = 'XCO') {
+      return ItemService.create(
+        'ChangeOrder',
+        {
+          revision: 'A',
+          name: `Bare ${changeType}`,
+          changeType,
+          priority: 'medium',
+          reasonForChange: 'Test',
+          designId,
+        } as any,
+        user.id,
+      )
+    }
+
+    it("stamps the change order's state from the instance it starts, not from the type's definition", async () => {
+      const changeOrder = await createBareChangeOrder()
+      // Created at the initial state of the type's own definition
+      expect((await ItemService.findById(changeOrder.id))?.state).toBe('Draft')
+
+      const instance = await ChangeOrderService.startWorkflow(
+        changeOrder.id,
+        FLEXIBLE_WORKFLOW_ID,
+        user.id,
+      )
+      expect(instance.currentState).toBe('start')
+      expect((await ItemService.findById(changeOrder.id))?.state).toBe('start')
+
+      // What governs the change order is the definition it runs...
+      const governing = await LifecycleService.getGoverningDefinitionForItem({
+        id: changeOrder.id,
+        itemType: 'ChangeOrder',
+      })
+      expect(governing?.id).toBe(FLEXIBLE_WORKFLOW_ID)
+      expect(governing?.states.map((s) => s.id)).toEqual(['start', 'complete'])
+
+      // ...while the type's renderable states span every mapped definition,
+      // so a list mixing change types can name any of them
+      const renderable = (
+        await LifecycleService.getRenderableStates('ChangeOrder')
+      ).map((s) => s.id)
+      expect(renderable).toEqual(
+        expect.arrayContaining(['Draft', 'InReview', 'start', 'complete']),
+      )
+      await expect(
+        LifecycleService.validateStateForType('ChangeOrder', 'complete'),
+      ).resolves.toBeUndefined()
+    })
+
+    it('autoStartWorkflow runs the mapped definition and stamps its state', async () => {
+      const changeOrder = await createBareChangeOrder('XCO')
+
+      const instance = await ChangeOrderService.autoStartWorkflow(
+        changeOrder.id,
+        'XCO',
+        user.id,
+      )
+
+      expect(instance.workflowDefinitionId).toBe(FLEXIBLE_WORKFLOW_ID)
+      expect((await ItemService.findById(changeOrder.id))?.state).toBe('start')
+    })
+
+    it('refuses a definition that is not a change-order workflow', async () => {
+      const changeOrder = await createBareChangeOrder()
+
+      await expect(
+        ChangeOrderService.startWorkflow(
+          changeOrder.id,
+          LIFECYCLE_IDS.part,
+          user.id,
+        ),
+      ).rejects.toThrow(ValidationError)
+
+      expect(
+        await ChangeOrderService.getWorkflowInstance(changeOrder.id),
+      ).toBeNull()
+      expect((await ItemService.findById(changeOrder.id))?.state).toBe('Draft')
+    })
+
+    it('starts nothing when the history row cannot be written', async () => {
+      const changeOrder = await createBareChangeOrder()
+
+      const historyWrite = vi
+        .spyOn(LifecycleInstanceService, 'recordHistory')
+        .mockRejectedValueOnce(new Error('connection reset'))
+      await expect(
+        ChangeOrderService.startWorkflow(
+          changeOrder.id,
+          FLEXIBLE_WORKFLOW_ID,
+          user.id,
+        ),
+      ).rejects.toThrow('connection reset')
+      historyWrite.mockRestore()
+
+      // No instance, and the state the instance would have stamped is absent
+      expect(
+        await ChangeOrderService.getWorkflowInstance(changeOrder.id),
+      ).toBeNull()
+      expect((await ItemService.findById(changeOrder.id))?.state).toBe('Draft')
+    })
+  })
+
+  describe('applyBomChange', () => {
+    it('records a quantity change in the branch history, as add and remove are', async () => {
+      const parent = await createPart({ state: 'Released' })
+      const child = await createPart({ state: 'Released' })
+      const changeOrder = await createChangeOrder()
+      const { workingCopyId } = await ChangeOrderService.addAffectedItem(
+        changeOrder.id,
+        { affectedItemId: parent.id, changeAction: 'revise' },
+        user.id,
+      )
+      expect(workingCopyId).toBeTruthy()
+
+      await ChangeOrderService.applyBomChange(
+        changeOrder.id,
+        {
+          parentItemId: parent.id,
+          childItemId: child.id,
+          quantity: 1,
+          action: 'add',
+        },
+        user.id,
+      )
+      await ChangeOrderService.applyBomChange(
+        changeOrder.id,
+        {
+          parentItemId: parent.id,
+          childItemId: child.id,
+          quantity: 3,
+          action: 'modify',
+        },
+        user.id,
+      )
+
+      // Written to the working copy on the branch, never to the row on main
+      const onMain = await testDb.db
+        .select()
+        .from(itemRelationships)
+        .where(eq(itemRelationships.sourceId, parent.id))
+      expect(onMain).toHaveLength(0)
+      const onBranch = await testDb.db
+        .select()
+        .from(itemRelationships)
+        .where(
+          and(
+            eq(itemRelationships.sourceId, workingCopyId!),
+            eq(itemRelationships.targetId, child.id),
+          ),
+        )
+      expect(onBranch.map((r) => Number(r.quantity))).toEqual([3])
+
+      // The branch history carries the change. `modify` was a raw update of
+      // the row, so a reviewer saw the child added at 1 and nothing after.
+      const branchId = (
+        await ChangeOrderService.getChangeOrderDesigns(changeOrder.id)
+      ).find((d) => d.branchId)?.branchId
+      const quantityChanges = await testDb.db
+        .select({
+          oldValue: itemFieldChanges.oldValue,
+          newValue: itemFieldChanges.newValue,
+        })
+        .from(itemFieldChanges)
+        .innerJoin(
+          itemVersions,
+          eq(itemFieldChanges.itemVersionId, itemVersions.id),
+        )
+        .innerJoin(commits, eq(itemVersions.commitId, commits.id))
+        .where(
+          and(
+            eq(commits.branchId, branchId!),
+            eq(itemFieldChanges.fieldName, 'bom_quantity_changed'),
+          ),
+        )
+      expect(quantityChanges).toHaveLength(1)
+      // Numeric column: the stored quantity reads back with its scale
+      expect(quantityChanges[0]).toMatchObject({
+        oldValue: { quantity: expect.stringMatching(/^1(.0+)?$/) },
+        newValue: { quantity: expect.stringMatching(/^3(.0+)?$/) },
+      })
+    })
+  })
+
+  describe('listByScope', () => {
+    it('pages newest first, with a total that counts each change order once', async () => {
+      const program = takeFirst(
+        await testDb.db
+          .insert(programs)
+          .values({
+            name: 'List Program',
+            code: `LP-${uniquePrefix}`,
+            createdBy: user.id,
+          })
+          .returning(),
+      )
+      const otherDesignId = await createDesign('list-other')
+      await testDb.db
+        .update(designs)
+        .set({ programId: program.id })
+        .where(inArray(designs.id, [designId, otherDesignId]))
+
+      const first = await createChangeOrder({ name: 'First' })
+      const second = await createChangeOrder({ name: 'Second' })
+      const third = await createChangeOrder({ name: 'Third' })
+      await testDb.db.insert(changeOrderDesigns).values([
+        { changeOrderId: first.id, designId, mergeStatus: 'pending' },
+        { changeOrderId: second.id, designId, mergeStatus: 'pending' },
+        { changeOrderId: third.id, designId, mergeStatus: 'pending' },
+        // On two of the program's designs: listed once, counted once
+        {
+          changeOrderId: third.id,
+          designId: otherDesignId,
+          mergeStatus: 'pending',
+        },
+      ])
+      // Distinct timestamps, so the order under test is unambiguous
+      for (const [i, co] of [first, second, third].entries()) {
+        await testDb.db
+          .update(itemsTable)
+          .set({ createdAt: new Date(Date.UTC(2026, 0, 1 + i)) })
+          .where(eq(itemsTable.id, co.id))
+      }
+
+      // The ids used to be collected unordered and sliced in memory, so the
+      // same offset could answer with different rows from one call to the next
+      const page1 = await ChangeOrderService.listByScope(
+        { designId },
+        { limit: 2, offset: 0 },
+      )
+      expect(page1.total).toBe(3)
+      expect(page1.changeOrders.map((c) => c.id)).toEqual([third.id, second.id])
+      const page2 = await ChangeOrderService.listByScope(
+        { designId },
+        { limit: 2, offset: 2 },
+      )
+      expect(page2.total).toBe(3)
+      expect(page2.changeOrders.map((c) => c.id)).toEqual([first.id])
+
+      const byProgram = await ChangeOrderService.listByScope(
+        { programId: program.id },
+        { limit: 10, offset: 0 },
+      )
+      expect(byProgram.total).toBe(3)
+      expect(byProgram.changeOrders.map((c) => c.id)).toEqual([
+        third.id,
+        second.id,
+        first.id,
+      ])
+    })
+  })
+
+  describe('design association is one transaction', () => {
+    // Linking a design means the association row, the ECO branch and the
+    // registration commit. Three of the four paths that did this ran them as
+    // separate statements on the pool, so a failure part-way left a branch
+    // with no association, or an association naming a branch whose
+    // registration never landed. Every path now goes through
+    // `ensureDesignAssociation` on a transaction.
+
+    it('addDesign leaves nothing behind when the registration fails', async () => {
+      const changeOrder = await createChangeOrder()
+
+      const commitWrite = vi
+        .spyOn(CommitService, 'create')
+        .mockRejectedValueOnce(new Error('connection reset'))
+      await expect(
+        ChangeOrderService.addDesign(changeOrder.id, designId, user.id),
+      ).rejects.toThrow('connection reset')
+      commitWrite.mockRestore()
+
+      expect(
+        await ChangeOrderService.getChangeOrderDesigns(changeOrder.id),
+      ).toEqual([])
+      const changeOrderBranches = await testDb.db
+        .select()
+        .from(branches)
+        .where(
+          and(eq(branches.designId, designId), eq(branches.branchType, 'eco')),
+        )
+      expect(changeOrderBranches).toEqual([])
+
+      // Nothing is stuck: the same call succeeds next time
+      const linked = await ChangeOrderService.addDesign(
+        changeOrder.id,
+        designId,
+        user.id,
+      )
+      expect(linked.branchId).toBeTruthy()
+    })
+
+    it('checkoutItem leaves nothing behind when the intake fails', async () => {
+      const changeOrder = await createChangeOrder()
+      const part = await createPart({ state: 'Released' })
+
+      const commitWrite = vi
+        .spyOn(CommitService, 'create')
+        .mockRejectedValueOnce(new Error('connection reset'))
+      await expect(
+        ChangeOrderService.checkoutItem(changeOrder.id, part.id, user.id),
+      ).rejects.toThrow('connection reset')
+      commitWrite.mockRestore()
+
+      // No scope row, no association, no branch, no working copy
+      expect(await ChangeOrderService.getAffectedItems(changeOrder.id)).toEqual(
+        [],
+      )
+      expect(
+        await ChangeOrderService.getChangeOrderDesigns(changeOrder.id),
+      ).toEqual([])
+      const versions = await testDb.db
+        .select({ id: itemsTable.id })
+        .from(itemsTable)
+        .where(eq(itemsTable.masterId, part.masterId))
+      expect(versions).toHaveLength(1)
+
+      // ...and the retry is a normal checkout: the working copy, locked
+      const result = await ChangeOrderService.checkoutItem(
+        changeOrder.id,
+        part.id,
+        user.id,
+      )
+      expect(result.branchItem.changeType).toBe('modified')
+      expect(result.branchItem.checkedOutBy).toBe(user.id)
+      const [scoped] = await ChangeOrderService.getAffectedItems(changeOrder.id)
+      expect(scoped?.changeAction).toBe('revise')
+      expect(scoped?.workingCopyId).toBe(result.branchItem.currentItemId)
+    })
+
+    it('checkoutItem treats an item already in scope as already scoped', async () => {
+      const changeOrder = await createChangeOrder()
+      const part = await createPart({ state: 'Released' })
+      const added = await ChangeOrderService.addAffectedItem(
+        changeOrder.id,
+        { affectedItemId: part.id, changeAction: 'revise' },
+        user.id,
+      )
+
+      // Scope management created the working copy unlocked; the checkout
+      // is the edit intent that locks it, and adds no second scope row
+      const result = await ChangeOrderService.checkoutItem(
+        changeOrder.id,
+        part.id,
+        user.id,
+      )
+      expect(result.branchItem.currentItemId).toBe(added.workingCopyId)
+      expect(result.branchItem.checkedOutBy).toBe(user.id)
+      expect(
+        await ChangeOrderService.getAffectedItems(changeOrder.id),
+      ).toHaveLength(1)
+    })
   })
 
   describe('transitionWorkflow', () => {
@@ -1755,7 +2526,7 @@ describe('ChangeOrderService', () => {
       // Reaching a change order means reaching one of its designs, and the
       // relation that decides that is change_order_designs — `items.designId`,
       // which createChangeOrder sets, is NULL on every ECO the application
-      // builds. Linked directly rather than through addDesignToEco so the
+      // builds. Linked directly rather than through addDesign so the
       // fixture does not also create a branch and a commit. The design carries
       // no programId, so membership is not what is under test here.
       await testDb.db.insert(changeOrderDesigns).values({
@@ -1836,9 +2607,12 @@ describe('ChangeOrderService', () => {
     // the given final state, then repoints the CO's instance at it. Raw
     // insert is deliberate: some tests need definitions that create()-time
     // validation would reject, to prove the runtime fails closed.
-    async function setupCoWithFinalState(finalState: Record<string, unknown>) {
+    async function setupCoWithFinalState(
+      finalState: Record<string, unknown>,
+      guards: Array<Record<string, unknown>> = [],
+    ) {
       const defId = randomUUID()
-      await testDb.db.insert(workflowDefinitions).values({
+      await testDb.db.insert(lifecycleDefinitions).values({
         id: defId,
         name: `CO Orchestration ${uniquePrefix}-${Math.random().toString(36).slice(2, 6)}`,
         version: 1,
@@ -1854,9 +2628,9 @@ describe('ChangeOrderService', () => {
               name: 'Complete',
               fromStateId: 'Draft',
               toStateId: finalState.id,
+              guards,
             },
           ],
-          definitionType: 'workflow',
           applicableItemTypes: ['ChangeOrder'],
         },
         isActive: true,
@@ -1867,7 +2641,7 @@ describe('ChangeOrderService', () => {
       // Reaching a change order means reaching one of its designs, and the
       // relation that decides that is change_order_designs — `items.designId`,
       // which createChangeOrder sets, is NULL on every ECO the application
-      // builds. Linked directly rather than through addDesignToEco so the
+      // builds. Linked directly rather than through addDesign so the
       // fixture does not also create a branch and a commit. The design carries
       // no programId, so membership is not what is under test here.
       await testDb.db.insert(changeOrderDesigns).values({
@@ -1876,9 +2650,9 @@ describe('ChangeOrderService', () => {
         mergeStatus: 'pending',
       })
       await testDb.db
-        .update(workflowInstances)
+        .update(lifecycleInstances)
         .set({ workflowDefinitionId: defId })
-        .where(eq(workflowInstances.itemId, changeOrder.id))
+        .where(eq(lifecycleInstances.itemId, changeOrder.id))
 
       return { changeOrder }
     }
@@ -1915,6 +2689,114 @@ describe('ChangeOrderService', () => {
       )
       expect(instance?.currentState).toBe('DoneRejected')
       expect(instance?.completedAt).toBeDefined()
+    })
+
+    it('previews the transition against the change order itself, doing nothing', async () => {
+      const { changeOrder } = await setupCoWithFinalState(
+        {
+          id: 'Approved',
+          name: 'Approved',
+          isFinal: true,
+          finalKind: 'release',
+        },
+        [
+          {
+            id: 'g1',
+            name: 'Description Required',
+            type: 'field_value',
+            config: { fieldName: 'description', operator: 'is_not_empty' },
+            errorMessage: 'Description is required',
+          },
+        ],
+      )
+      const part = await createPart()
+      await ChangeOrderService.addAffectedItem(
+        changeOrder.id,
+        { affectedItemId: part.id, changeAction: 'release' },
+        user.id,
+      )
+
+      // No description yet, so the guard refuses. The preview used to
+      // evaluate guards against an empty item — refusing regardless of the
+      // change order — while execution read the row.
+      const refused = await ChangeOrderService.validateTransition(
+        changeOrder.id,
+        'Approved',
+        user.id,
+      )
+      expect(refused).toMatchObject({
+        valid: false,
+        workflowGuardErrors: [expect.any(String)],
+      })
+
+      await testDb.db
+        .update(changeOrders)
+        .set({ description: 'Bracket rework' })
+        .where(eq(changeOrders.itemId, changeOrder.id))
+
+      const before = await ItemService.findById(part.id)
+      const previewed = await ChangeOrderService.validateTransition(
+        changeOrder.id,
+        'Approved',
+        user.id,
+      )
+      expect(previewed).toMatchObject({
+        valid: true,
+        workflowGuardErrors: [],
+        affectedItemErrors: [],
+        affectedItemsPreview: [
+          {
+            itemId: part.id,
+            changeAction: 'release',
+            predictedTransitions: [
+              { fromState: before?.state, toState: 'Released' },
+            ],
+          },
+        ],
+        transitionName: 'Complete',
+        fromState: 'Draft',
+        toState: 'Approved',
+      })
+
+      // A preview: the change order has not moved and the part is untouched
+      const instance = await ChangeOrderService.getWorkflowInstance(
+        changeOrder.id,
+      )
+      expect(instance?.currentState).toBe('Draft')
+      expect((await ItemService.findById(part.id))?.state).toBe(before?.state)
+    })
+
+    it('reports a release the change-action mappings would refuse', async () => {
+      const { changeOrder } = await setupCoWithFinalState({
+        id: 'Approved',
+        name: 'Approved',
+        isFinal: true,
+        finalKind: 'release',
+      })
+      const part = await createPart()
+      await ChangeOrderService.addAffectedItem(
+        changeOrder.id,
+        { affectedItemId: part.id, changeAction: 'release' },
+        user.id,
+      )
+      // Released since it was added: `release` maps from the initial state,
+      // so the merge would refuse it — and the preview says so first
+      await testDb.db
+        .update(itemsTable)
+        .set({ state: 'Released' })
+        .where(eq(itemsTable.id, part.id))
+
+      const result = await ChangeOrderService.validateTransition(
+        changeOrder.id,
+        'Approved',
+        user.id,
+      )
+      expect(result).toMatchObject({
+        valid: false,
+        workflowGuardErrors: [],
+        affectedItemErrors: [expect.stringContaining(part.itemNumber)],
+        affectedItemsPreview: [],
+      })
     })
 
     it('blocks a release while a critical risk is unacknowledged', async () => {
@@ -2078,6 +2960,147 @@ describe('ChangeOrderService', () => {
       )
       expect(retry.result.success).toBe(true)
       expect(retry.mergeResult).toBeDefined()
+    })
+
+    it('passes the release gates again after releasing branch content', async () => {
+      const changeOrder = await createChangeOrder()
+      const part = await createPart({ state: 'Released' })
+      // Real branch content: a working copy with an edit of its own, which the
+      // release promotes onto main as the next revision
+      const { branchItem } = await ChangeOrderService.checkoutItem(
+        changeOrder.id,
+        part.id,
+        user.id,
+      )
+      await ItemService.update(
+        branchItem.currentItemId!,
+        { name: 'Edited on the branch' },
+        user.id,
+      )
+      await transitionTo(changeOrder.id, 'InReview')
+      await transitionTo(changeOrder.id, 'Approved')
+      await transitionTo(changeOrder.id, 'Implemented')
+      await transitionTo(changeOrder.id, 'Closed')
+
+      // The archived branch's base is the row the release replaced and main
+      // now carries the row it promoted, so walking the branch reported the
+      // release as a blocking concurrent modification of itself — which
+      // wedged the retry of a release whose state write had failed after the
+      // merge. A finished branch is not a conflict.
+      const conflicts =
+        await ConflictDetectionService.detectConflictsForChangeOrder(
+          changeOrder.id,
+        )
+      expect(
+        conflicts.conflicts.filter((c) => c.itemMasterId === part.masterId),
+      ).toEqual([])
+      expect(conflicts.hasBlockingConflicts).toBe(false)
+      await expect(
+        ChangeOrderService.assertReleaseGates(changeOrder.id),
+      ).resolves.toBeUndefined()
+    })
+
+    it('retries a release whose state write failed, without releasing anything twice', async () => {
+      const { changeOrder } = await setupCoWithFinalState({
+        id: 'Closed',
+        name: 'Closed',
+        isFinal: true,
+        finalKind: 'release',
+      })
+      // A revision with no branch content: the one arm of the release that is
+      // not idempotent by inspection, because a second pass would base its
+      // letter on the version the first pass created. Raw insert on purpose —
+      // intake creates a working copy for `revise` whenever a branch exists,
+      // and this fixture's design has none, which is the shape under test.
+      const part = await createPart({ state: 'Released' })
+      await testDb.db.insert(changeOrderAffectedItems).values({
+        changeOrderId: changeOrder.id,
+        affectedItemId: part.id,
+        affectedItemMasterId: part.masterId,
+        changeAction: 'revise',
+        createdBy: user.id,
+      })
+      const revisionsOf = async () =>
+        (
+          await testDb.db
+            .select({
+              revision: itemsTable.revision,
+              isCurrent: itemsTable.isCurrent,
+            })
+            .from(itemsTable)
+            .where(eq(itemsTable.masterId, part.masterId))
+        ).sort((a, b) => a.revision.localeCompare(b.revision))
+      const changeOrderRow = async () =>
+        takeFirst(
+          await testDb.db
+            .select()
+            .from(changeOrders)
+            .where(eq(changeOrders.itemId, changeOrder.id)),
+        )
+
+      // The merge commits first, by design; the state write after it fails
+      const historyWrite = vi
+        .spyOn(LifecycleInstanceService, 'recordHistory')
+        .mockRejectedValueOnce(new Error('connection reset'))
+      await expect(
+        ChangeOrderService.executeWorkflowTransition(
+          changeOrder.id,
+          'Closed',
+          user.id,
+        ),
+      ).rejects.toThrow('connection reset')
+      historyWrite.mockRestore()
+
+      // The release itself happened and is recorded as done...
+      expect((await revisionsOf()).map((v) => v.revision)).toEqual(['A', 'B'])
+      const afterFailure = await changeOrderRow()
+      expect(afterFailure.implementedAt).not.toBeNull()
+      expect(afterFailure.closedAt).not.toBeNull()
+      // ...while the workflow, the change order's own state, its milestones
+      // and its history all still say the transition never happened
+      expect(afterFailure.approvedAt).toBeNull()
+      const instance = await ChangeOrderService.getWorkflowInstance(
+        changeOrder.id,
+      )
+      expect(instance?.currentState).toBe('Draft')
+      expect(instance?.completedAt).toBeUndefined()
+      expect(instance?.releasingAt).toBeUndefined()
+      expect((await ItemService.findById(changeOrder.id))?.state).toBe('Draft')
+      const historyAfterFailure = await testDb.db
+        .select()
+        .from(lifecycleHistory)
+        .where(eq(lifecycleHistory.instanceId, instance!.id))
+      expect(historyAfterFailure.some((h) => h.toState === 'Closed')).toBe(
+        false,
+      )
+
+      // The same transition completes on retry: the gates pass, nothing is
+      // released a second time, and the workflow ends with its record intact
+      const retry = await ChangeOrderService.executeWorkflowTransition(
+        changeOrder.id,
+        'Closed',
+        user.id,
+      )
+      expect(retry.result.success).toBe(true)
+
+      const versions = await revisionsOf()
+      expect(versions.map((v) => v.revision)).toEqual(['A', 'B'])
+      expect(versions.find((v) => v.revision === 'B')?.isCurrent).toBe(true)
+      const completed = await ChangeOrderService.getWorkflowInstance(
+        changeOrder.id,
+      )
+      expect(completed?.currentState).toBe('Closed')
+      expect(completed?.completedAt).toBeDefined()
+      expect((await ItemService.findById(changeOrder.id))?.state).toBe('Closed')
+      const afterRetry = await changeOrderRow()
+      expect(afterRetry.approvedAt).not.toBeNull()
+      expect(afterRetry.approvedBy).toBe(user.id)
+      expect(afterRetry.closedAt).toEqual(afterFailure.closedAt)
+      const historyAfterRetry = await testDb.db
+        .select()
+        .from(lifecycleHistory)
+        .where(eq(lifecycleHistory.instanceId, instance!.id))
+      expect(historyAfterRetry.some((h) => h.toState === 'Closed')).toBe(true)
     })
 
     it('leaves affected item states untouched on non-final transitions (single-mechanism invariant)', async () => {

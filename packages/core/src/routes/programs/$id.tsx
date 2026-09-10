@@ -18,6 +18,7 @@ import type { CreateProgramInput, Program } from '@/lib/types/program'
 import type { Design } from '@/lib/types/design'
 import { PageContainer } from '@/components/layout'
 import { ProgramHistoryGraphView } from '@/components/programs/ProgramHistoryGraphView'
+import { ProgramModelViewer } from '@/components/programs/ProgramModelViewer'
 import { ProgramTeamCard } from '@/components/programs/ProgramTeamCard'
 import { ScopeGraphView } from '@/components/graph/ScopeGraphView'
 import {
@@ -151,8 +152,12 @@ function ProgramDetail({
         status: editProgram.status as CreateProgramInput['status'],
         customer: editProgram.customer || '',
         contractNumber: editProgram.contractNumber || '',
-        startDate: editProgram.startDate || '',
-        targetEndDate: editProgram.targetEndDate || '',
+        // `null`, not `''`: an emptied `<input type="date">` reads back as
+        // the empty string, and a program with no dates set starts there.
+        // Both spellings mean "no date" and the server normalizes either
+        // (see `clearableDate`), but only one of them says so.
+        startDate: editProgram.startDate || null,
+        targetEndDate: editProgram.targetEndDate || null,
         attributes,
       }
       await apiFetch(`/api/v1/programs/${program.id}`, {
@@ -365,6 +370,9 @@ function ProgramDetail({
                   </dl>
                 </CardContent>
               </Card>
+
+              {/* 3D Model — pick a design, then a top-level part of it */}
+              <ProgramModelViewer designs={designs} />
 
               {/* Program Graph */}
               <Card>

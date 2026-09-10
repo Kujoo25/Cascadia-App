@@ -44,12 +44,12 @@ import {
   itemFieldChanges,
   itemVersions,
   items,
+  lifecycleDefinitions,
+  lifecycleInstances,
   programMembers,
   programs,
   software,
   softwareBlobs,
-  workflowDefinitions,
-  workflowInstances,
 } from '@/lib/db/schema'
 import { ItemTypeRegistry } from '@/lib/items/registry'
 import { seedStandardPartLifecycle } from '@/__tests__/fixtures/lifecycles'
@@ -80,7 +80,7 @@ describe('SoftwareSourceService', () => {
     // ECO workflow specific to this file — unique ID avoids races with other
     // test files that define their own ECO workflows.
     await testDb.db
-      .insert(workflowDefinitions)
+      .insert(lifecycleDefinitions)
       .values({
         id: SW_TEST_WORKFLOW_ID,
         name: 'Test ECO Workflow - SoftwareSource',
@@ -117,7 +117,6 @@ describe('SoftwareSourceService', () => {
               toStateId: 'Released',
             },
           ],
-          definitionType: 'workflow',
           applicableItemTypes: ['ChangeOrder'],
         },
         isActive: true,
@@ -199,7 +198,7 @@ describe('SoftwareSourceService', () => {
 
   // Helper: create an ECO with a workflow instance
   async function createChangeOrder() {
-    const eco = await ItemService.create(
+    const changeOrder = await ItemService.create(
       'ChangeOrder',
       {
         revision: '-',
@@ -210,12 +209,12 @@ describe('SoftwareSourceService', () => {
       } as any,
       user.id,
     )
-    await testDb.db.insert(workflowInstances).values({
+    await testDb.db.insert(lifecycleInstances).values({
       workflowDefinitionId: SW_TEST_WORKFLOW_ID,
-      itemId: eco.id,
+      itemId: changeOrder.id,
       currentState: 'Draft',
     })
-    return eco
+    return changeOrder
   }
 
   // Helper: mark an item Released and track it on the main branch
@@ -503,9 +502,9 @@ describe('SoftwareSourceService', () => {
       await releaseOnMain(sw)
 
       // 2. ECO revises it -> working copy on the ECO branch
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         { affectedItemId: sw.id!, changeAction: 'revise' },
         user.id,
       )
@@ -540,14 +539,14 @@ describe('SoftwareSourceService', () => {
       expect(revARow?.manifestId).toBe(m1.id)
 
       // 4. Merge the ECO branch -> revision B released with M2
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       const mergeResult = await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       expect(mergeResult.revisionsAssigned[sw.itemNumber!]).toBe('B')
@@ -577,10 +576,10 @@ describe('SoftwareSourceService', () => {
     })
 
     it('a software item added on an ECO branch keeps its extension data through release', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -616,7 +615,7 @@ describe('SoftwareSourceService', () => {
 
       const mergeResult = await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       expect(mergeResult.itemsAdded).toBe(1)
@@ -870,9 +869,9 @@ describe('SoftwareSourceService', () => {
       )
       await releaseOnMain(sw)
 
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         { affectedItemId: sw.id!, changeAction: 'revise' },
         user.id,
       )
@@ -894,9 +893,9 @@ describe('SoftwareSourceService', () => {
         role: 'engineer',
         invitedBy: user.id,
       })
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await CheckoutService.checkout(
@@ -932,9 +931,9 @@ describe('SoftwareSourceService', () => {
       )
       await releaseOnMain(sw)
 
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         { affectedItemId: sw.id!, changeAction: 'revise' },
         user.id,
       )
@@ -946,9 +945,9 @@ describe('SoftwareSourceService', () => {
         )
         .limit(1)
 
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await testDb.db
@@ -1110,16 +1109,18 @@ describe('SoftwareSourceService', () => {
         user.id,
       )
 
-      const { branch: branch1 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco1.id,
-        user.id,
-      )
-      const { branch: branch2 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco2.id,
-        user.id,
-      )
+      const { branch: branch1 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco1.id,
+          user.id,
+        )
+      const { branch: branch2 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco2.id,
+          user.id,
+        )
 
       const wcOn = async (branchId: string) => {
         const [bi] = await testDb.db
@@ -1155,9 +1156,8 @@ describe('SoftwareSourceService', () => {
       )
       await SoftwareSourceService.commitDraft(wc2, 'eco2 main fix', user.id)
 
-      const disjoint = await ConflictDetectionService.detectConflictsForEco(
-        eco1.id,
-      )
+      const disjoint =
+        await ConflictDetectionService.detectConflictsForChangeOrder(eco1.id)
       const swConflicts = disjoint.conflicts.filter(
         (c) => c.itemMasterId === sw.masterId,
       )
@@ -1175,9 +1175,8 @@ describe('SoftwareSourceService', () => {
       )
       await SoftwareSourceService.commitDraft(wc2, 'eco2 pid tweak', user.id)
 
-      const overlapping = await ConflictDetectionService.detectConflictsForEco(
-        eco1.id,
-      )
+      const overlapping =
+        await ConflictDetectionService.detectConflictsForChangeOrder(eco1.id)
       const fileConflict = overlapping.conflicts.find(
         (c) =>
           c.itemMasterId === sw.masterId && c.conflictType === 'field_conflict',

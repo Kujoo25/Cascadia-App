@@ -154,7 +154,7 @@ export function PartForm({
             }
             helpText={
               branchRequired
-                ? 'Select an ECO or workspace branch for the new part'
+                ? 'Select a change-order or workspace branch for the new part'
                 : 'Optional: Create on a workspace branch for private development'
             }
             className="md:col-span-2"

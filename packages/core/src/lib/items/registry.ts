@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { resolveLifecycleType } from '../workflows/normalize'
+import { resolveLifecycleType } from '../lifecycles/normalize'
 import type { ItemTypeConfig, StateConfig } from './types/base'
 import type { RuntimeItemTypeConfig } from './types/runtime-config'
-import type { WorkflowDefinition } from '../workflows/types'
+import type { LifecycleDefinition } from '../lifecycles/types'
 import type { ConfigService as ConfigServiceType } from '../config'
-import type { WorkflowService as WorkflowServiceType } from '../workflows/WorkflowService'
+import type { LifecycleDefinitionService as LifecycleDefinitionServiceType } from '../lifecycles/LifecycleDefinitionService'
 
 // Re-export for convenience
 export type { RuntimeItemTypeConfig } from './types/runtime-config'
@@ -22,14 +22,15 @@ async function getConfigService() {
   return ConfigServiceCache
 }
 
-// Lazy import of WorkflowService for lifecycle lookups
-let WorkflowServiceCache: typeof WorkflowServiceType | null = null
-async function getWorkflowService() {
-  if (!WorkflowServiceCache) {
-    const module = await import('../workflows/WorkflowService')
-    WorkflowServiceCache = module.WorkflowService
+// Lazy import of LifecycleDefinitionService for lifecycle lookups
+let LifecycleDefinitionServiceCache:
+  typeof LifecycleDefinitionServiceType | null = null
+async function getLifecycleDefinitionService() {
+  if (!LifecycleDefinitionServiceCache) {
+    const module = await import('../lifecycles/LifecycleDefinitionService')
+    LifecycleDefinitionServiceCache = module.LifecycleDefinitionService
   }
-  return WorkflowServiceCache
+  return LifecycleDefinitionServiceCache
 }
 
 /**
@@ -53,24 +54,26 @@ class ItemTypeRegistry {
   private static mergedCache = new Map<string, ItemTypeConfig>()
 
   /**
-   * Lifecycle definitions by item type.
+   * The definition assigned to each item type, whatever its kind.
    *
    * Every `LifecycleService` question — "what state does release produce",
    * "what revision scheme", "is this action valid" — resolves through
-   * `getLifecycleForType`, which was a fresh `SELECT` of the same
+   * `getAssignedDefinitionForType`, which was a fresh `SELECT` of the same
    * workflow-definition row each time. A change-order release asks ~30 of them,
    * most inside per-item loops, so a 50-item release did on the order of 250
    * redundant queries while holding a serializable transaction open.
    *
    * A definition cannot change mid-request, and every path that edits one
    * already invalidates here: `reload()` (admin item-type edits and the test
-   * fixtures), `WorkflowService.create/update/delete` (lifecycle edits), and
-   * `unregister`/`clear`. `undefined` is cached too — "this type has no
-   * lifecycle" is the answer for most item types and is asked just as often.
+   * fixtures), `LifecycleDefinitionService.create/update/delete` (lifecycle edits), and
+   * `unregister`/`clear`. `undefined` is cached too — "nothing assigned" is
+   * asked about just as often. Driving definitions are cached like any other
+   * and filtered out on read by `getLifecycleForType`; a lookup that throws
+   * caches nothing, so the next caller asks the database again.
    */
   private static lifecycleCache = new Map<
     string,
-    WorkflowDefinition | undefined
+    LifecycleDefinition | undefined
   >()
 
   /** Whether runtime configs have been loaded */
@@ -94,7 +97,7 @@ class ItemTypeRegistry {
    * Drop the memoized lifecycle definitions.
    *
    * Called from every path that can change one: this registry's own reload, and
-   * `WorkflowService.create/update/delete`. A lifecycle edit that does not land
+   * `LifecycleDefinitionService.create/update/delete`. A lifecycle edit that does not land
    * here would be invisible until the process restarted.
    */
   static invalidateLifecycleCache(): void {
@@ -308,13 +311,22 @@ class ItemTypeRegistry {
   }
 
   /**
-   * Get the lifecycle definition for an item type.
-   * Fetches from database using WorkflowService.
-   * Returns undefined if no lifecycle is assigned or not found.
+   * The definition assigned to an item type, whatever its kind: the item
+   * lifecycle of a Driven or Free type, or the change-order workflow of a
+   * Driving one. `undefined` when the type has nothing assigned or the
+   * assigned id matches no row.
+   *
+   * A failed lookup throws. It used to be caught, logged and answered as
+   * `undefined`, which made "the database could not answer" the same answer
+   * as "nothing assigned" — and `LifecycleService.getLifecycleType` turned
+   * that into `'Free'`, the one kind branch protection exempts, so a transient
+   * error while loading a Part's lifecycle let a direct write through to a
+   * protected main. Nothing here decides what a missing answer means; every
+   * consumer fails closed on the error instead.
    */
-  static async getLifecycleForType(
+  static async getAssignedDefinitionForType(
     itemType: string,
-  ): Promise<WorkflowDefinition | undefined> {
+  ): Promise<LifecycleDefinition | undefined> {
     if (this.lifecycleCache.has(itemType)) {
       return this.lifecycleCache.get(itemType)
     }
@@ -325,47 +337,47 @@ class ItemTypeRegistry {
       return undefined
     }
 
-    try {
-      const workflowService = await getWorkflowService()
-      const lifecycle = await workflowService.getById(lifecycleId)
+    const definitions = await getLifecycleDefinitionService()
+    const definition = (await definitions.getById(lifecycleId)) ?? undefined
+    this.lifecycleCache.set(itemType, definition)
+    return definition
+  }
 
-      // Item lifecycles are the non-Driving kinds (Driven and Free) —
-      // change-order workflows never resolve as an item's lifecycle
-      const resolved =
-        lifecycle && resolveLifecycleType(lifecycle) !== 'Driving'
-          ? lifecycle
-          : undefined
-      this.lifecycleCache.set(itemType, resolved)
-      return resolved
-    } catch (error) {
-      console.error(
-        `[ItemTypeRegistry] Failed to fetch lifecycle for ${itemType}:`,
-        error,
-      )
-      return undefined
-    }
+  /**
+   * Get the lifecycle definition for an item type: the assigned definition
+   * when it is an item lifecycle (Driven or Free). Change-order workflows —
+   * Driving definitions — never resolve as an item's lifecycle, so a type
+   * governed by one answers `undefined` here; `getAssignedDefinitionForType`
+   * returns the definition itself.
+   */
+  static async getLifecycleForType(
+    itemType: string,
+  ): Promise<LifecycleDefinition | undefined> {
+    const definition = await this.getAssignedDefinitionForType(itemType)
+    return definition && resolveLifecycleType(definition) !== 'Driving'
+      ? definition
+      : undefined
   }
 
   /**
    * Get the valid states for an item type from its lifecycle definition.
-   * Falls back to deprecated code-defined states if no lifecycle is assigned.
+   * Every state an item of the type can hold, resolved through the lifecycle
+   * service: a Driving-governed type (ChangeOrder) gets the union across the
+   * definitions its change types run. There is no code-defined fallback any
+   * more — it answered for ChangeOrder, because the registry deliberately
+   * never resolves a Driving definition as an item lifecycle, with a list of
+   * states no change order could hold.
    */
   static async getStatesForType(itemType: string): Promise<Array<StateConfig>> {
-    const lifecycle = await this.getLifecycleForType(itemType)
-
-    if (lifecycle) {
-      // Map lifecycle states to StateConfig format
-      return lifecycle.states.map((state) => ({
+    const { LifecycleService } = await import('../services/LifecycleService')
+    return (await LifecycleService.getRenderableStates(itemType)).map(
+      (state) => ({
         id: state.id,
         name: state.name,
         color: state.color,
         description: state.description,
-      }))
-    }
-
-    // Fallback to deprecated code-defined states
-    const config = this.getType(itemType)
-    return config?.states || []
+      }),
+    )
   }
 
   /**

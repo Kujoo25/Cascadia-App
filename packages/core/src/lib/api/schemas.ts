@@ -22,6 +22,8 @@ import {
 } from '@/lib/items/types/issue'
 import { workOrderUpdateSchema } from '@/lib/items/types/work-order'
 import { softwareSourceUpdateFields } from '@/lib/items/types/software'
+import { clearableDate } from '@/lib/api/wire-date'
+import { TAG_TYPES } from '@/lib/versioning/branch-types'
 
 // =============================================================================
 // User Schemas
@@ -36,6 +38,25 @@ import { softwareSourceUpdateFields } from '@/lib/items/types/software'
  * copy here was a shape that had never matched the API's actual contract. It
  * is gone rather than reconciled: one schema per resource is the whole point.
  */
+
+// =============================================================================
+// Shared update fields
+// =============================================================================
+
+/**
+ * Base-item fields every type's update accepts.
+ *
+ * `name` is nullable because the column is, `attributes` is here because every
+ * whole-item edit form round-trips it, and `state` is not nullable because the
+ * column is NOT NULL — `ItemService.update` tolerates an echoed identical value
+ * and rejects a changed one, so a state change goes through the lifecycle.
+ */
+const itemUpdateBaseFields = {
+  name: z.string().max(500).nullable().optional(),
+  state: z.string().max(50).optional(),
+  attributes: z.record(z.string(), jsonValueSchema).optional(),
+  commitMessage: z.string().max(500).optional(),
+}
 
 // =============================================================================
 // Part Schemas
@@ -132,14 +153,17 @@ export const documentCreateSchema = z.object({
 
 /**
  * Schema for updating a document.
+ *
+ * Follows the convention `partUpdateSchema` documents: every field optional,
+ * and `null` accepted wherever the column is nullable, because the detail page
+ * echoes back the whole item it read. Without that, saving an item that simply
+ * has an empty field 400s.
  */
 export const documentUpdateSchema = z.object({
-  name: z.string().max(500).optional(),
-  description: z.string().max(5000).optional(),
-  fileId: z.string().uuid().optional(),
-  fileName: z.string().max(500).optional(),
-  state: z.string().max(50).optional(),
-  commitMessage: z.string().max(500).optional(),
+  ...itemUpdateBaseFields,
+  description: z.string().max(5000).nullable().optional(),
+  fileId: z.string().uuid().nullable().optional(),
+  fileName: z.string().max(500).nullable().optional(),
 })
 
 export type DocumentCreate = z.infer<typeof documentCreateSchema>
@@ -183,20 +207,23 @@ export const requirementCreateSchema = z.object({
 
 /**
  * Schema for updating a requirement.
+ *
+ * Follows the convention `partUpdateSchema` documents: every field optional,
+ * and `null` accepted wherever the column is nullable, because the detail page
+ * echoes back the whole item it read. Without that, saving an item that simply
+ * has an empty field 400s.
  */
 export const requirementUpdateSchema = z.object({
-  name: z.string().max(500).optional(),
+  ...itemUpdateBaseFields,
   // The column is `type`; `requirementType` is the older API spelling and is
   // kept as an alias, resolved in items/type-handlers/requirement.ts. Neither
   // is narrowed to an enum - the column is a plain varchar(50).
-  type: z.string().max(50).optional(),
-  requirementType: z.string().max(50).optional(),
-  description: z.string().max(10000).optional(),
-  priority: requirementPrioritySchema.optional(),
-  verificationMethod: verificationMethodSchema.optional(),
-  acceptanceCriteria: z.string().max(10000).optional(),
-  state: z.string().max(50).optional(),
-  commitMessage: z.string().max(500).optional(),
+  type: z.string().max(50).nullable().optional(),
+  requirementType: z.string().max(50).nullable().optional(),
+  description: z.string().max(10000).nullable().optional(),
+  priority: requirementPrioritySchema.nullable().optional(),
+  verificationMethod: verificationMethodSchema.nullable().optional(),
+  acceptanceCriteria: z.string().max(10000).nullable().optional(),
 })
 
 export type RequirementCreate = z.infer<typeof requirementCreateSchema>
@@ -220,22 +247,25 @@ export const taskCreateSchema = z.object({
   designId: z.string().uuid().optional(), // Optional for tasks
   description: z.string().max(10000).optional(),
   priority: taskPrioritySchema.optional(),
-  dueDate: z.coerce.date().optional(),
+  dueDate: clearableDate().optional(),
   assignee: z.string().uuid().optional(),
   branchId: z.string().uuid().optional(),
 })
 
 /**
  * Schema for updating a task.
+ *
+ * Follows the convention `partUpdateSchema` documents: every field optional,
+ * and `null` accepted wherever the column is nullable, because the detail page
+ * echoes back the whole item it read. Without that, saving an item that simply
+ * has an empty field 400s.
  */
 export const taskUpdateSchema = z.object({
-  name: z.string().max(500).optional(),
-  description: z.string().max(10000).optional(),
-  priority: taskPrioritySchema.optional(),
-  dueDate: z.coerce.date().optional(),
-  assignee: z.string().uuid().optional(),
-  state: z.string().max(50).optional(),
-  commitMessage: z.string().max(500).optional(),
+  ...itemUpdateBaseFields,
+  description: z.string().max(10000).nullable().optional(),
+  priority: taskPrioritySchema.nullable().optional(),
+  dueDate: clearableDate().optional(),
+  assignee: z.string().uuid().nullable().optional(),
 })
 
 export type TaskCreate = z.infer<typeof taskCreateSchema>
@@ -268,24 +298,29 @@ export const changeOrderCreateSchema = z.object({
   description: z.string().max(10000).optional(),
   reasonForChange: z.string().max(10000).optional(),
   impactDescription: z.string().max(10000).optional(),
-  implementationDate: z.coerce.date().optional(),
+  implementationDate: clearableDate().optional(),
   riskLevel: riskLevelSchema.optional(),
 })
 
 /**
  * Schema for updating a change order.
+ *
+ * Follows the convention `partUpdateSchema` documents: every field optional,
+ * and `null` accepted wherever the column is nullable, because the detail page
+ * echoes back the whole item it read. Without that, saving an item that simply
+ * has an empty field 400s.
+ *
+ * `changeType` is the one field with no null: the column is NOT NULL.
  */
 export const changeOrderUpdateSchema = z.object({
-  name: z.string().max(500).optional(),
+  ...itemUpdateBaseFields,
   changeType: changeOrderTypeSchema.optional(),
-  priority: changeOrderPrioritySchema.optional(),
-  description: z.string().max(10000).optional(),
-  reasonForChange: z.string().max(10000).optional(),
-  impactDescription: z.string().max(10000).optional(),
-  implementationDate: z.coerce.date().optional(),
-  riskLevel: riskLevelSchema.optional(),
-  state: z.string().max(50).optional(),
-  commitMessage: z.string().max(500).optional(),
+  priority: changeOrderPrioritySchema.nullable().optional(),
+  description: z.string().max(10000).nullable().optional(),
+  reasonForChange: z.string().max(10000).nullable().optional(),
+  impactDescription: z.string().max(10000).nullable().optional(),
+  implementationDate: clearableDate().optional(),
+  riskLevel: riskLevelSchema.nullable().optional(),
 })
 
 export type ChangeOrderCreate = z.infer<typeof changeOrderCreateSchema>
@@ -308,14 +343,6 @@ export type ChangeOrderUpdate = z.infer<typeof changeOrderUpdateSchema>
 // physical part's as-built pin — are deliberately absent: they are stripped
 // here rather than travelling into the service to be ignored or rejected.
 // =============================================================================
-
-/** Base-item fields every type's update accepts. */
-const itemUpdateBaseFields = {
-  name: z.string().max(500).nullable().optional(),
-  state: z.string().max(50).optional(),
-  attributes: z.record(z.string(), jsonValueSchema).optional(),
-  commitMessage: z.string().max(500).optional(),
-}
 
 /**
  * Fallback for an item type without a dedicated update schema. Base fields
@@ -346,7 +373,7 @@ export const testCaseUpdateSchema = z.object({
     .enum(['NotRun', 'Passed', 'Failed', 'Blocked'])
     .nullable()
     .optional(),
-  lastExecutedAt: z.coerce.date().nullable().optional(),
+  lastExecutedAt: clearableDate().optional(),
   lastExecutedBy: z.string().uuid().nullable().optional(),
   environment: z.string().max(100).nullable().optional(),
 })
@@ -367,10 +394,10 @@ export const issueUpdateSchema = z.object({
   priority: z.enum(issuePriorities).nullable().optional(),
   category: z.enum(issueCategories).nullable().optional(),
   reportedBy: z.string().uuid().nullable().optional(),
-  reportedDate: z.coerce.date().nullable().optional(),
+  reportedDate: clearableDate().optional(),
   assignedTo: z.string().uuid().nullable().optional(),
   resolution: z.string().max(10000).nullable().optional(),
-  resolvedDate: z.coerce.date().nullable().optional(),
+  resolvedDate: clearableDate().optional(),
   rootCause: z.string().max(10000).nullable().optional(),
   // The program the issue is scoped on, and the only way to set one on a row
   // that has none. Creation derives it from the chosen designs, which leaves
@@ -480,8 +507,8 @@ export const programCreateSchema = z.object({
   description: z.string().optional(),
   contractNumber: z.string().max(100).optional(),
   customer: z.string().max(200).optional(),
-  startDate: z.coerce.date().optional(),
-  targetEndDate: z.coerce.date().optional(),
+  startDate: clearableDate().optional(),
+  targetEndDate: clearableDate().optional(),
   status: z.enum(['Active', 'On Hold', 'Completed', 'Cancelled']).optional(),
 })
 
@@ -526,7 +553,12 @@ export const tagCreateSchema = z.object({
   name: z.string().min(1, 'Tag name is required').max(100),
   description: z.string().optional(),
   tagType: z
-    .enum(['baseline', 'release', 'milestone', 'eco-release'])
+    .enum([
+      TAG_TYPES.baseline,
+      TAG_TYPES.release,
+      TAG_TYPES.milestone,
+      TAG_TYPES.changeOrderRelease,
+    ])
     .optional()
     .default('baseline'),
   commitId: z.string().uuid('Commit is required'),
@@ -718,7 +750,7 @@ export type ItemListQuery = z.infer<typeof itemListSchema>
 /**
  * A workflow definition is the most deeply nested body the API accepts, and
  * the lifecycle editor is its only real client. These schemas mirror the
- * interfaces in `lib/workflows/types.ts` and `lib/types/lifecycle.ts` field
+ * interfaces in `lib/lifecycles/types.ts` and `lib/types/lifecycle.ts` field
  * for field, with these notes:
  *
  * - Guards and actions are discriminated unions on `type`, so a `field_value`

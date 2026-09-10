@@ -21,6 +21,7 @@ import {
   isUniqueViolation,
 } from '@/lib/errors/pg'
 import { takeFirst } from '@/lib/db/take-first'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
 
 /**
  * Runs of traveler lines (work order instructions). An execution always
@@ -135,7 +136,7 @@ export class InstructionExecutionService {
     if (await LifecycleService.isInitialState('WorkOrder', woItem.state)) {
       const autoStartTarget = await this.resolveAutoStartTarget(woItem.state)
       if (autoStartTarget) {
-        await LifecycleService.transitionFreeItem(
+        await LifecycleInstanceService.transitionFreeItem(
           woItem.id,
           autoStartTarget,
           userId,

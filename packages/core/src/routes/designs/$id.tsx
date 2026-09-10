@@ -17,9 +17,10 @@ import { UpstreamChangesBanner } from '@/components/mbom/UpstreamChangesBanner'
 import { HistoricalViewBanner } from '@/components/designs/HistoricalViewBanner'
 import { InitialReleaseHelper } from '@/components/versioning/InitialReleaseHelper'
 import { StructureTab } from '@/components/designs/StructureTab'
+import { DesignModelViewer } from '@/components/designs/DesignModelViewer'
 import { LibraryItemsTab } from '@/components/designs/LibraryItemsTab'
 import { HistoryTab } from '@/components/designs/HistoryTab'
-import { ECOsTab } from '@/components/designs/ECOsTab'
+import { ChangeOrdersTab } from '@/components/designs/ChangeOrdersTab'
 import { BaselinesTab } from '@/components/designs/BaselinesTab'
 import { MembersTab } from '@/components/designs/MembersTab'
 import { PageContainer } from '@/components/layout'
@@ -315,7 +316,7 @@ function DesignDetailPage() {
             <TabsTrigger value="items">Items</TabsTrigger>
             <TabsTrigger value="graph">Graph</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
-            <TabsTrigger value="ecos">ECOs</TabsTrigger>
+            <TabsTrigger value="ecos">Change Orders</TabsTrigger>
             <TabsTrigger value="baselines">Baselines</TabsTrigger>
           </TabsList>
 
@@ -344,7 +345,7 @@ function DesignDetailPage() {
           </TabsContent>
 
           <TabsContent value="ecos" className="mt-6">
-            <ECOsTab
+            <ChangeOrdersTab
               designId={design.id}
               versionContext={context}
               isHistoricalView={isHistoricalView}
@@ -372,17 +373,25 @@ function DesignDetailPage() {
             <TabsTrigger value="structure">Structure</TabsTrigger>
             <TabsTrigger value="graph">Graph</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
-            <TabsTrigger value="ecos">ECOs</TabsTrigger>
+            <TabsTrigger value="ecos">Change Orders</TabsTrigger>
             <TabsTrigger value="baselines">Baselines</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="structure" className="mt-6">
+          <TabsContent value="structure" className="mt-6 space-y-6">
             <StructureTab
               designId={design.id}
               designCode={design.code}
               designName={design.name}
               versionContext={context}
               isHistoricalView={isHistoricalView}
+            />
+            {/* 3D viewer — sits below the structure tab's own cards, the last
+                of which is Non-Structure Items. */}
+            <DesignModelViewer
+              designId={design.id}
+              versionContext={context}
+              mainBranchId={design.defaultBranchId ?? undefined}
+              hideWhenEmpty
             />
           </TabsContent>
 
@@ -403,7 +412,7 @@ function DesignDetailPage() {
           </TabsContent>
 
           <TabsContent value="ecos" className="mt-6">
-            <ECOsTab
+            <ChangeOrdersTab
               designId={design.id}
               versionContext={context}
               isHistoricalView={isHistoricalView}

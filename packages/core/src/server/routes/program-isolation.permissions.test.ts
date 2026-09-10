@@ -68,9 +68,9 @@ import { permissionService } from '@/lib/auth/permission-service'
 import { PermissionDeniedError } from '@/lib/errors'
 import { issues, workOrders } from '@/lib/db/schema'
 import {
-  workflowDefinitions,
-  workflowInstances,
-} from '@/lib/db/schema/workflows'
+  lifecycleDefinitions,
+  lifecycleInstances,
+} from '@/lib/db/schema/lifecycles'
 
 // Import to register item types
 import '@/lib/items/registerItemTypes.server'
@@ -213,7 +213,10 @@ describe('program isolation — items, designs, change orders', () => {
     }
   }
 
-  function ecoPayload(name: string, designIds: Array<string> = [designId]) {
+  function changeOrderPayload(
+    name: string,
+    designIds: Array<string> = [designId],
+  ) {
     // The route auto-starts a workflow for a changeType, but an absent
     // workflow definition is caught and logged — the invariant under test
     // is the program gate, not workflow config.
@@ -235,16 +238,16 @@ describe('program isolation — items, designs, change orders', () => {
    * designs attached through `change_order_designs`. Anything that scopes a
    * change order has to survive this shape, not the convenient one.
    */
-  async function mkEco(designIds: Array<string>, name = 'Scoped ECO') {
-    const eco = (await ItemService.create(
+  async function mkChangeOrder(designIds: Array<string>, name = 'Scoped ECO') {
+    const changeOrder = (await ItemService.create(
       'ChangeOrder',
       { revision: 'A', changeType: 'ECO', name } as never,
       progAdmin.id,
     )) as { id: string }
     for (const d of designIds) {
-      await ChangeOrderService.addDesignToEco(eco.id, d, progAdmin.id)
+      await ChangeOrderService.addDesign(changeOrder.id, d, progAdmin.id)
     }
-    return eco.id
+    return changeOrder.id
   }
 
   // ==========================================================================
@@ -422,7 +425,7 @@ describe('program isolation — items, designs, change orders', () => {
     it('engineer (flag on) can create an ECO', async () => {
       const res = await as(engineer).post(
         '/api/v1/change-orders',
-        ecoPayload('Engineer ECO'),
+        changeOrderPayload('Engineer ECO'),
       )
       expect(res.status).toBe(201)
     })
@@ -430,7 +433,7 @@ describe('program isolation — items, designs, change orders', () => {
     it('viewer (flag off) cannot create an ECO', async () => {
       const res = await as(viewer).post(
         '/api/v1/change-orders',
-        ecoPayload('Viewer ECO'),
+        changeOrderPayload('Viewer ECO'),
       )
       expect(res.status).toBe(403)
     })
@@ -441,7 +444,7 @@ describe('program isolation — items, designs, change orders', () => {
       })
       const res = await as(engineer).post(
         '/api/v1/change-orders',
-        ecoPayload('Revoked ECO'),
+        changeOrderPayload('Revoked ECO'),
       )
       expect(res.status).toBe(403)
     })
@@ -449,7 +452,7 @@ describe('program isolation — items, designs, change orders', () => {
     it('Administrator creates ECOs without a membership row', async () => {
       const res = await as(sysAdmin).post(
         '/api/v1/change-orders',
-        ecoPayload('Admin ECO'),
+        changeOrderPayload('Admin ECO'),
       )
       expect(res.status).toBe(201)
     })
@@ -460,10 +463,10 @@ describe('program isolation — items, designs, change orders', () => {
   // ==========================================================================
 
   describe('POST /api/v1/change-orders/:id/approvals honors canApproveEco', () => {
-    let ecoId: string
+    let changeOrderId: string
 
     beforeEach(async () => {
-      ecoId = await mkEco([designId], 'Vote Target')
+      changeOrderId = await mkChangeOrder([designId], 'Vote Target')
     })
 
     // The personas below all pass RBAC (Approver has change_orders:update).
@@ -474,7 +477,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('a non-member with RBAC approval rights is stopped by the program gate', async () => {
       const res = await as(approverOutsider).post(
-        `/api/v1/change-orders/${ecoId}/approvals`,
+        `/api/v1/change-orders/${changeOrderId}/approvals`,
         { vote: 'approved' },
       )
       expect(res.status).toBe(403)
@@ -482,7 +485,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('a member without canApproveEco is stopped by the flag', async () => {
       const res = await as(approverNoFlag).post(
-        `/api/v1/change-orders/${ecoId}/approvals`,
+        `/api/v1/change-orders/${changeOrderId}/approvals`,
         { vote: 'approved' },
       )
       expect(res.status).toBe(403)
@@ -490,7 +493,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('a member with canApproveEco passes the gate', async () => {
       const res = await as(approverMember).post(
-        `/api/v1/change-orders/${ecoId}/approvals`,
+        `/api/v1/change-orders/${changeOrderId}/approvals`,
         { vote: 'approved' },
       )
       expect(res.status).toBe(404) // reached the workflow lookup — gate passed
@@ -498,7 +501,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('Administrator passes the gate without membership', async () => {
       const res = await as(sysAdmin).post(
-        `/api/v1/change-orders/${ecoId}/approvals`,
+        `/api/v1/change-orders/${changeOrderId}/approvals`,
         { vote: 'approved' },
       )
       expect(res.status).toBe(404) // reached the workflow lookup — gate passed
@@ -506,7 +509,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('the state-specific vote endpoint applies the same gate', async () => {
       const res = await as(approverOutsider).post(
-        `/api/v1/change-orders/${ecoId}/approvals/some-state`,
+        `/api/v1/change-orders/${changeOrderId}/approvals/some-state`,
         { vote: 'approved' },
       )
       expect(res.status).toBe(403)
@@ -543,14 +546,14 @@ describe('program isolation — items, designs, change orders', () => {
   // ==========================================================================
 
   describe('GET /api/v1/change-orders scoping', () => {
-    let ecoId: string
+    let changeOrderId: string
 
     // Built the way the application builds one: `items.designId` left NULL,
     // the design linked through `change_order_designs`. Setting `designId` on
     // the ECO row instead — which no code path in the app does — made every
     // test in this block pass against a boundary that was not being drawn.
     beforeEach(async () => {
-      ecoId = await mkEco([designId])
+      changeOrderId = await mkChangeOrder([designId])
     })
 
     it('the programId filter requires access to that program', async () => {
@@ -592,7 +595,7 @@ describe('program isolation — items, designs, change orders', () => {
         data: { changeOrders: Array<{ id: string }> }
       }
       const ids = body.data.changeOrders.map((c) => c.id)
-      expect(ids).not.toContain(ecoId)
+      expect(ids).not.toContain(changeOrderId)
     })
 
     it('the unfiltered list still shows a member their own ECOs', async () => {
@@ -601,15 +604,17 @@ describe('program isolation — items, designs, change orders', () => {
       const body = (await res.json()) as {
         data: { changeOrders: Array<{ id: string }> }
       }
-      expect(body.data.changeOrders.map((c) => c.id)).toContain(ecoId)
+      expect(body.data.changeOrders.map((c) => c.id)).toContain(changeOrderId)
     })
 
     it('the by-id read draws the same boundary as the list', async () => {
       expect(
-        (await as(outsider).get(`/api/v1/change-orders/${ecoId}`)).status,
+        (await as(outsider).get(`/api/v1/change-orders/${changeOrderId}`))
+          .status,
       ).toBe(403)
       expect(
-        (await as(engineer).get(`/api/v1/change-orders/${ecoId}`)).status,
+        (await as(engineer).get(`/api/v1/change-orders/${changeOrderId}`))
+          .status,
       ).toBe(200)
     })
 
@@ -630,15 +635,15 @@ describe('program isolation — items, designs, change orders', () => {
       }
 
       it('hides another program’s editable ECOs', async () => {
-        expect(await editableIds(outsider)).not.toContain(ecoId)
+        expect(await editableIds(outsider)).not.toContain(changeOrderId)
       })
 
       it('still shows a member their own', async () => {
-        expect(await editableIds(engineer)).toContain(ecoId)
+        expect(await editableIds(engineer)).toContain(changeOrderId)
       })
 
       it('shows cross-program authority every program’s', async () => {
-        expect(await editableIds(sysAdmin)).toContain(ecoId)
+        expect(await editableIds(sysAdmin)).toContain(changeOrderId)
       })
 
       it('gates the designId filter the way the sibling list does', async () => {
@@ -650,7 +655,7 @@ describe('program isolation — items, designs, change orders', () => {
           ).status,
         ).toBe(403)
         expect(await editableIds(engineer, `?designId=${designId}`)).toContain(
-          ecoId,
+          changeOrderId,
         )
       })
     })
@@ -668,13 +673,13 @@ describe('program isolation — items, designs, change orders', () => {
     // program. They clear RBAC and must be stopped by the boundary alone.
     it('a write from someone with the verb but not the membership is refused', async () => {
       const res = await as(approverOutsider).put(
-        `/api/v1/change-orders/${ecoId}`,
+        `/api/v1/change-orders/${changeOrderId}`,
         { name: 'Renamed by an outsider' },
       )
       expect(res.status).toBe(403)
 
       const member = await as(approverMember).put(
-        `/api/v1/change-orders/${ecoId}`,
+        `/api/v1/change-orders/${changeOrderId}`,
         { name: 'Renamed by a member' },
       )
       expect(member.status).toBe(200)
@@ -684,7 +689,7 @@ describe('program isolation — items, designs, change orders', () => {
       // A body that would fail validation on the way through. 403 rather than
       // 400 is what says the gate ran first.
       const res = await as(approverOutsider).post(
-        `/api/v1/change-orders/${ecoId}/workflow/transition`,
+        `/api/v1/change-orders/${changeOrderId}/workflow/transition`,
         { nonsense: true },
       )
       expect(res.status).toBe(403)
@@ -694,17 +699,17 @@ describe('program isolation — items, designs, change orders', () => {
     // the 403 can only be the boundary.
     it('gates the read surface an outsider could otherwise walk', async () => {
       for (const path of [
-        `/api/v1/change-orders/${ecoId}/approvals`,
-        `/api/v1/change-orders/${ecoId}/approvals/can-approve`,
-        `/api/v1/change-orders/${ecoId}/branch-history`,
-        `/api/v1/change-orders/${ecoId}/branch-history/graph`,
-        `/api/v1/change-orders/${ecoId}/conflict-reviews`,
-        `/api/v1/change-orders/${ecoId}/release`,
-        `/api/v1/change-orders/${ecoId}/risks`,
-        `/api/v1/change-orders/${ecoId}/workflow`,
-        `/api/v1/change-orders/${ecoId}/workflow/history`,
-        `/api/v1/change-orders/${ecoId}/workflow/structure`,
-        `/api/v1/change-orders/${ecoId}/workflow/transition`,
+        `/api/v1/change-orders/${changeOrderId}/approvals`,
+        `/api/v1/change-orders/${changeOrderId}/approvals/can-approve`,
+        `/api/v1/change-orders/${changeOrderId}/branch-history`,
+        `/api/v1/change-orders/${changeOrderId}/branch-history/graph`,
+        `/api/v1/change-orders/${changeOrderId}/conflict-reviews`,
+        `/api/v1/change-orders/${changeOrderId}/release`,
+        `/api/v1/change-orders/${changeOrderId}/risks`,
+        `/api/v1/change-orders/${changeOrderId}/workflow`,
+        `/api/v1/change-orders/${changeOrderId}/workflow/history`,
+        `/api/v1/change-orders/${changeOrderId}/workflow/structure`,
+        `/api/v1/change-orders/${changeOrderId}/workflow/transition`,
       ]) {
         expect((await as(outsider).get(path)).status).toBe(403)
       }
@@ -716,7 +721,7 @@ describe('program isolation — items, designs, change orders', () => {
     it('gates executeWorkflowTransition below the route', async () => {
       await expect(
         ChangeOrderService.executeWorkflowTransition(
-          ecoId,
+          changeOrderId,
           'any-state',
           outsider.id,
         ),
@@ -741,7 +746,7 @@ describe('program isolation — items, designs, change orders', () => {
 
   describe('an ECO spanning two programs', () => {
     let otherDesignId: string
-    let sharedEcoId: string
+    let sharedChangeOrderId: string
     let ownPartId: string
     let otherPartId: string
 
@@ -767,7 +772,10 @@ describe('program isolation — items, designs, change orders', () => {
 
       // progAdmin created both programs, so they reach both designs; engineer
       // is a member of the first only.
-      sharedEcoId = await mkEco([designId, otherDesignId], 'Cross-program ECO')
+      sharedChangeOrderId = await mkChangeOrder(
+        [designId, otherDesignId],
+        'Cross-program ECO',
+      )
 
       const mk = async (dId: string, label: string) =>
         (
@@ -789,7 +797,7 @@ describe('program isolation — items, designs, change orders', () => {
 
       for (const itemId of [ownPartId, otherPartId]) {
         await ChangeOrderService.addAffectedItem(
-          sharedEcoId,
+          sharedChangeOrderId,
           { affectedItemId: itemId, changeAction: 'release' },
           progAdmin.id,
         )
@@ -798,7 +806,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     const affectedItemsFor = async (user: TestUser) => {
       const res = await as(user).get(
-        `/api/v1/change-orders/${sharedEcoId}/affected-items`,
+        `/api/v1/change-orders/${sharedChangeOrderId}/affected-items`,
       )
       expect(res.status).toBe(200)
       return (await res.json()) as {
@@ -814,7 +822,8 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('a member of one program can open it', async () => {
       expect(
-        (await as(engineer).get(`/api/v1/change-orders/${sharedEcoId}`)).status,
+        (await as(engineer).get(`/api/v1/change-orders/${sharedChangeOrderId}`))
+          .status,
       ).toBe(200)
     })
 
@@ -857,7 +866,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('withholds the other program’s design from the ECO’s design list', async () => {
       const res = await as(engineer).get(
-        `/api/v1/change-orders/${sharedEcoId}/designs`,
+        `/api/v1/change-orders/${sharedChangeOrderId}/designs`,
       )
       expect(res.status).toBe(200)
       const body = (await res.json()) as {
@@ -875,7 +884,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('reports totals the caller can see, not the ECO’s true size', async () => {
       const res = await as(engineer).get(
-        `/api/v1/change-orders/${sharedEcoId}/summary`,
+        `/api/v1/change-orders/${sharedChangeOrderId}/summary`,
       )
       expect(res.status).toBe(200)
       const body = (await res.json()) as {
@@ -896,7 +905,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('will not let them advance an ECO that reaches past what they can see', async () => {
       const res = await as(engineer).get(
-        `/api/v1/change-orders/${sharedEcoId}/summary`,
+        `/api/v1/change-orders/${sharedChangeOrderId}/summary`,
       )
       const body = (await res.json()) as {
         data: { canSubmit: boolean; canRelease: boolean }
@@ -932,9 +941,12 @@ describe('program isolation — items, designs, change orders', () => {
      * configuration, and parking directly is how a test reaches a mid-workflow
      * state without going through the gate under test.
      */
-    async function giveEcoWorkflow(ecoId: string, currentState: string) {
+    async function giveChangeOrderWorkflow(
+      changeOrderId: string,
+      currentState: string,
+    ) {
       const defId = randomUUID()
-      await testDb.db.insert(workflowDefinitions).values({
+      await testDb.db.insert(lifecycleDefinitions).values({
         id: defId,
         name: `ISO Advance ${randomUUID()}`,
         version: 1,
@@ -989,78 +1001,91 @@ describe('program isolation — items, designs, change orders', () => {
               toStateId: 'Draft',
             },
           ],
-          definitionType: 'workflow',
           applicableItemTypes: ['ChangeOrder'],
         },
         isActive: true,
         lifecycleType: 'Driving',
       })
-      await testDb.db.insert(workflowInstances).values({
+      await testDb.db.insert(lifecycleInstances).values({
         workflowDefinitionId: defId,
-        itemId: ecoId,
+        itemId: changeOrderId,
         currentState,
       })
     }
 
-    const transition = (user: TestUser, ecoId: string, toStateId: string) =>
-      as(user).post(`/api/v1/change-orders/${ecoId}/workflow/transition`, {
-        toStateId,
-      })
+    const transition = (
+      user: TestUser,
+      changeOrderId: string,
+      toStateId: string,
+    ) =>
+      as(user).post(
+        `/api/v1/change-orders/${changeOrderId}/workflow/transition`,
+        {
+          toStateId,
+        },
+      )
 
     it('refuses to release an ECO reaching past what the caller can see', async () => {
-      await giveEcoWorkflow(sharedEcoId, 'InReview')
+      await giveChangeOrderWorkflow(sharedChangeOrderId, 'InReview')
       expect(
-        (await transition(approverMember, sharedEcoId, 'Released')).status,
+        (await transition(approverMember, sharedChangeOrderId, 'Released'))
+          .status,
       ).toBe(403)
     })
 
     it('refuses to cancel it either — abandoning the unreachable half is destruction too', async () => {
-      await giveEcoWorkflow(sharedEcoId, 'InReview')
+      await giveChangeOrderWorkflow(sharedChangeOrderId, 'InReview')
       expect(
-        (await transition(approverMember, sharedEcoId, 'Cancelled')).status,
+        (await transition(approverMember, sharedChangeOrderId, 'Cancelled'))
+          .status,
       ).toBe(403)
     })
 
     it('refuses to submit it — the scope they would lock is not the scope they were shown', async () => {
-      await giveEcoWorkflow(sharedEcoId, 'Draft')
+      await giveChangeOrderWorkflow(sharedChangeOrderId, 'Draft')
       expect(
-        (await transition(approverMember, sharedEcoId, 'InReview')).status,
+        (await transition(approverMember, sharedChangeOrderId, 'InReview'))
+          .status,
       ).toBe(403)
     })
 
     it('still allows a transition that neither leaves the initial state nor ends the ECO', async () => {
-      await giveEcoWorkflow(sharedEcoId, 'InReview')
+      await giveChangeOrderWorkflow(sharedChangeOrderId, 'InReview')
       // The gate is scoped to advancing transitions, not a blanket denial —
       // and this is also what proves RBAC is not what refuses the three above.
       expect(
-        (await transition(approverMember, sharedEcoId, 'Draft')).status,
+        (await transition(approverMember, sharedChangeOrderId, 'Draft')).status,
       ).toBe(200)
     })
 
     it('does not refuse cross-program authority', async () => {
-      await giveEcoWorkflow(sharedEcoId, 'InReview')
+      await giveChangeOrderWorkflow(sharedChangeOrderId, 'InReview')
       expect(
-        (await transition(sysAdmin, sharedEcoId, 'Released')).status,
+        (await transition(sysAdmin, sharedChangeOrderId, 'Released')).status,
       ).not.toBe(403)
     })
 
     it('leaves a single-program ECO releasable by its own program’s member', async () => {
       // Regression guard: the rule is "reaches every linked design", not
       // "links more than one design".
-      const soloEcoId = await mkEco([designId], 'Single-program ECO')
-      await giveEcoWorkflow(soloEcoId, 'InReview')
+      const soloChangeOrderId = await mkChangeOrder(
+        [designId],
+        'Single-program ECO',
+      )
+      await giveChangeOrderWorkflow(soloChangeOrderId, 'InReview')
       expect(
-        (await transition(approverMember, soloEcoId, 'Released')).status,
+        (await transition(approverMember, soloChangeOrderId, 'Released'))
+          .status,
       ).not.toBe(403)
     })
 
     // The route gate alone would leave the AI write-handlers and the MCP
     // tools ungated: executeWorkflowTransition is the shared entry point.
     it('gates the advancing transition below the route as well', async () => {
-      await giveEcoWorkflow(sharedEcoId, 'InReview')
+      await giveChangeOrderWorkflow(sharedChangeOrderId, 'InReview')
       await expect(
         ChangeOrderService.executeWorkflowTransition(
-          sharedEcoId,
+          sharedChangeOrderId,
           'Released',
           approverMember.id,
         ),
@@ -1069,7 +1094,7 @@ describe('program isolation — items, designs, change orders', () => {
 
     it('refuses their approval vote — one program’s consent is not the ECO’s', async () => {
       const res = await as(approverMember).post(
-        `/api/v1/change-orders/${sharedEcoId}/approvals`,
+        `/api/v1/change-orders/${sharedChangeOrderId}/approvals`,
         { vote: 'approved' },
       )
       // approverMember has canApproveEco in the first program and no
@@ -1081,7 +1106,7 @@ describe('program isolation — items, designs, change orders', () => {
       expect(
         (
           await as(engineer).get(
-            `/api/v1/change-orders/${sharedEcoId}/designs/${otherDesignId}/structure`,
+            `/api/v1/change-orders/${sharedChangeOrderId}/designs/${otherDesignId}/structure`,
           )
         ).status,
       ).toBe(403)
@@ -1104,7 +1129,7 @@ describe('program isolation — items, designs, change orders', () => {
     it('refuses an empty design list', async () => {
       const res = await as(engineer).post(
         '/api/v1/change-orders',
-        ecoPayload('Design-less ECO', []),
+        changeOrderPayload('Design-less ECO', []),
       )
       expect(res.status).toBe(400)
     })
@@ -1158,7 +1183,7 @@ describe('program isolation — items, designs, change orders', () => {
 
       const res = await as(engineer).post(
         '/api/v1/change-orders',
-        ecoPayload('Doomed ECO', [
+        changeOrderPayload('Doomed ECO', [
           designId,
           '00000000-0000-0000-0000-000000000000',
         ]),

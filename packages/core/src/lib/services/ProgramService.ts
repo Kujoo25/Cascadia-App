@@ -10,6 +10,7 @@ import { NotFoundError, ValidationError } from '../errors'
 import { paginatedOrderBy } from '../db/paginated-order'
 import type { SQL } from 'drizzle-orm'
 import { takeFirst } from '@/lib/db/take-first'
+import { clearableDate } from '@/lib/api/wire-date'
 
 // Zod schemas for validation
 export const programCreateSchema = z.object({
@@ -22,8 +23,8 @@ export const programCreateSchema = z.object({
   description: z.string().optional(),
   contractNumber: z.string().max(100).optional(),
   customer: z.string().max(200).optional(),
-  startDate: z.coerce.date().optional(),
-  targetEndDate: z.coerce.date().optional(),
+  startDate: clearableDate().optional(),
+  targetEndDate: clearableDate().optional(),
   status: z.enum(['Active', 'On Hold', 'Completed', 'Cancelled']).optional(),
   attributes: z.record(z.string(), z.unknown()).optional(),
 })

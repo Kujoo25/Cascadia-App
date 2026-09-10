@@ -211,7 +211,7 @@ describe('ModelVersionService', () => {
     })
 
     // ECO branch with a working copy carrying the in-change model
-    const eco = takeFirst(
+    const changeOrder = takeFirst(
       await testDb.db
         .insert(items)
         .values({
@@ -227,19 +227,19 @@ describe('ModelVersionService', () => {
         })
         .returning(),
     )
-    const ecoBranch = await addBranch({
+    const changeOrderBranch = await addBranch({
       name: `eco/ECO-${uniquePrefix}`,
       branchType: 'eco',
-      changeOrderItemId: eco.id,
+      changeOrderItemId: changeOrder.id,
     })
     const workingCopy = await addItemRow({
       masterId: released.masterId,
-      revision: `-${ecoBranch.id.substring(0, 8)}`,
+      revision: `-${changeOrderBranch.id.substring(0, 8)}`,
       state: 'Draft',
       isCurrent: false,
     })
     await testDb.db.insert(branchItems).values({
-      branchId: ecoBranch.id,
+      branchId: changeOrderBranch.id,
       itemMasterId: released.masterId,
       currentItemId: workingCopy.id,
       baseItemId: released.id,
@@ -247,7 +247,7 @@ describe('ModelVersionService', () => {
     })
     const branchFile = await addModelFile(workingCopy.id, {
       fileName: 'bracket-eco.glb',
-      branchId: ecoBranch.id,
+      branchId: changeOrderBranch.id,
     })
 
     const entries = await ModelVersionService.listForItem(released)
@@ -256,10 +256,12 @@ describe('ModelVersionService', () => {
     expect(current?.itemId).toBe(released.id)
     expect(current?.file?.fileName).toBe('bracket-main.glb')
 
-    const branchEntry = entries.find((e) => e.key === `branch:${ecoBranch.id}`)
+    const branchEntry = entries.find(
+      (e) => e.key === `branch:${changeOrderBranch.id}`,
+    )
     expect(branchEntry?.itemId).toBe(workingCopy.id)
     expect(branchEntry?.file?.id).toBe(branchFile.id)
-    expect(branchEntry?.branch?.changeOrderNumber).toBe(eco.itemNumber)
+    expect(branchEntry?.branch?.changeOrderNumber).toBe(changeOrder.itemNumber)
   })
 
   it('resolves a branch upload that hangs off the base row (uploaded before the working copy existed)', async () => {

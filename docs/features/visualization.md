@@ -56,8 +56,8 @@ interface BOMTreeNode {
 ### Where It Appears
 
 - **Part detail pages** -- Structure tab shows the part's BOM hierarchy.
-- **ECO Affected Items** -- `EcoTreeTable` wraps `BomTreeView` with ECO-specific columns (state, change action) and context menu actions.
-- **ECO Design Structure** -- `EcoDesignStructureTree` shows the full design BOM with ECO annotations, expand/collapse-all buttons, and a "Show Affected" button that expands only the paths to affected items.
+- **ECO Affected Items** -- `ChangeOrderTreeTable` wraps `BomTreeView` with ECO-specific columns (state, change action) and context menu actions.
+- **ECO Design Structure** -- `ChangeOrderDesignStructureTree` shows the full design BOM with ECO annotations, expand/collapse-all buttons, and a "Show Affected" button that expands only the paths to affected items.
 
 ## Relationship Graph
 
@@ -184,7 +184,7 @@ Each commit node (`CommitNode`) shows:
 
 ## ECO History Graph
 
-**Component:** `packages/core/src/components/change-orders/EcoHistoryGraphView.tsx`
+**Component:** `packages/core/src/components/change-orders/ChangeOrderHistoryGraphView.tsx`
 
 The ECO History Graph is a specialized variant of the Design History Graph, scoped to a single Engineering Change Order. It shows the commit history of the ECO's branch alongside the main branch it forked from.
 
@@ -200,7 +200,7 @@ The ECO History Graph is a specialized variant of the Design History Graph, scop
 
 ## Affected Items Graph
 
-**Component:** `packages/core/src/components/change-orders/EcoAffectedItemsPanel.tsx`
+**Component:** `packages/core/src/components/change-orders/ChangeOrderAffectedItemsPanel.tsx`
 
 The ECO Affected Items panel provides two complementary views of items included in an Engineering Change Order:
 
@@ -219,7 +219,7 @@ A DataGrid showing all affected items in a flat table with columns for item numb
 
 ### Tree View (Design Structure)
 
-Uses `EcoDesignStructureTree` (which wraps `BomTreeView`) to show the full BOM structure of each affected design, with ECO items highlighted. Features include:
+Uses `ChangeOrderDesignStructureTree` (which wraps `BomTreeView`) to show the full BOM structure of each affected design, with ECO items highlighted. Features include:
 
 - Expand All / Collapse All
 - "Show Affected" to auto-expand only paths containing ECO items
@@ -360,7 +360,7 @@ The Digital Thread Navigator visualizes the full traceability chain of an item a
 
 ## Workflow Builder
 
-**Component:** `packages/core/src/components/workflows/WorkflowBuilder.tsx`
+**Component:** `packages/core/src/components/lifecycles/LifecycleBuilder.tsx`
 
 While primarily a configuration tool rather than a data visualization, the Workflow Builder uses React Flow v12 with Dagre layout to render lifecycle state machines as interactive graphs.
 
@@ -422,13 +422,13 @@ Containment sits one step lighter than relationships so the organizational scaff
 
 A reusable wrapper that adds fullscreen/focus mode to any graph view. It renders the graph inline at a configurable height (default 600px) with an expand button, and opens a near-full-viewport Radix Dialog when toggled. The dialog includes a title bar, optional header controls, and footer area (typically used for legends).
 
-Used by: CommitGraphView, ProgramHistoryGraphView, EcoHistoryGraphView, GraphNavigator, DigitalThreadNavigator, EcoAffectedItemsPanel.
+Used by: CommitGraphView, ProgramHistoryGraphView, ChangeOrderHistoryGraphView, GraphNavigator, DigitalThreadNavigator, ChangeOrderAffectedItemsPanel.
 
 ### Dagre Layout
 
 All graph visualizations use the `dagre` library (v0.8.5) for automatic node positioning. Common layout patterns:
 
-- **Top-to-bottom (TB):** Used by GraphNavigator and WorkflowBuilder.
+- **Top-to-bottom (TB):** Used by GraphNavigator and LifecycleBuilder.
 - **Bottom-to-top (BT):** Used by all history graph views (commits flow upward from old to new).
 - **Swim lanes:** Used by DigitalThreadNavigator with custom layout logic.
 

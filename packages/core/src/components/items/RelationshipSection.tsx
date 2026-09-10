@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/Badge'
 import { DataGrid } from '@/components/ui/DataGrid'
 import { ContextMenuItem } from '@/components/ui/ContextMenu'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 import { useInvalidateResources } from '@/lib/query'
 import { itemRelationshipsQuery } from '@/lib/query/options/relationships'
@@ -56,7 +57,8 @@ export function RelationshipSection({
   itemId,
   readOnly = false,
 }: RelationshipSectionProps) {
-  const { alert, confirm } = useAlertDialog()
+  const { confirm } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   // Types are expanded by default, so this tracks the ones closed by hand
   const [collapsedTypes, setCollapsedTypes] = useState<Set<string>>(new Set())
@@ -117,14 +119,7 @@ export function RelationshipSection({
           })
           await invalidate('relationships')
         } catch (error) {
-          alert({
-            title: 'Failed to remove relationship',
-            description:
-              error instanceof Error
-                ? error.message
-                : 'Failed to remove relationship',
-            variant: 'destructive',
-          })
+          handleError(error, { title: 'Failed to remove relationship' })
         }
       },
     })
@@ -313,16 +308,15 @@ export function RelationshipSection({
         header: '',
         enableSorting: false,
         enableFiltering: false,
-        meta: { width: '80px', align: 'center' as const },
+        meta: { width: '100px', align: 'center' as const },
         cell: ({ row }) =>
           readOnly ? null : (
             <div className="flex items-center justify-center gap-0.5">
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="icon"
                 onClick={() => setEditingRelationship(row.original)}
-                className="h-8 w-8 p-0"
                 aria-label="Edit relationship"
               >
                 <Pencil className="h-4 w-4 text-slate-600 dark:text-slate-400" />
@@ -330,9 +324,8 @@ export function RelationshipSection({
               <Button
                 type="button"
                 variant="ghost"
-                size="sm"
+                size="icon"
                 onClick={() => handleRemoveRelationship(row.original.id)}
-                className="h-8 w-8 p-0"
                 aria-label="Remove relationship"
               >
                 <Trash2 className="h-4 w-4 text-red-600 dark:text-red-400" />

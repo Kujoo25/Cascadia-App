@@ -5,13 +5,13 @@ import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { ArrowLeft, Save } from 'lucide-react'
 import type {
+  LifecycleDefinition,
   LifecycleType,
-  WorkflowDefinition,
   WorkflowType,
-} from '@/lib/workflows/types'
-import { LifecycleTypeSelector } from '@/components/workflows/LifecycleTypeSelector'
-import { DriverSelector } from '@/components/workflows/DriverSelector'
-import { WorkflowBuilder } from '@/components/workflows/WorkflowBuilder'
+} from '@/lib/lifecycles/types'
+import { LifecycleTypeSelector } from '@/components/lifecycles/LifecycleTypeSelector'
+import { DriverSelector } from '@/components/lifecycles/DriverSelector'
+import { LifecycleBuilder } from '@/components/lifecycles/LifecycleBuilder'
 import {
   Button,
   Card,
@@ -41,7 +41,7 @@ function NewLifecyclePage() {
   const [lifecycleType, setLifecycleType] = useState<LifecycleType>('Free')
   const [drivers, setDrivers] = useState<Array<string>>([])
 
-  const [definition, setDefinition] = useState<Partial<WorkflowDefinition>>({
+  const [definition, setDefinition] = useState<Partial<LifecycleDefinition>>({
     name: '',
     workflowType: 'strict',
     description: '',
@@ -75,7 +75,7 @@ function NewLifecyclePage() {
     isActive: true,
   })
 
-  const handleChange = (updates: Partial<WorkflowDefinition>) => {
+  const handleChange = (updates: Partial<LifecycleDefinition>) => {
     setDefinition(updates)
   }
 
@@ -89,22 +89,18 @@ function NewLifecyclePage() {
 
     setIsSubmitting(true)
     try {
-      const result = await apiFetch<{ data: { workflow: WorkflowDefinition } }>(
-        '/api/v1/workflows',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            ...definition,
-            // lifecycleType is authoritative; new definitions no longer
-            // carry the legacy definitionType field
-            lifecycleType,
-            drivers: lifecycleType === 'Driven' ? drivers : [],
-            // For Driven lifecycles, clear transitions (states only)
-            transitions:
-              lifecycleType === 'Driven' ? [] : definition.transitions,
-          }),
-        },
-      )
+      const result = await apiFetch<{
+        data: { workflow: LifecycleDefinition }
+      }>('/api/v1/lifecycles', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...definition,
+          lifecycleType,
+          drivers: lifecycleType === 'Driven' ? drivers : [],
+          // For Driven lifecycles, clear transitions (states only)
+          transitions: lifecycleType === 'Driven' ? [] : definition.transitions,
+        }),
+      })
 
       showSuccess(
         'Lifecycle created',
@@ -359,7 +355,7 @@ function NewLifecyclePage() {
               </div>
             )}
             <div className="flex-1">
-              <WorkflowBuilder
+              <LifecycleBuilder
                 definition={definition}
                 kind={lifecycleType === 'Driving' ? 'workflow' : 'lifecycle'}
 

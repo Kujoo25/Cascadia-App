@@ -101,7 +101,7 @@ human-readable summary; the mutation only happens when the call is repeated
 with `"confirmed": true`. The server's instructions tell agents to show the
 summary to their user before confirming. ECO-as-Branch rules apply
 unchanged — released items in protected designs answer with
-`suggestCreateEco` instead of mutating.
+`suggestCreateChangeOrder` instead of mutating.
 
 ---
 

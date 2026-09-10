@@ -23,6 +23,17 @@ logger = logging.getLogger(__name__)
 # Default steel-blue color when no color data is available
 DEFAULT_COLOR = PartColor(0.45, 0.50, 0.56)
 
+# STEP/IGES and the OpenCASCADE kernel are Z-up; glTF 2.0 mandates Y-up. The
+# conversion is a -90 degree rotation about X, which sends model +Z to world +Y
+# and model +Y to world -Z. Emitting it as a root-node rotation rather than
+# baking it into the vertex data keeps the accessors in native part coordinates
+# — the viewer overlays two revisions of a part without a registration step, and
+# that only works while both sit in the coordinate system their CAD authored.
+#
+# Quaternion (x, y, z, w) for -90 degrees about X.
+_SIN45 = 0.7071067811865476
+Z_UP_TO_Y_UP_ROTATION = [-_SIN45, 0.0, 0.0, _SIN45]
+
 
 def _extract_face_triangles(
     shape: TopoDS_Shape,
@@ -281,7 +292,10 @@ def write_glb(
         },
         "scene": 0,
         "scenes": [{"nodes": [0]}],
-        "nodes": [{"mesh": 0}],
+        "nodes": [
+            {"rotation": Z_UP_TO_Y_UP_ROTATION, "children": [1]},
+            {"mesh": 0},
+        ],
         "meshes": [{"primitives": meshes_primitives}],
         "materials": materials,
         "accessors": accessors,
@@ -494,7 +508,10 @@ def write_assembly_glb(
         "asset": {"version": "2.0", "generator": "Cascadia CAD Converter"},
         "scene": 0,
         "scenes": [{"nodes": [0]}],
-        "nodes": [{"mesh": 0}],
+        "nodes": [
+            {"rotation": Z_UP_TO_Y_UP_ROTATION, "children": [1]},
+            {"mesh": 0},
+        ],
         "meshes": [{"primitives": meshes_primitives}],
         "materials": materials,
         "accessors": accessors,

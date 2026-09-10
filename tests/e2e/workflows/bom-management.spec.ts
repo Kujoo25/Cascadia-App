@@ -4,7 +4,7 @@
 /**
  * BOM Management E2E Journey
  *
- * One journey, end to end, in the eco-workflow.spec.ts style: seed an assembly
+ * One journey, end to end, in the change-order-workflow.spec.ts style: seed an assembly
  * and a child over the API, build the structure through the UI, then read it
  * back through both the UI and the relationship API — the two have to agree,
  * because the BOM view resolving differently from the data underneath it is

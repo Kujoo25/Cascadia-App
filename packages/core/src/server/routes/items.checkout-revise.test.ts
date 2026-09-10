@@ -69,7 +69,7 @@ describe('revise-checkout → save', () => {
   let admin: TestUser
   let cookie: string
   let designId: string
-  let ecoBranchId: string
+  let changeOrderBranchId: string
   let part: { id: string; masterId: string }
 
   beforeAll(async () => {
@@ -139,7 +139,7 @@ describe('revise-checkout → save', () => {
       changeType: 'added',
     })
 
-    const createEco = (): Promise<{ id: string }> =>
+    const createChangeOrder = (): Promise<{ id: string }> =>
       ItemService.create(
         'ChangeOrder',
         {
@@ -152,13 +152,13 @@ describe('revise-checkout → save', () => {
         } as never,
         admin.id,
       )
-    const eco = await createEco()
-    const { branch } = await BranchService.getOrCreateEcoBranch(
+    const changeOrder = await createChangeOrder()
+    const { branch } = await BranchService.getOrCreateChangeOrderBranch(
       designId,
-      eco.id,
+      changeOrder.id,
       admin.id,
     )
-    ecoBranchId = branch.id
+    changeOrderBranchId = branch.id
 
     cookie = `session=${(await SessionManager.createSession(admin.id)).sessionToken}`
   })
@@ -177,7 +177,7 @@ describe('revise-checkout → save', () => {
 
   async function checkout(): Promise<string> {
     const res = await request(`/api/v1/items/${part.id}/checkout`, 'POST', {
-      branchId: ecoBranchId,
+      branchId: changeOrderBranchId,
     })
     expect(res.status).toBe(201)
     const body = (await res.json()) as CheckoutResponse
@@ -194,7 +194,7 @@ describe('revise-checkout → save', () => {
 
   it('checkout mints a working copy and reports its id; the released row is untouched', async () => {
     const res = await request(`/api/v1/items/${part.id}/checkout`, 'POST', {
-      branchId: ecoBranchId,
+      branchId: changeOrderBranchId,
     })
     expect(res.status).toBe(201)
     const { branchItem } = ((await res.json()) as CheckoutResponse).data
@@ -250,7 +250,7 @@ describe('revise-checkout → save', () => {
     const workingCopyId = await checkout()
 
     const res = await request(
-      `/api/v1/items/${part.id}?branchId=${ecoBranchId}`,
+      `/api/v1/items/${part.id}?branchId=${changeOrderBranchId}`,
       'PUT',
       { name: 'Edited via base id' },
     )

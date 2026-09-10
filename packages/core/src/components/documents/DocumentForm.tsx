@@ -139,7 +139,7 @@ export function DocumentForm({
             }
             helpText={
               branchRequired
-                ? 'Select an ECO or workspace branch for the new document'
+                ? 'Select a change-order or workspace branch for the new document'
                 : 'Optional: Create on a workspace branch for private development'
             }
             className="md:col-span-2"

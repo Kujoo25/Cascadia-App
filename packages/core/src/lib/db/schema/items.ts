@@ -58,8 +58,17 @@ export const items = pgTable(
     designId: uuid('design_id').references(() => designs.id),
     commitId: uuid('commit_id').references(() => commits.id),
 
-    // Design structure membership - when true, part shows as root in BOM tree; when false, shows as orphan
-    inDesignStructure: boolean('in_design_structure').default(true),
+    // Whether this part is a designated top-level part of its design's
+    // structure. Only a designated, parentless Part is a root of the BOM
+    // tree; a designated part that gains a parent renders under it, and a
+    // Part that is neither designated nor nested is listed with the design's
+    // non-structure items. Designation is explicit: creating a Part in a
+    // design, adding one to a design (usage copy) and "Add to Structure" set
+    // it; nesting the part under a parent in its own design clears it, so a
+    // child whose BOM line is later removed does not surface as a new root.
+    // Default false, so a row minted by a path that never considered the
+    // structure is not silently a top-level part.
+    inDesignStructure: boolean('in_design_structure').default(false).notNull(),
 
     // Flexible attributes for SysML and extensibility.
     //
@@ -269,7 +278,7 @@ export const changeOrderAffectedItems = pgTable(
      * table order — so which one the release applied depended on which came
      * back first. Three writers guarded this by reading first and then
      * inserting (`addAffectedItem`, `registerBranchChange`,
-     * `checkoutItemToEco`), which is a race, not a guarantee.
+     * `checkoutItem`), which is a race, not a guarantee.
      *
      * Keyed on the master rather than on `affected_item_id`: the same logical
      * item is several `items.id` rows (its released version, a branch working

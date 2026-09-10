@@ -98,7 +98,7 @@ describe('BranchService', () => {
 
   // Helper to create a change order
   // Note: ChangeOrders are created WITHOUT designId - they're design-agnostic.
-  // Designs are linked when affected items are added or via addDesignToEco().
+  // Designs are linked when affected items are added or via addDesign().
   async function createChangeOrder() {
     return ItemService.create(
       'ChangeOrder',
@@ -149,18 +149,19 @@ describe('BranchService', () => {
     })
   })
 
-  describe('createEcoBranch', () => {
+  describe('createChangeOrderBranch', () => {
     it('creates ECO branch from change order', async () => {
       // ChangeOrders are created WITHOUT designId - they're design-agnostic.
       // ECO branches are created when a design is explicitly linked.
       const changeOrder = await createChangeOrder()
 
       // Explicitly create the ECO branch for this design
-      const { branch, created } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        changeOrder.id,
-        user.id,
-      )
+      const { branch, created } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
 
       expect(branch).toBeDefined()
       expect(branch.branchType).toBe('eco')
@@ -173,17 +174,25 @@ describe('BranchService', () => {
     it('throws error if ECO branch already exists', async () => {
       // Create change order and explicitly create an ECO branch
       const changeOrder = await createChangeOrder()
-      await BranchService.createEcoBranch(designId, changeOrder.id, user.id)
+      await BranchService.createChangeOrderBranch(
+        designId,
+        changeOrder.id,
+        user.id,
+      )
 
       // Trying to create another branch for the same change order should fail
       await expect(
-        BranchService.createEcoBranch(designId, changeOrder.id, user.id),
+        BranchService.createChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        ),
       ).rejects.toThrow(ValidationError)
     })
 
     it('throws NotFoundError for non-existent change order', async () => {
       await expect(
-        BranchService.createEcoBranch(
+        BranchService.createChangeOrderBranch(
           designId,
           '00000000-0000-0000-0000-000000000000',
           user.id,
@@ -298,13 +307,13 @@ describe('BranchService', () => {
     })
   })
 
-  describe('getOrCreateEcoBranch', () => {
+  describe('getOrCreateChangeOrderBranch', () => {
     it('creates ECO branch for change order when not exists', async () => {
       // ChangeOrders are created WITHOUT designId - they're design-agnostic.
-      // getOrCreateEcoBranch creates the branch when called.
+      // getOrCreateChangeOrderBranch creates the branch when called.
       const changeOrder = await createChangeOrder()
 
-      const result = await BranchService.getOrCreateEcoBranch(
+      const result = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -318,12 +327,12 @@ describe('BranchService', () => {
     it('returns existing branch if already created', async () => {
       const changeOrder = await createChangeOrder()
 
-      const first = await BranchService.getOrCreateEcoBranch(
+      const first = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
       )
-      const second = await BranchService.getOrCreateEcoBranch(
+      const second = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -338,7 +347,7 @@ describe('BranchService', () => {
   describe('lockBranch', () => {
     it('sets isLocked flag', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -366,7 +375,7 @@ describe('BranchService', () => {
   describe('unlockBranch', () => {
     it('clears isLocked flag', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -389,7 +398,7 @@ describe('BranchService', () => {
   describe('archiveBranch', () => {
     it('soft-deletes branch', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -419,7 +428,7 @@ describe('BranchService', () => {
     it('returns all branches for design', async () => {
       // Create change order and explicitly link to design
       const changeOrder = await createChangeOrder()
-      await BranchService.getOrCreateEcoBranch(
+      await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -438,23 +447,23 @@ describe('BranchService', () => {
     it('filters by branchType', async () => {
       // Create change order and explicitly link to design
       const changeOrder = await createChangeOrder()
-      await BranchService.getOrCreateEcoBranch(
+      await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
       )
 
-      const ecoBranches = await BranchService.listByDesign(designId, {
+      const changeOrderBranches = await BranchService.listByDesign(designId, {
         branchType: 'eco',
       })
 
-      expect(ecoBranches.length).toBe(1)
-      expect(ecoBranches[0]!.branchType).toBe('eco')
+      expect(changeOrderBranches.length).toBe(1)
+      expect(changeOrderBranches[0]!.branchType).toBe('eco')
     })
 
     it('excludes archived branches by default', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -468,7 +477,7 @@ describe('BranchService', () => {
 
     it('includes archived when requested', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -503,7 +512,7 @@ describe('BranchService', () => {
     it('returns ECO branches for change order across designs', async () => {
       // Create change order and explicitly link to design
       const changeOrder = await createChangeOrder()
-      await BranchService.getOrCreateEcoBranch(
+      await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -519,7 +528,7 @@ describe('BranchService', () => {
   describe('updateHead', () => {
     it('updates branch HEAD commit', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -550,7 +559,7 @@ describe('BranchService', () => {
 
     it('throws error when branch is locked', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -581,7 +590,7 @@ describe('BranchService', () => {
 
     it('returns true for locked branch', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,
@@ -648,7 +657,7 @@ describe('BranchService', () => {
     describe('getBranchStatus', () => {
       it('returns correct status for unlocked ECO branch', async () => {
         const changeOrder = await createChangeOrder()
-        const { branch } = await BranchService.getOrCreateEcoBranch(
+        const { branch } = await BranchService.getOrCreateChangeOrderBranch(
           designId,
           changeOrder.id,
           user.id,
@@ -663,7 +672,7 @@ describe('BranchService', () => {
 
       it('returns correct status for locked branch', async () => {
         const changeOrder = await createChangeOrder()
-        const { branch } = await BranchService.getOrCreateEcoBranch(
+        const { branch } = await BranchService.getOrCreateChangeOrderBranch(
           designId,
           changeOrder.id,
           user.id,
@@ -679,7 +688,7 @@ describe('BranchService', () => {
 
       it('returns correct status for archived branch', async () => {
         const changeOrder = await createChangeOrder()
-        const { branch } = await BranchService.getOrCreateEcoBranch(
+        const { branch } = await BranchService.getOrCreateChangeOrderBranch(
           designId,
           changeOrder.id,
           user.id,
@@ -810,7 +819,7 @@ describe('BranchService', () => {
 
     it('throws error when deleting non-workspace branch', async () => {
       const changeOrder = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
         changeOrder.id,
         user.id,

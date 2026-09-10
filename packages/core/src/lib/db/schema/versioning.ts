@@ -69,7 +69,9 @@ export const branches = pgTable(
 
     // Status
     isArchived: boolean('is_archived').default(false),
-    isLocked: boolean('is_locked').default(false), // True when ECO submitted for approval
+    // Read by the edit-lock checks, set by nothing: no path locks a branch
+    // today. A dropped-column candidate (remediation plan, CM-26).
+    isLocked: boolean('is_locked').default(false),
 
     // Audit
     createdAt: timestamp('created_at', { withTimezone: true })
@@ -127,7 +129,7 @@ export const commits = pgTable(
     // and NO ACTION would block it outright. A release commit is history —
     // it must survive its ECO with the linkage nulled, not vanish and not
     // hold the delete hostage. Readers already treat the pointer as optional
-    // (CommitGraphService, EcoBranchHistoryService, ModelVersionService all
+    // (CommitGraphService, ChangeOrderBranchHistoryService, ModelVersionService all
     // omit ecoNumber when it is null).
     changeOrderItemId: uuid('change_order_item_id').references(
       (): AnyPgColumn => items.id,

@@ -29,7 +29,7 @@ export type ResourceType =
   | 'work_orders'
   | 'physical_parts'
   | 'issues'
-  | 'workflows'
+  | 'lifecycles'
   | 'users'
   | 'roles'
   | 'programs'
@@ -64,7 +64,7 @@ const RESOURCE_TYPE_MAP: Record<ResourceType, true> = {
   work_orders: true,
   physical_parts: true,
   issues: true,
-  workflows: true,
+  lifecycles: true,
   users: true,
   roles: true,
   programs: true,
@@ -142,7 +142,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
       },
       {
         resource: 'change_orders',
-        actions: ['create', 'read', 'update', 'delete', 'approve'],
+        actions: ['create', 'read', 'update', 'delete'],
       },
       { resource: 'designs', actions: ['create', 'read', 'update', 'delete'] },
       {
@@ -180,7 +180,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
         actions: ['create', 'read', 'update', 'delete', 'approve'],
       },
       {
-        resource: 'workflows',
+        resource: 'lifecycles',
         actions: ['create', 'read', 'update', 'delete', 'manage'],
       },
       {
@@ -245,7 +245,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
         actions: ['create', 'read', 'update', 'delete'],
       },
       { resource: 'issues', actions: ['create', 'read', 'update', 'delete'] },
-      { resource: 'workflows', actions: ['read', 'manage'] },
+      { resource: 'lifecycles', actions: ['read', 'manage'] },
       { resource: 'users', actions: ['read'] },
       { resource: 'roles', actions: ['read'] },
       { resource: 'programs', actions: ['read'] },
@@ -260,7 +260,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
     permissions: [
       { resource: 'parts', actions: ['read', 'update', 'approve'] },
       { resource: 'documents', actions: ['read', 'update', 'approve'] },
-      { resource: 'change_orders', actions: ['read', 'update', 'approve'] },
+      { resource: 'change_orders', actions: ['read', 'update'] },
       { resource: 'designs', actions: ['read', 'update'] },
       { resource: 'requirements', actions: ['read', 'update', 'approve'] },
       { resource: 'tasks', actions: ['read', 'update'] },
@@ -272,7 +272,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
       { resource: 'work_orders', actions: ['read', 'update', 'approve'] },
       { resource: 'physical_parts', actions: ['read', 'update', 'approve'] },
       { resource: 'issues', actions: ['read', 'update', 'approve'] },
-      { resource: 'workflows', actions: ['read'] },
+      { resource: 'lifecycles', actions: ['read'] },
       { resource: 'users', actions: ['read'] },
       { resource: 'roles', actions: ['read'] },
       { resource: 'programs', actions: ['read'] },
@@ -297,7 +297,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
       { resource: 'work_orders', actions: ['create', 'read', 'update'] },
       { resource: 'physical_parts', actions: ['create', 'read', 'update'] },
       { resource: 'issues', actions: ['create', 'read', 'update'] },
-      { resource: 'workflows', actions: ['read'] },
+      { resource: 'lifecycles', actions: ['read'] },
       { resource: 'users', actions: ['read'] },
       { resource: 'roles', actions: ['read'] },
       { resource: 'programs', actions: ['read'] },
@@ -322,7 +322,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
       { resource: 'work_orders', actions: ['read'] },
       { resource: 'physical_parts', actions: ['read'] },
       { resource: 'issues', actions: ['read'] },
-      { resource: 'workflows', actions: ['read'] },
+      { resource: 'lifecycles', actions: ['read'] },
       { resource: 'users', actions: ['read'] },
       { resource: 'roles', actions: ['read'] },
       { resource: 'programs', actions: ['read'] },
@@ -348,6 +348,18 @@ export function roleToDbFormat(
 }
 
 /**
+ * The stored name of a resource, read as the current one.
+ *
+ * The `workflows` resource became `lifecycles` (remediation plan CM-27,
+ * Decision 4). A role row or an API-key scope written before migration 0007
+ * — or by an older build after it — still says `workflows`, and is honoured
+ * as `lifecycles` for one release. Nothing writes the old name.
+ */
+export function canonicalResource(resource: string): string {
+  return resource === 'workflows' ? 'lifecycles' : resource
+}
+
+/**
  * Check if a role has a specific permission
  */
 export function hasPermission(
@@ -355,7 +367,9 @@ export function hasPermission(
   resource: ResourceType,
   action: PermissionAction,
 ): boolean {
-  const actions = rolePermissions[resource]
+  const actions =
+    rolePermissions[resource] ??
+    (resource === 'lifecycles' ? rolePermissions.workflows : undefined)
   if (!actions) return false
 
   return actions.includes(action) || actions.includes('manage')

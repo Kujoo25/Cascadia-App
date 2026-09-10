@@ -5,7 +5,7 @@ import type { BOMTreeNode } from './types'
 
 interface ExportOptions {
   filename?: string
-  includeEcoFields?: boolean
+  includeChangeOrderFields?: boolean
 }
 
 interface FlattenedNode {
@@ -81,7 +81,10 @@ export function exportBomTreeToCsv(
   nodes: Array<BOMTreeNode>,
   options: ExportOptions = {},
 ): void {
-  const { filename = 'bom-structure', includeEcoFields = false } = options
+  const {
+    filename = 'bom-structure',
+    includeChangeOrderFields: includeChangeOrderFields = false,
+  } = options
 
   const flattened = flattenBomTree(nodes)
 
@@ -99,7 +102,7 @@ export function exportBomTreeToCsv(
     'External',
   ]
 
-  if (includeEcoFields) {
+  if (includeChangeOrderFields) {
     headers.push('In ECO', 'Change Action')
   }
 
@@ -118,7 +121,7 @@ export function exportBomTreeToCsv(
       node.isExternal ? 'Yes' : '',
     ]
 
-    if (includeEcoFields) {
+    if (includeChangeOrderFields) {
       row.push(node.isInEco ? 'Yes' : '', node.changeAction ?? '')
     }
 

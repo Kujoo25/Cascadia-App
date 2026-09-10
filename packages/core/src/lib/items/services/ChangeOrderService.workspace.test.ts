@@ -26,6 +26,7 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { ItemService } from './ItemService'
@@ -34,6 +35,7 @@ import type { TestUser } from '@/__tests__/fixtures/users'
 import { ChangeOrderMergeService } from '@/lib/services/ChangeOrderMergeService'
 import { BranchService } from '@/lib/services/BranchService'
 import { CheckoutService } from '@/lib/services/CheckoutService'
+import { CommitService } from '@/lib/services/CommitService'
 import { DesignService } from '@/lib/services/DesignService'
 import { RevisionService } from '@/lib/services/RevisionService'
 import { VersionResolver } from '@/lib/services/VersionResolver'
@@ -43,9 +45,9 @@ import {
   branchItems,
   changeOrderAffectedItems,
   items,
+  lifecycleDefinitions,
+  lifecycleInstances,
   programs,
-  workflowDefinitions,
-  workflowInstances,
 } from '@/lib/db/schema'
 import { ItemTypeRegistry } from '@/lib/items/registry'
 import { seedStandardPartLifecycle } from '@/__tests__/fixtures/lifecycles'
@@ -69,7 +71,7 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
     await seedStandardPartLifecycle(testDb.db)
 
     await testDb.db
-      .insert(workflowDefinitions)
+      .insert(lifecycleDefinitions)
       .values({
         id: ADOPT_TEST_WORKFLOW_ID,
         name: 'Test ECO Workflow - WorkspaceAdoption',
@@ -106,7 +108,6 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
               toStateId: 'Released',
             },
           ],
-          definitionType: 'workflow',
           applicableItemTypes: ['ChangeOrder'],
         },
         isActive: true,
@@ -154,7 +155,7 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
   })
 
   async function createChangeOrder() {
-    const eco = await ItemService.create(
+    const changeOrder = await ItemService.create(
       'ChangeOrder',
       {
         revision: '-',
@@ -165,13 +166,13 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
       user.id,
     )
 
-    await testDb.db.insert(workflowInstances).values({
+    await testDb.db.insert(lifecycleInstances).values({
       workflowDefinitionId: ADOPT_TEST_WORKFLOW_ID,
-      itemId: eco.id,
+      itemId: changeOrder.id,
       currentState: 'Draft',
     })
 
-    return eco
+    return changeOrder
   }
 
   /** A workspace with one Part drafted on it (branch row changeType 'added'). */
@@ -198,23 +199,60 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
     return { workspace, item }
   }
 
-  async function approveEco(ecoId: string) {
+  async function approveChangeOrder(changeOrderId: string) {
     await testDb.db
       .update(items)
       .set({ state: 'Approved' })
-      .where(eq(items.id, ecoId))
+      .where(eq(items.id, changeOrderId))
     await testDb.db
-      .update(workflowInstances)
+      .update(lifecycleInstances)
       .set({ currentState: 'Approved' })
-      .where(eq(workflowInstances.itemId, ecoId))
+      .where(eq(lifecycleInstances.itemId, changeOrderId))
   }
+
+  it('leaves the workspace untouched when the adoption fails part-way', async () => {
+    const { workspace } = await createWorkspaceWithDraft('atomic')
+    const changeOrder = await createChangeOrder()
+
+    // The design association and the ECO branch used to be created before
+    // the transaction, so a failure inside it left a branch and a link with
+    // nothing adopted
+    const commitWrite = vi
+      .spyOn(CommitService, 'create')
+      .mockRejectedValueOnce(new Error('connection reset'))
+    await expect(
+      ChangeOrderService.adoptWorkspaceItems(
+        changeOrder.id,
+        workspace.id,
+        user.id,
+      ),
+    ).rejects.toThrow('connection reset')
+    commitWrite.mockRestore()
+
+    const workspaceRows = await testDb.db
+      .select()
+      .from(branchItems)
+      .where(eq(branchItems.branchId, workspace.id))
+    expect(workspaceRows).toHaveLength(1)
+    expect(
+      await ChangeOrderService.getChangeOrderDesigns(changeOrder.id),
+    ).toEqual([])
+
+    // Nothing is stuck: the adoption succeeds next time
+    const result = await ChangeOrderService.adoptWorkspaceItems(
+      changeOrder.id,
+      workspace.id,
+      user.id,
+    )
+    expect(result.itemsAdopted).toBe(1)
+  })
 
   it('moves workspace-created content onto the ECO branch and registers scope', async () => {
     const { workspace, item } = await createWorkspaceWithDraft('move')
-    const eco = await createChangeOrder()
+    const changeOrder = await createChangeOrder()
 
     const result = await ChangeOrderService.adoptWorkspaceItems(
-      eco.id,
+      changeOrder.id,
       workspace.id,
       user.id,
     )
@@ -230,24 +268,26 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
     expect(workspaceRows).toHaveLength(0)
 
     // The ECO branch carries the same item version — moved, not copied
-    const ecoDesigns = await ChangeOrderService.getEcoDesigns(eco.id)
-    expect(ecoDesigns).toHaveLength(1)
-    const ecoBranchId = ecoDesigns[0]!.branchId
-    expect(ecoBranchId).not.toBeNull()
+    const changeOrderDesigns = await ChangeOrderService.getChangeOrderDesigns(
+      changeOrder.id,
+    )
+    expect(changeOrderDesigns).toHaveLength(1)
+    const changeOrderBranchId = changeOrderDesigns[0]!.branchId
+    expect(changeOrderBranchId).not.toBeNull()
 
-    const ecoRows = await testDb.db
+    const changeOrderRows = await testDb.db
       .select()
       .from(branchItems)
-      .where(eq(branchItems.branchId, ecoBranchId!))
-    expect(ecoRows).toHaveLength(1)
-    expect(ecoRows[0]!.currentItemId).toBe(item.id)
-    expect(ecoRows[0]!.changeType).toBe('added')
+      .where(eq(branchItems.branchId, changeOrderBranchId!))
+    expect(changeOrderRows).toHaveLength(1)
+    expect(changeOrderRows[0]!.currentItemId).toBe(item.id)
+    expect(changeOrderRows[0]!.changeType).toBe('added')
 
     // Scope shows the draft as a first release
     const affected = await testDb.db
       .select()
       .from(changeOrderAffectedItems)
-      .where(eq(changeOrderAffectedItems.changeOrderId, eco.id))
+      .where(eq(changeOrderAffectedItems.changeOrderId, changeOrder.id))
     expect(affected).toHaveLength(1)
     expect(affected[0]!.affectedItemMasterId).toBe(item.masterId)
     expect(affected[0]!.changeAction).toBe('release')
@@ -255,11 +295,15 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
 
   it('releases a converted workspace draft into main', async () => {
     const { workspace, item } = await createWorkspaceWithDraft('e2e')
-    const eco = await createChangeOrder()
+    const changeOrder = await createChangeOrder()
 
-    await ChangeOrderService.adoptWorkspaceItems(eco.id, workspace.id, user.id)
-    await approveEco(eco.id)
-    await ChangeOrderMergeService.merge(eco.id, user.id)
+    await ChangeOrderService.adoptWorkspaceItems(
+      changeOrder.id,
+      workspace.id,
+      user.id,
+    )
+    await approveChangeOrder(changeOrder.id)
+    await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
     // The master must now resolve on main as a Released item with a real
     // revision — this is the invariant the pre-adoption flows broke
@@ -287,9 +331,13 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
 
   it('keeps adopted drafts alive when the workspace is deleted afterwards', async () => {
     const { workspace, item } = await createWorkspaceWithDraft('del')
-    const eco = await createChangeOrder()
+    const changeOrder = await createChangeOrder()
 
-    await ChangeOrderService.adoptWorkspaceItems(eco.id, workspace.id, user.id)
+    await ChangeOrderService.adoptWorkspaceItems(
+      changeOrder.id,
+      workspace.id,
+      user.id,
+    )
     await BranchService.deleteWorkspaceBranch(workspace.id, user.id)
 
     const survivor = await ItemService.findById(item.id!)
@@ -299,27 +347,29 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
     expect(deletedBranch?.isArchived).toBe(true)
 
     // The ECO branch row still points at the surviving version
-    const ecoDesigns = await ChangeOrderService.getEcoDesigns(eco.id)
-    const ecoRows = await testDb.db
+    const changeOrderDesigns = await ChangeOrderService.getChangeOrderDesigns(
+      changeOrder.id,
+    )
+    const changeOrderRows = await testDb.db
       .select()
       .from(branchItems)
-      .where(eq(branchItems.branchId, ecoDesigns[0]!.branchId!))
-    expect(ecoRows).toHaveLength(1)
-    expect(ecoRows[0]!.currentItemId).toBe(item.id)
+      .where(eq(branchItems.branchId, changeOrderDesigns[0]!.branchId!))
+    expect(changeOrderRows).toHaveLength(1)
+    expect(changeOrderRows[0]!.currentItemId).toBe(item.id)
   })
 
   it('skips masters already in the change order scope, leaving them on the workspace', async () => {
     const { workspace, item } = await createWorkspaceWithDraft('skip')
-    const eco = await createChangeOrder()
+    const changeOrder = await createChangeOrder()
 
     await ChangeOrderService.addAffectedItem(
-      eco.id,
+      changeOrder.id,
       { affectedItemId: item.id, changeAction: 'release' },
       user.id,
     )
 
     const result = await ChangeOrderService.adoptWorkspaceItems(
-      eco.id,
+      changeOrder.id,
       workspace.id,
       user.id,
     )
@@ -359,9 +409,9 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
       user.id,
     )
 
-    const eco = await createChangeOrder()
+    const changeOrder = await createChangeOrder()
     const result = await ChangeOrderService.adoptWorkspaceItems(
-      eco.id,
+      changeOrder.id,
       workspace.id,
       user.id,
     )
@@ -370,14 +420,14 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
     const affected = await testDb.db
       .select()
       .from(changeOrderAffectedItems)
-      .where(eq(changeOrderAffectedItems.changeOrderId, eco.id))
+      .where(eq(changeOrderAffectedItems.changeOrderId, changeOrder.id))
     expect(affected).toHaveLength(1)
     expect(affected[0]!.changeAction).toBe('revise')
     expect(affected[0]!.affectedItemId).toBe(part.id)
   })
 
   it('refuses non-workspace sources and empty workspaces', async () => {
-    const eco = await createChangeOrder()
+    const changeOrder = await createChangeOrder()
 
     const emptyWorkspace = await BranchService.createWorkspaceBranch(
       designId,
@@ -386,7 +436,7 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
     )
     await expect(
       ChangeOrderService.adoptWorkspaceItems(
-        eco.id,
+        changeOrder.id,
         emptyWorkspace.id,
         user.id,
       ),
@@ -394,21 +444,29 @@ describe('ChangeOrderService.adoptWorkspaceItems', () => {
 
     const mainBranch = await BranchService.getMainBranch(designId)
     await expect(
-      ChangeOrderService.adoptWorkspaceItems(eco.id, mainBranch!.id, user.id),
+      ChangeOrderService.adoptWorkspaceItems(
+        changeOrder.id,
+        mainBranch!.id,
+        user.id,
+      ),
     ).rejects.toThrow(ValidationError)
   })
 
   it('refuses when the ECO scope is locked', async () => {
     const { workspace } = await createWorkspaceWithDraft('locked')
-    const eco = await createChangeOrder()
+    const changeOrder = await createChangeOrder()
 
     await testDb.db
-      .update(workflowInstances)
+      .update(lifecycleInstances)
       .set({ scopeLocked: true })
-      .where(eq(workflowInstances.itemId, eco.id))
+      .where(eq(lifecycleInstances.itemId, changeOrder.id))
 
     await expect(
-      ChangeOrderService.adoptWorkspaceItems(eco.id, workspace.id, user.id),
+      ChangeOrderService.adoptWorkspaceItems(
+        changeOrder.id,
+        workspace.id,
+        user.id,
+      ),
     ).rejects.toThrow(ValidationError)
   })
 })

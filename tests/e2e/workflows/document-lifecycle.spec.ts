@@ -4,7 +4,7 @@
 /**
  * Document Lifecycle E2E Journey
  *
- * One journey, end to end, in the eco-workflow/bom-management style: create a
+ * One journey, end to end, in the change-order-workflow/bom-management style: create a
  * document through the UI, find it through the same list query the documents
  * grid runs, and delete it through the UI — reading the server back after each
  * mutation rather than trusting the page that performed it.

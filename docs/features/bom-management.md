@@ -193,7 +193,7 @@ The BOM tree is used in several contexts:
 
 2. **Part Relationships Panel** (`packages/core/src/components/items/PartRelationshipsPanel.tsx`) -- the BOM tab on a part detail page, showing both the children (outgoing BOM) and where-used (incoming BOM) of a specific part, with graph, table, and tree views.
 
-3. **ECO Tree Table** (`packages/core/src/components/change-orders/EcoTreeTable.tsx`) -- the BOM tree within an ECO context, highlighting which items are affected and their change actions.
+3. **ECO Tree Table** (`packages/core/src/components/change-orders/ChangeOrderTreeTable.tsx`) -- the BOM tree within an ECO context, highlighting which items are affected and their change actions.
 
 ### Tree Construction
 
@@ -202,10 +202,10 @@ The BOM tree is built server-side in the `GET /api/v1/designs/:id/structure` end
 1. **Resolve items for the current branch context** (main, ECO branch, historical tag/commit)
 2. **Query all BOM relationships** where source items are in the design
 3. **Build a children map** mapping each parent ID to its list of children
-4. **Identify root items** -- Parts with `inDesignStructure=true` that have no parent in the BOM
+4. **Identify root items** -- Parts designated top-level (`inDesignStructure=true`) that have no parent in the BOM. Designation is explicit and is cleared when a part is nested, so a child whose line was removed is not promoted to a root (see [How Roots and Orphans Are Determined](./programs-and-designs.md#how-roots-and-orphans-are-determined))
 5. **Recursively build tree nodes** with cycle detection (visited set)
 6. **Add cross-design references** as additional root nodes
-7. **Identify orphan items** -- non-Part items and Parts with `inDesignStructure=false`
+7. **Identify orphan items** -- non-Part items, and Parts that are neither a root nor a child of one
 
 ### Features
 

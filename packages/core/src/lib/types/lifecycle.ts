@@ -37,6 +37,54 @@
 export const NO_REVISION_MARKER = 'N/A'
 
 /**
+ * What an unreleased working copy is *shown* as, everywhere in the UI.
+ *
+ * Storage cannot use one fixed marker: the items unique constraint is
+ * (item_number, revision, design_id, item_type), so a working copy on a branch
+ * carries `-{branchId8}` (see `RevisionService.getWorkingRevision`) to keep two
+ * branches' copies of the same item apart. That branch id is an implementation
+ * detail of the constraint, not a revision, and rendering it puts a string like
+ * '-01704247' in a Rev column. Every read-only revision display runs through
+ * `formatRevision` so the user sees this instead.
+ */
+export const UNRELEASED_REVISION_DISPLAY = '-'
+
+/**
+ * Whether a revision marks an unreleased working copy rather than a real
+ * released revision. Covers the branch placeholder, the historical 'DRAFT'
+ * and '-' markers, and empty values.
+ *
+ * `NO_REVISION_MARKER` is deliberately *not* one of these — it is a released
+ * revision that never advances.
+ *
+ * Lives here rather than on `RevisionService` for the same reason
+ * `NO_REVISION_MARKER` does: the UI needs it and must not import server code.
+ * `RevisionService.isWorkingRevision` delegates here so the two cannot drift.
+ */
+export function isWorkingRevisionValue(
+  revision: string | null | undefined,
+): boolean {
+  if (!revision) return true
+  return revision === 'DRAFT' || revision.startsWith('-')
+}
+
+/**
+ * The revision to render for an item. Released revisions pass through
+ * unchanged; anything unreleased renders as `UNRELEASED_REVISION_DISPLAY`.
+ *
+ * Display only — never write the result back, and never use it to identify a
+ * version. The stored placeholder is what scopes a working copy to its branch.
+ */
+export function formatRevision(revision: string | null | undefined): string {
+  // `!revision` is redundant with the predicate and there to narrow the type:
+  // a plain call leaves `revision` nullable for the return below.
+  if (!revision || isWorkingRevisionValue(revision)) {
+    return UNRELEASED_REVISION_DISPLAY
+  }
+  return revision
+}
+
+/**
  * Configurable revision scheme for lifecycle definitions.
  * Determines how revision identifiers are generated when items are released/revised.
  *
@@ -47,7 +95,7 @@ export const NO_REVISION_MARKER = 'N/A'
  *   `NO_REVISION_MARKER` and stays there. Valid only for lifecycles that
  *   update items in place (Free, and phase-level `promote` overrides): a
  *   Driven lifecycle mints a new version row per release and two versions of
- *   one item cannot share a revision, so `WorkflowService.validateDefinition`
+ *   one item cannot share a revision, so `LifecycleDefinitionService.validateDefinition`
  *   refuses that combination.
  */
 export type RevisionScheme =

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Check, ChevronDown, Clock, GitBranch, Tag } from 'lucide-react'
 import type { VersionContext } from '@/lib/hooks/useVersionContext'
@@ -28,6 +28,7 @@ import {
   designTagsQuery,
   itemAvailableContextsQuery,
 } from '@/lib/query'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 interface Branch {
   id: string
@@ -47,6 +48,10 @@ interface Tag {
   createdAt?: string
   exists?: boolean // Used when filtering by item
 }
+
+/** Shared empties, so "no data yet" is the same array on every render. */
+const NO_BRANCHES: Array<Branch> = []
+const NO_TAGS: Array<Tag> = []
 
 interface VersionContextSelectorProps {
   designId: string
@@ -80,21 +85,37 @@ export function VersionContextSelector({
       Boolean(designId) && Boolean(itemId),
     ),
   )
-  const { data: designBranches = [], isFetching: loadingBranches } = useQuery({
-    ...designBranchesQuery<Branch>(designId),
-    enabled: Boolean(designId) && !itemId,
-  })
-  const { data: designTags = [], isFetching: loadingTags } = useQuery({
+  const { data: designBranches = NO_BRANCHES, isFetching: loadingBranches } =
+    useQuery({
+      ...designBranchesQuery<Branch>(designId),
+      enabled: Boolean(designId) && !itemId,
+    })
+  const { data: designTags = NO_TAGS, isFetching: loadingTags } = useQuery({
     ...designTagsQuery<Tag>(designId),
     enabled: Boolean(designId) && !itemId,
   })
 
-  const branches = itemId
-    ? (itemContexts?.branches ?? []).filter((b) => b.exists !== false)
-    : designBranches
-  const tags = itemId
-    ? (itemContexts?.tags ?? []).filter((t) => t.exists !== false)
-    : designTags
+  // Memoised because the auto-select effect below depends on these, and it
+  // navigates. A fresh `.filter()` result (or a fresh `[]` default) on every
+  // render makes that effect run after every commit, so a moment where the
+  // URL's context is not in the list becomes a navigate-per-render rather
+  // than a single correction.
+  const branches = useMemo(
+    () =>
+      itemId
+        ? (itemContexts?.branches ?? NO_BRANCHES).filter(
+            (b) => b.exists !== false,
+          )
+        : designBranches,
+    [itemId, itemContexts, designBranches],
+  )
+  const tags = useMemo(
+    () =>
+      itemId
+        ? (itemContexts?.tags ?? NO_TAGS).filter((t) => t.exists !== false)
+        : designTags,
+    [itemId, itemContexts, designTags],
+  )
   const loading = designId
     ? itemId
       ? loadingItemContexts
@@ -119,14 +140,14 @@ export function VersionContextSelector({
 
     if (!isCurrentValid) {
       // Auto-select first available branch (prefer ECO, then workspace, then main)
-      const ecoBranch = branches.find(
-        (b) => b.branchType === 'eco' && !b.isArchived,
+      const changeOrderBranch = branches.find(
+        (b) => b.branchType === BRANCH_TYPES.changeOrder && !b.isArchived,
       )
       const workspaceBranch = branches.find(
         (b) => b.branchType === 'workspace' && !b.isArchived,
       )
       const firstBranch =
-        ecoBranch || workspaceBranch || mainBranch || branches[0]
+        changeOrderBranch || workspaceBranch || mainBranch || branches[0]
 
       if (!firstBranch) return
 
@@ -144,8 +165,8 @@ export function VersionContextSelector({
 
   // Group branches by type
   const mainBranch = branches.find((b) => b.branchType === 'main')
-  const ecoBranches = branches.filter(
-    (b) => b.branchType === 'eco' && !b.isArchived,
+  const changeOrderBranches = branches.filter(
+    (b) => b.branchType === BRANCH_TYPES.changeOrder && !b.isArchived,
   )
   const workspaceBranches = branches.filter(
     (b) => b.branchType === 'workspace' && !b.isArchived,
@@ -299,13 +320,13 @@ export function VersionContextSelector({
           )}
 
           {/* ECO branches */}
-          {ecoBranches.length > 0 && (
+          {changeOrderBranches.length > 0 && (
             <>
               <DropdownMenuSeparator />
               <DropdownMenuLabel className="text-xs text-slate-500">
                 Change Orders
               </DropdownMenuLabel>
-              {ecoBranches.map((branch) => (
+              {changeOrderBranches.map((branch) => (
                 <DropdownMenuItem
                   key={branch.id}
                   onClick={() => handleBreadcrumbSelect('branch', branch.id)}
@@ -420,13 +441,13 @@ export function VersionContextSelector({
           </SelectGroup>
 
           {/* ECO branches */}
-          {ecoBranches.length > 0 && (
+          {changeOrderBranches.length > 0 && (
             <SelectGroup>
               <SelectLabel className="flex items-center gap-2">
                 <GitBranch className="h-3 w-3" />
                 Change Orders
               </SelectLabel>
-              {ecoBranches.map((branch) => (
+              {changeOrderBranches.map((branch) => (
                 <SelectItem key={branch.id} value={`branch:${branch.id}`}>
                   <div className="flex items-center gap-2">
                     {getBranchIcon(branch.branchType)}

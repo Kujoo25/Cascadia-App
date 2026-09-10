@@ -55,7 +55,7 @@ export function DesignPhaseIndicator({
   // Build tooltip text
   const tooltipText = isPreRelease
     ? `Pre-Release Phase: Create and edit items directly on main branch. ${draftItemCount} draft item(s) ready for release.`
-    : `Change Control Active: Main branch is protected. Use ECO branches to make changes. ${releasedItemCount} item(s) released.`
+    : `Change Control Active: Main branch is protected. Use change-order branches to make changes. ${releasedItemCount} item(s) released.`
 
   return (
     <div

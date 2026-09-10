@@ -46,7 +46,7 @@ describe('AnnotationService', () => {
   let designId: string
   let mainBranchId: string
   let initialCommitId: string
-  let ecoBranchId: string
+  let changeOrderBranchId: string
   let uniquePrefix: string
 
   beforeAll(async () => {
@@ -103,12 +103,12 @@ describe('AnnotationService', () => {
       owner.id,
     )
 
-    const { branch } = await BranchService.getOrCreateEcoBranch(
+    const { branch } = await BranchService.getOrCreateChangeOrderBranch(
       designId,
       changeOrder.id,
       owner.id,
     )
-    ecoBranchId = branch.id
+    changeOrderBranchId = branch.id
   })
 
   afterEach(async () => {
@@ -178,7 +178,7 @@ describe('AnnotationService', () => {
   it('accepts markup from the holder of the checkout', async () => {
     const { document, file } = await createDocumentWithFile()
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       owner.id,
     )
 
@@ -196,7 +196,7 @@ describe('AnnotationService', () => {
   it('refuses markup from someone else while the item is checked out', async () => {
     const { document, file } = await createDocumentWithFile()
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       owner.id,
     )
 
@@ -208,7 +208,7 @@ describe('AnnotationService', () => {
   it('lets anyone read markup regardless of the checkout', async () => {
     const { document, file } = await createDocumentWithFile()
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       owner.id,
     )
     await AnnotationService.create(file.id, highlight, owner.id)
@@ -223,7 +223,7 @@ describe('AnnotationService', () => {
   it('refuses to let one person rewrite another person’s markup', async () => {
     const { document, file } = await createDocumentWithFile()
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       owner.id,
     )
     const annotation = await AnnotationService.create(
@@ -240,11 +240,11 @@ describe('AnnotationService', () => {
     // between them and the edit is authorship.
     await CheckoutService.cancelCheckout(
       document.masterId,
-      ecoBranchId,
+      changeOrderBranchId,
       owner.id,
     )
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       bystander.id,
     )
 
@@ -263,7 +263,7 @@ describe('AnnotationService', () => {
   it('lets any checkout holder delete markup that no longer applies', async () => {
     const { document, file } = await createDocumentWithFile()
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       owner.id,
     )
     const annotation = await AnnotationService.create(
@@ -274,11 +274,11 @@ describe('AnnotationService', () => {
 
     await CheckoutService.cancelCheckout(
       document.masterId,
-      ecoBranchId,
+      changeOrderBranchId,
       owner.id,
     )
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       bystander.id,
     )
 
@@ -289,7 +289,7 @@ describe('AnnotationService', () => {
   it('counts markup per file for the file list badge', async () => {
     const { document, file } = await createDocumentWithFile()
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       owner.id,
     )
     await AnnotationService.create(file.id, highlight, owner.id)
@@ -307,7 +307,7 @@ describe('AnnotationService', () => {
     // needing a branch column of its own.
     const { document, file } = await createDocumentWithFile()
     await CheckoutService.checkout(
-      { itemMasterId: document.masterId, branchId: ecoBranchId },
+      { itemMasterId: document.masterId, branchId: changeOrderBranchId },
       owner.id,
     )
 
@@ -319,6 +319,6 @@ describe('AnnotationService', () => {
 
     expect(annotation.itemId).toBe(document.id)
     expect(annotation.fileId).toBe(file.id)
-    expect(mainBranchId).not.toBe(ecoBranchId)
+    expect(mainBranchId).not.toBe(changeOrderBranchId)
   })
 })

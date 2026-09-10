@@ -13,7 +13,7 @@ This guide covers the testing infrastructure, philosophy, and utilities for Casc
 | **Data Integrity**      | ECO release, branching, versioning, conflict detection, checkout | Data corruption is catastrophic |
 | **Security**            | Authentication, access control, permissions                      | Security bugs are unacceptable  |
 | **Complex Algorithms**  | Merge logic, workflow state machines                             | Hard to verify manually         |
-| **Core Business Logic** | ItemService, ChangeOrderService, WorkflowService                 | Business rules must be correct  |
+| **Core Business Logic** | ItemService, ChangeOrderService, LifecycleInstanceService        | Business rules must be correct  |
 
 ### What Does NOT Require Tests
 
@@ -100,14 +100,14 @@ Vitest globals are enabled — `describe`, `it`, `expect`, `vi` are available wi
 ```typescript
 // packages/core/src/lib/services/BranchService.test.ts
 describe('BranchService', () => {
-  describe('createEcoBranch', () => {
+  describe('createChangeOrderBranch', () => {
     it('creates a branch named eco/{itemNumber}', async () => {
       // Arrange
       const designId = 'design-123'
       const changeOrderItemId = 'eco-456'
 
       // Act
-      const branch = await BranchService.createEcoBranch(
+      const branch = await BranchService.createChangeOrderBranch(
         designId,
         changeOrderItemId,
         userId,
@@ -121,7 +121,7 @@ describe('BranchService', () => {
 
     it('throws NotFoundError when change order does not exist', async () => {
       await expect(
-        BranchService.createEcoBranch(designId, 'nonexistent', userId),
+        BranchService.createChangeOrderBranch(designId, 'nonexistent', userId),
       ).rejects.toThrow(NotFoundError)
     })
   })
@@ -262,7 +262,7 @@ npm run test:e2e         # Run tests
 E2E tests expect:
 
 - Admin user: `admin@cascadia.local` / `Cascadia`
-- The Default Program and Standard Parts Library created by the minimal seed
+- The Standard Parts Library created by the minimal seed (the E2E program and design are created by global setup)
 
 ### Writing E2E Tests
 

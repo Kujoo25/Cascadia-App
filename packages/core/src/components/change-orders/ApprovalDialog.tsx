@@ -3,7 +3,7 @@
 
 import { useState } from 'react'
 import { Check, Loader2, X } from 'lucide-react'
-import type { CanApproveResult } from '@/lib/workflows/types'
+import type { CanApproveResult } from '@/lib/lifecycles/types'
 import {
   Button,
   Dialog,
@@ -21,7 +21,7 @@ import {
 } from '@/components/ui'
 import { apiFetch } from '@/lib/api/client'
 import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
-import { useApprovalFormSlots } from '@/lib/workflows/approval-form-registry'
+import { useApprovalFormSlots } from '@/lib/lifecycles/approval-form-registry'
 
 interface ApprovalDialogProps {
   open: boolean

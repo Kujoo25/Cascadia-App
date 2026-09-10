@@ -19,6 +19,9 @@ import {
 } from '@/components/parts/CADComparePanel'
 import { itemModelVersionsQuery } from '@/lib/query'
 
+/** Shared empty, so "no versions yet" is the same array on every render. */
+const NO_VERSIONS: Array<ModelVersionEntry> = []
+
 /** A side of the comparison with nothing picked yet, in its own tint. */
 export function emptyCompareSlot(slot: CADCompareSlot): CompareSlotSelection {
   return {
@@ -130,7 +133,9 @@ export function useCADCompareState({
 
   // Master-scoped, so every entry stays valid as the user moves between
   // version contexts of the same part. Only fetched while the panel is open.
-  const { data: versions = [], isLoading } = useQuery(
+  // Shared empty for the same reason as `NO_FILES` in useCADViewerState:
+  // `versions` is a dependency of the seeding effect below.
+  const { data: versions = NO_VERSIONS, isLoading } = useQuery(
     itemModelVersionsQuery(enabled ? itemId : undefined, isOpen),
   )
 

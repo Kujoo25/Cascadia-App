@@ -106,8 +106,8 @@ function CommitNodeComponent({ data, selected }: NodeProps<CommitGraphNode>) {
   const hasTags = data.tags && data.tags.length > 0
   const changeStats = formatChangeStats(data.changeStats)
   // Show merge icon for merge commits OR ECO release commits
-  const isEcoRelated = data.isMergeCommit || !!data.changeOrderItemId
-  const hasEcoNumber = !!data.ecoNumber
+  const isChangeOrderRelated = data.isMergeCommit || !!data.changeOrderItemId
+  const hasChangeOrderNumber = !!data.ecoNumber
   // Check if this is a consolidated node
   const isConsolidated =
     data.isConsolidated && (data.consolidatedCount ?? 0) > 1
@@ -150,7 +150,7 @@ function CommitNodeComponent({ data, selected }: NodeProps<CommitGraphNode>) {
             {/* Commit type icon */}
             {isConsolidated ? (
               <Layers className={`h-4 w-4 ${colors.icon}`} />
-            ) : isEcoRelated ? (
+            ) : isChangeOrderRelated ? (
               <GitMerge className={`h-4 w-4 ${colors.icon}`} />
             ) : (
               <GitCommit className={`h-4 w-4 ${colors.icon}`} />
@@ -213,7 +213,7 @@ function CommitNodeComponent({ data, selected }: NodeProps<CommitGraphNode>) {
         )}
 
         {/* ECO number for ECO-related commits (merges and releases) */}
-        {hasEcoNumber && (
+        {hasChangeOrderNumber && (
           <Badge variant="warning" className="mt-2 text-[10px]">
             {data.ecoNumber}
           </Badge>

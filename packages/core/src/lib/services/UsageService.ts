@@ -5,23 +5,16 @@ import { randomUUID } from 'node:crypto'
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { db } from '../db'
 import { notDeleted } from '../db/filters'
-import {
-  documents,
-  itemRelationships,
-  items,
-  parts,
-  requirements,
-  tasks,
-  testCases,
-  testPlans,
-} from '../db/schema/items'
+import { itemRelationships, items } from '../db/schema/items'
 import { branchItems } from '../db/schema/versioning'
 import { designs } from '../db/schema/designs'
 import { NotFoundError, ValidationError } from '../errors'
+import { getTypeHandler } from '../items/type-handlers'
+import { extensionRowCopy } from '../items/type-handlers/copy'
 import { BranchService } from './BranchService'
 import { LifecycleService } from './LifecycleService'
 import type { BaseItem } from '../items/types/base'
-import type { TestStep } from '../items/types/testcase'
+import '../items/type-handlers/init'
 import { takeFirst } from '@/lib/db/take-first'
 
 /**
@@ -68,6 +61,12 @@ export interface CreateUsageInput {
     /** Type-specific overrides (parts, documents, requirements, etc.) */
     typeSpecific?: Record<string, unknown>
   }
+  /**
+   * Whether the usage is a top-level part of the design's structure. A
+   * subtree copy names its root true and its children false; a caller that
+   * says nothing gets the definition's own designation.
+   */
+  inDesignStructure?: boolean
 }
 
 /**
@@ -138,6 +137,9 @@ export class UsageService {
       { fieldName: 'material', mode: 'inherit' },
       { fieldName: 'weight', mode: 'inherit' },
       { fieldName: 'weightUnit', mode: 'inherit' },
+      // Tracking policy (none | lot | serial) is a property of the part, not
+      // of where it is used, so it follows the definition like its material.
+      { fieldName: 'trackingMode', mode: 'inherit' },
       { fieldName: 'partType', mode: 'copy' },
       { fieldName: 'cost', mode: 'copy' },
       { fieldName: 'costCurrency', mode: 'copy' },
@@ -247,7 +249,10 @@ export class UsageService {
       sysmlType: sysmlType,
       metamodel: definition.metamodel ?? 'cascadia',
       isCurrent: true,
-      inDesignStructure: definition.inDesignStructure,
+      // The caller says whether the usage is a top-level part of the design it
+      // lands in; absent that, it stands where its definition stands.
+      inDesignStructure:
+        input.inDesignStructure ?? definition.inDesignStructure,
       attributes: definition.attributes,
       createdBy: userId,
       modifiedBy: userId,
@@ -603,11 +608,11 @@ export class UsageService {
       // When a branchId is provided (ECO branch), use it directly; otherwise
       // fall back to the design's main branch.
       let trackingBranchId: string
-      let isEcoBranch = false
+      let isChangeOrderBranch = false
 
       if (branchId) {
         trackingBranchId = branchId
-        isEcoBranch = true
+        isChangeOrderBranch = true
       } else {
         const targetMainBranch =
           await BranchService.getMainBranch(targetDesignId)
@@ -619,6 +624,9 @@ export class UsageService {
 
       const itemIdMap = new Map<string, string>() // sourceItemId -> newUsageId
       const createdUsages: Array<typeof items.$inferSelect> = []
+      // Usages that already stood in the target design and are reused as
+      // subtree children rather than copied again.
+      const reusedUsageIds = new Set<string>()
 
       for (const sourceItem of subtreeItems) {
         // A subtree child may already have a usage in the target design —
@@ -629,6 +637,7 @@ export class UsageService {
 
         if (existingUsages.length > 0) {
           itemIdMap.set(sourceItem.id, existingUsages[0]!.id)
+          reusedUsageIds.add(existingUsages[0]!.id)
           continue
         }
 
@@ -641,6 +650,9 @@ export class UsageService {
           {
             definitionId: sourceItem.id,
             targetDesignId,
+            // The subtree's root is what the caller added to the design's
+            // structure; everything below it arrives as a child of it.
+            inDesignStructure: sourceItem.id === rootItemId,
             ...(overrides.itemNumber ? { overrides } : {}),
           },
           userId,
@@ -655,17 +667,21 @@ export class UsageService {
           itemMasterId: usageResult.usage.masterId,
           currentItemId: usageResult.usage.id,
           baseItemId: usageResult.usage.id,
-          changeType: isEcoBranch ? 'added' : null,
+          changeType: isChangeOrderBranch ? 'added' : null,
         })
       }
 
       // Step 3: copy BOM relationships with remapped ids.
       let relationshipsCreated = 0
+      const nestedReusedIds = new Set<string>()
 
       for (const rel of bomRelationships) {
         const newSourceId = itemIdMap.get(rel.sourceId)
         const newTargetId = itemIdMap.get(rel.targetId)
         if (!newSourceId) continue
+        if (newTargetId && reusedUsageIds.has(newTargetId)) {
+          nestedReusedIds.add(newTargetId)
+        }
 
         // Both ends in the subtree: remap. External target (e.g. a library
         // item): preserve the original reference.
@@ -686,6 +702,16 @@ export class UsageService {
           modifiedBy: userId,
         })
         relationshipsCreated++
+      }
+
+      // A usage that already stood in this design and was just nested under
+      // a copied parent is a child now, not a top-level part — the rule
+      // ItemRelationshipService applies when a line is added one at a time.
+      if (nestedReusedIds.size > 0) {
+        await tx
+          .update(items)
+          .set({ inDesignStructure: false })
+          .where(inArray(items.id, [...nestedReusedIds]))
       }
 
       return { items: createdUsages, relationshipsCreated }
@@ -753,6 +779,16 @@ export class UsageService {
 
   /**
    * Copy type-specific data from definition to usage, respecting inheritance config.
+   *
+   * The definition's whole extension row is the starting point, and the
+   * config adjusts it: a `usage-only` field starts empty (or overridden),
+   * everything else keeps the definition's value unless overridden. Starting
+   * from the row rather than from the field list is deliberate — the list is
+   * a policy over columns, not an inventory of them. When it doubled as the
+   * inventory, a column it did not mention never reached the usage: a Part's
+   * `trackingMode` was one, so every usage of a serial- or lot-tracked part
+   * came out untracked, and each column added since would have had to be
+   * remembered here as well.
    */
   private static async copyTypeSpecificData(
     client: TransactionClient | typeof db,
@@ -761,22 +797,18 @@ export class UsageService {
     inheritConfig: ItemTypeInheritanceConfig,
     overrides?: Record<string, unknown>,
   ): Promise<Record<string, unknown> | null> {
-    // Get definition's type-specific data
     const defTypeData = await this.getTypeSpecificData(
       definition.itemType,
       definition.id,
       client,
     )
-
-    if (!defTypeData) {
+    const table = getTypeHandler(definition.itemType)?.table
+    if (!defTypeData || !table) {
       return null
     }
 
-    // Build the data to insert, respecting inheritance config
-    const insertData: Record<string, unknown> = { itemId: usageItemId }
+    const insertData = extensionRowCopy(defTypeData, usageItemId)
 
-    // For 'copy' and 'inherit' fields, copy from definition
-    // For 'usage-only' fields, use null (or override if provided)
     for (const fieldConfig of inheritConfig.fields) {
       if (fieldConfig.mode === 'usage-only') {
         // Usage-only fields start as null unless overridden
@@ -793,169 +825,33 @@ export class UsageService {
       }
     }
 
-    // Insert into appropriate type-specific table
-    await this.insertTypeSpecificDataInternal(
-      client,
-      definition.itemType,
-      insertData,
-    )
+    // The handler's table rather than its `insert`: that one normalises form
+    // input through a column list of its own.
+    await client.insert(table).values(insertData)
 
     return insertData
   }
 
   /**
-   * Get type-specific data for an item
+   * Get type-specific data for an item: its extension row, whole.
    */
   private static async getTypeSpecificData(
     itemType: string,
     itemId: string,
     client?: TransactionClient | typeof db,
   ): Promise<Record<string, unknown> | null> {
+    const table = getTypeHandler(itemType)?.table
+    if (!table) {
+      return null
+    }
+
     const dbClient = client ?? db
-
-    switch (itemType) {
-      case 'Part': {
-        const [part] = await dbClient
-          .select()
-          .from(parts)
-          .where(eq(parts.itemId, itemId))
-          .limit(1)
-        return part as Record<string, unknown> | null
-      }
-      case 'Document': {
-        const [doc] = await dbClient
-          .select()
-          .from(documents)
-          .where(eq(documents.itemId, itemId))
-          .limit(1)
-        return doc as Record<string, unknown> | null
-      }
-      case 'Requirement': {
-        const [req] = await dbClient
-          .select()
-          .from(requirements)
-          .where(eq(requirements.itemId, itemId))
-          .limit(1)
-        return req as Record<string, unknown> | null
-      }
-      case 'Task': {
-        const [task] = await dbClient
-          .select()
-          .from(tasks)
-          .where(eq(tasks.itemId, itemId))
-          .limit(1)
-        return task as Record<string, unknown> | null
-      }
-      case 'TestPlan': {
-        const [tp] = await dbClient
-          .select()
-          .from(testPlans)
-          .where(eq(testPlans.itemId, itemId))
-          .limit(1)
-        return tp as Record<string, unknown> | null
-      }
-      case 'TestCase': {
-        const [tc] = await dbClient
-          .select()
-          .from(testCases)
-          .where(eq(testCases.itemId, itemId))
-          .limit(1)
-        return tc as Record<string, unknown> | null
-      }
-      default:
-        return null
-    }
-  }
-
-  /**
-   * Insert type-specific data into the appropriate table
-   */
-  private static async insertTypeSpecificDataInternal(
-    client: TransactionClient | typeof db,
-    itemType: string,
-    data: Record<string, unknown>,
-  ): Promise<void> {
-    switch (itemType) {
-      case 'Part':
-        await client.insert(parts).values({
-          itemId: data.itemId as string,
-          description: (data.description as string | undefined) ?? null,
-          partType: (data.partType as string | undefined) ?? null,
-          material: (data.material as string | undefined) ?? null,
-          weight: (data.weight as string | undefined) ?? null,
-          weightUnit: (data.weightUnit as string | undefined) ?? null,
-          cost: (data.cost as string | undefined) ?? null,
-          costCurrency: (data.costCurrency as string | undefined) ?? null,
-          leadTimeDays: (data.leadTimeDays as number | undefined) ?? null,
-        })
-        break
-      case 'Document':
-        await client.insert(documents).values({
-          itemId: data.itemId as string,
-          description: (data.description as string | undefined) ?? null,
-          fileId: (data.fileId as string | undefined) ?? null,
-          fileName: (data.fileName as string | undefined) ?? null,
-          fileSize: (data.fileSize as number | undefined) ?? null,
-          mimeType: (data.mimeType as string | undefined) ?? null,
-          storagePath: (data.storagePath as string | undefined) ?? null,
-        })
-        break
-      case 'Requirement':
-        await client.insert(requirements).values({
-          itemId: data.itemId as string,
-          description: (data.description as string | undefined) ?? null,
-          type: (data.type as string | undefined) ?? null,
-          priority: (data.priority as string | undefined) ?? null,
-          acceptanceCriteria:
-            (data.acceptanceCriteria as string | undefined) ?? null,
-          source: (data.source as string | undefined) ?? null,
-          category: (data.category as string | undefined) ?? null,
-          verificationMethod:
-            (data.verificationMethod as string | undefined) ?? null,
-          verificationStatus:
-            (data.verificationStatus as string | undefined) ?? null,
-          allocatedDesignId:
-            (data.allocatedDesignId as string | undefined) ?? null,
-          parentRequirementId:
-            (data.parentRequirementId as string | undefined) ?? null,
-        })
-        break
-      case 'Task':
-        await client.insert(tasks).values({
-          itemId: data.itemId as string,
-          programId: (data.programId as string | undefined) ?? null,
-          parentTaskId: (data.parentTaskId as string | undefined) ?? null,
-          description: (data.description as string | undefined) ?? null,
-          assignee: (data.assignee as string | undefined) ?? null,
-          priority: (data.priority as string | undefined) ?? null,
-          dueDate: (data.dueDate as Date | undefined) ?? null,
-          estimatedHours: (data.estimatedHours as string | undefined) ?? null,
-          actualHours: (data.actualHours as string | undefined) ?? null,
-          tags: data.tags ?? null,
-        })
-        break
-      case 'TestPlan':
-        await client.insert(testPlans).values({
-          itemId: data.itemId as string,
-          scope: (data.scope as string | undefined) ?? null,
-          environment: (data.environment as string | undefined) ?? null,
-          entryCriteria: (data.entryCriteria as string | undefined) ?? null,
-          exitCriteria: (data.exitCriteria as string | undefined) ?? null,
-        })
-        break
-      case 'TestCase':
-        await client.insert(testCases).values({
-          itemId: data.itemId as string,
-          testPlanId: (data.testPlanId as string | undefined) ?? null,
-          testType: (data.testType as string | undefined) ?? null,
-          preconditions: (data.preconditions as string | undefined) ?? null,
-          steps: (data.steps as Array<TestStep> | undefined) ?? null,
-          executionStatus: (data.executionStatus as string | undefined) ?? null,
-          lastExecutedAt: (data.lastExecutedAt as Date | undefined) ?? null,
-          lastExecutedBy: (data.lastExecutedBy as string | undefined) ?? null,
-          environment: (data.environment as string | undefined) ?? null,
-        })
-        break
-    }
+    const row = await dbClient
+      .select()
+      .from(table)
+      .where(eq(table.itemId, itemId))
+      .limit(1)
+      .then((rows: Array<Record<string, unknown>>) => rows.at(0))
+    return row ?? null
   }
 }

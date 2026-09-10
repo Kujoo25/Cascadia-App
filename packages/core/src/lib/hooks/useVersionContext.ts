@@ -239,7 +239,7 @@ export function useVersionContext(
   }, [apiParams])
 
   // Determine if this is a protected (post-release) design
-  const requiresEcoBranch = isMainProtected
+  const requiresChangeOrderBranch = isMainProtected
 
   // Determine the current phase
   const phase = isMainProtected ? 'post-release' : 'pre-release'
@@ -267,7 +267,7 @@ export function useVersionContext(
 
     // Protection status
     isMainProtected,
-    requiresEcoBranch,
+    requiresChangeOrderBranch: requiresChangeOrderBranch,
     phase,
   }
 }

@@ -4,7 +4,7 @@
 /**
  * Design Management E2E Journey
  *
- * One journey, end to end, in the eco-workflow.spec.ts style: the design is
+ * One journey, end to end, in the change-order-workflow.spec.ts style: the design is
  * created through the UI, then found, opened and read — every step a hard
  * expect against a design this test knows the name of.
  *

@@ -25,6 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/Select'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 import {
   designBranchesQuery,
@@ -79,6 +80,7 @@ export function AddPartToDesignDialog({
   onSuccess,
 }: AddPartToDesignDialogProps) {
   const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedItems, setSelectedItems] = useState<Array<Item>>([])
 
@@ -221,12 +223,8 @@ export function AddPartToDesignDialog({
       onSuccess?.()
       onOpenChange(false)
     },
-    onError: () => {
-      alert({
-        title: 'Error',
-        description: 'Failed to add parts to design',
-        variant: 'destructive',
-      })
+    onError: (error: unknown) => {
+      handleError(error, { title: 'Failed to add parts to design' })
     },
   })
 

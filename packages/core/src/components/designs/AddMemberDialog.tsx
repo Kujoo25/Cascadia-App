@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Badge } from '@/components/ui/Badge'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/RadioGroup'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 import { designListQuery, useResourceMutation } from '@/lib/query'
 import { cn } from '@/lib/utils'
@@ -48,7 +48,7 @@ export function AddMemberDialog({
   existingMemberIds,
   onSuccess,
 }: AddMemberDialogProps) {
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedDesignId, setSelectedDesignId] = useState<string | null>(null)
 
@@ -94,11 +94,7 @@ export function AddMemberDialog({
       onOpenChange(false)
     },
     onError: (error: Error) => {
-      alert({
-        title: 'Error',
-        description: `Failed to add design to family: ${error.message}`,
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Failed to add design to family' })
     },
   })
 

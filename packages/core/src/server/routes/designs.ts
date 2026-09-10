@@ -66,6 +66,7 @@ import { users } from '@/lib/db/schema/users'
 import { designs } from '@/lib/db/schema/designs'
 import { notDeleted, notWorkingRevision } from '@/lib/db/filters'
 import '@/lib/items/registerItemTypes.server'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 const adapt = tagged('Designs')
 
@@ -73,7 +74,7 @@ const adapt = tagged('Designs')
 // Types
 // ============================================
 
-interface ECOSummary {
+interface DesignChangeOrderSummary {
   id: string
   itemNumber: string
   name: string
@@ -774,7 +775,7 @@ app.post(
         let branch
         switch (data.branchType) {
           case 'eco':
-            branch = await BranchService.createEcoBranch(
+            branch = await BranchService.createChangeOrderBranch(
               designId,
               data.changeOrderItemId,
               user.id,
@@ -1002,6 +1003,14 @@ app.post(
                 {
                   definitionId: chainItem.id,
                   targetDesignId: designId,
+                  // The topmost chain item replaces a cross-design root, so
+                  // it is a top-level part of this design — unless a native
+                  // parent's BOM line is being re-pointed at it, in which
+                  // case it arrives as that parent's child. The rest of the
+                  // chain hangs under it either way.
+                  inDesignStructure:
+                    chainItem.id === chainItemIds[0] &&
+                    !parentBomRelationshipId,
                   ...(overrides.itemNumber ? { overrides } : {}),
                 },
                 user.id,
@@ -1194,122 +1203,141 @@ app.delete(
   ),
 )
 
-// GET /api/designs/:id/ecos
-app.get(
-  '/:id/ecos',
-  adapt(
-    apiHandler<{ id: string }>({}, async ({ request, params, user }) => {
-      const { id: designId } = params
-      const design = await DesignService.getById(designId)
-      if (!design) {
-        throw new NotFoundError('Design', designId)
-      }
-
-      await requireDesignAccess(user.id, designId)
-
-      // Parse query params - use a base URL for relative paths
-      const url = new URL(request.url, 'http://localhost')
-      const statusFilter = url.searchParams.get('status')
-
-      // Get all branches for this design
-      const allBranches = await db
-        .select()
-        .from(branches)
-        .where(eq(branches.designId, designId))
-
-      // Filter to ECO branches and get their change order item IDs
-      const ecoItemIds = allBranches
-        .filter((b) => b.branchType === 'eco')
-        .map((b) => b.changeOrderItemId)
-        .filter((id): id is string => id !== null)
-
-      if (ecoItemIds.length === 0) {
-        return { ecos: [], total: 0 }
-      }
-
-      // Get ECO items
-      let ecoItems = await db
-        .select()
-        .from(items)
-        .where(inArray(items.id, ecoItemIds))
-
-      // Apply status filter if provided
-      if (statusFilter) {
-        ecoItems = ecoItems.filter((item) => item.state === statusFilter)
-      }
-
-      if (ecoItems.length === 0) {
-        return { ecos: [], total: 0 }
-      }
-
-      const ecoIds = ecoItems.map((e) => e.id)
-
-      // Get change order details
-      const ecoDetails = await db
-        .select()
-        .from(changeOrders)
-        .where(inArray(changeOrders.itemId, ecoIds))
-
-      const detailsMap = new Map(ecoDetails.map((d) => [d.itemId, d]))
-
-      // Get affected item counts
-      const affectedCounts = await db
-        .select({
-          changeOrderId: changeOrderAffectedItems.changeOrderId,
-          count: sql<number>`count(*)::int`,
-        })
-        .from(changeOrderAffectedItems)
-        .where(inArray(changeOrderAffectedItems.changeOrderId, ecoIds))
-        .groupBy(changeOrderAffectedItems.changeOrderId)
-
-      const countMap = new Map(
-        affectedCounts.map((c) => [c.changeOrderId, c.count]),
-      )
-
-      // Get owner info
-      const ownerIds = ecoItems
-        .map((e) => e.createdBy)
-        .filter((id): id is string => !!id)
-      const uniqueOwnerIds = [...new Set(ownerIds)]
-
-      const ownersResult =
-        uniqueOwnerIds.length > 0
-          ? await db
-              .select({ id: users.id, name: users.name })
-              .from(users)
-              .where(inArray(users.id, uniqueOwnerIds))
-          : []
-
-      const ownerMap = new Map(
-        ownersResult.map((o) => [
-          o.id,
-          { id: o.id, name: o.name ?? 'Unknown' },
-        ]),
-      )
-
-      // Build response
-      const ecos: Array<ECOSummary> = ecoItems.map((eco) => {
-        const details = detailsMap.get(eco.id)
-        return {
-          id: eco.id,
-          itemNumber: eco.itemNumber,
-          name: eco.name ?? '',
-          state: eco.state,
-          reasonForChange: details?.reasonForChange ?? '',
-          itemCount: countMap.get(eco.id) ?? 0,
-          owner: ownerMap.get(eco.createdBy || '') || {
-            id: '',
-            name: 'Unknown',
-          },
-          createdAt: eco.createdAt.toISOString(),
-          submittedAt: details?.submittedAt?.toISOString(),
+// GET /api/designs/:id/change-orders — and `/:id/ecos`, the path this
+// shipped under, which stays mounted as a deprecated alias: v1 is
+// additive-only. The response keeps its `ecos` key for the same reason.
+function listDesignChangeOrders(options: { deprecated?: boolean } = {}) {
+  return adapt(
+    apiHandler<{ id: string }>(
+      {
+        openapi: {
+          summary:
+            'List the change orders whose branches belong to this design',
+          deprecated: options.deprecated,
+        },
+      },
+      async ({ request, params, user }) => {
+        const { id: designId } = params
+        const design = await DesignService.getById(designId)
+        if (!design) {
+          throw new NotFoundError('Design', designId)
         }
-      })
 
-      return { ecos, total: ecos.length }
-    }),
-  ),
-)
+        await requireDesignAccess(user.id, designId)
+
+        // Parse query params - use a base URL for relative paths
+        const url = new URL(request.url, 'http://localhost')
+        const statusFilter = url.searchParams.get('status')
+
+        // Get all branches for this design
+        const allBranches = await db
+          .select()
+          .from(branches)
+          .where(eq(branches.designId, designId))
+
+        // Filter to ECO branches and get their change order item IDs
+        const changeOrderItemIds = allBranches
+          .filter((b) => b.branchType === BRANCH_TYPES.changeOrder)
+          .map((b) => b.changeOrderItemId)
+          .filter((id): id is string => id !== null)
+
+        if (changeOrderItemIds.length === 0) {
+          return { ecos: [], total: 0 }
+        }
+
+        // Get ECO items
+        let changeOrderItems = await db
+          .select()
+          .from(items)
+          .where(inArray(items.id, changeOrderItemIds))
+
+        // Apply status filter if provided
+        if (statusFilter) {
+          changeOrderItems = changeOrderItems.filter(
+            (item) => item.state === statusFilter,
+          )
+        }
+
+        if (changeOrderItems.length === 0) {
+          return { ecos: [], total: 0 }
+        }
+
+        const changeOrderIds = changeOrderItems.map((e) => e.id)
+
+        // Get change order details
+        const changeOrderDetails = await db
+          .select()
+          .from(changeOrders)
+          .where(inArray(changeOrders.itemId, changeOrderIds))
+
+        const detailsMap = new Map(changeOrderDetails.map((d) => [d.itemId, d]))
+
+        // Get affected item counts
+        const affectedCounts = await db
+          .select({
+            changeOrderId: changeOrderAffectedItems.changeOrderId,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(changeOrderAffectedItems)
+          .where(
+            inArray(changeOrderAffectedItems.changeOrderId, changeOrderIds),
+          )
+          .groupBy(changeOrderAffectedItems.changeOrderId)
+
+        const countMap = new Map(
+          affectedCounts.map((c) => [c.changeOrderId, c.count]),
+        )
+
+        // Get owner info
+        const ownerIds = changeOrderItems
+          .map((e) => e.createdBy)
+          .filter((id): id is string => !!id)
+        const uniqueOwnerIds = [...new Set(ownerIds)]
+
+        const ownersResult =
+          uniqueOwnerIds.length > 0
+            ? await db
+                .select({ id: users.id, name: users.name })
+                .from(users)
+                .where(inArray(users.id, uniqueOwnerIds))
+            : []
+
+        const ownerMap = new Map(
+          ownersResult.map((o) => [
+            o.id,
+            { id: o.id, name: o.name ?? 'Unknown' },
+          ]),
+        )
+
+        // Build response
+        const ecos: Array<DesignChangeOrderSummary> = changeOrderItems.map(
+          (changeOrder) => {
+            const details = detailsMap.get(changeOrder.id)
+            return {
+              id: changeOrder.id,
+              itemNumber: changeOrder.itemNumber,
+              name: changeOrder.name ?? '',
+              state: changeOrder.state,
+              reasonForChange: details?.reasonForChange ?? '',
+              itemCount: countMap.get(changeOrder.id) ?? 0,
+              owner: ownerMap.get(changeOrder.createdBy || '') || {
+                id: '',
+                name: 'Unknown',
+              },
+              createdAt: changeOrder.createdAt.toISOString(),
+              submittedAt: details?.submittedAt?.toISOString(),
+            }
+          },
+        )
+
+        return { ecos, total: ecos.length }
+      },
+    ),
+  )
+}
+
+app.get('/:id/change-orders', listDesignChangeOrders())
+app.get('/:id/ecos', listDesignChangeOrders({ deprecated: true }))
 
 // GET /api/designs/:id/history/graph
 /**
@@ -1911,151 +1939,131 @@ app.get(
         }
 
         if (targetBranchId) {
-          // Check if this is an ECO branch (not main)
-          const isEcoBranch = mainBranch && targetBranchId !== mainBranch.id
+          const isChangeOrderBranch = mainBranch
+            ? targetBranchId !== mainBranch.id
+            : false
 
-          if (isEcoBranch) {
-            // For ECO branches: merge ECO changes on top of main branch
-            // 1. Get all items from main branch
-            const mainBranchItemsResult = await db
-              .select({
-                currentItemId: branchItems.currentItemId,
-                itemMasterId: branchItems.itemMasterId,
-              })
-              .from(branchItems)
-              .where(eq(branchItems.branchId, mainBranch.id))
+          const itemColumns = {
+            id: items.id,
+            itemNumber: items.itemNumber,
+            name: items.name,
+            revision: items.revision,
+            state: items.state,
+            itemType: items.itemType,
+            inDesignStructure: items.inDesignStructure,
+            designId: items.designId,
+            masterId: items.masterId,
+          }
 
-            // 2. Get items specific to this ECO branch (working copies)
-            const ecoBranchItemsResult = await db
-              .select({
-                currentItemId: branchItems.currentItemId,
-                itemMasterId: branchItems.itemMasterId,
-              })
-              .from(branchItems)
-              .where(eq(branchItems.branchId, targetBranchId))
-
-            // 3. Build a map of masterId -> itemId, preferring ECO versions
-            // Also track main branch item IDs for relationship queries
-            mainBranchItemIds = mainBranchItemsResult
-              .map((bi) => bi.currentItemId)
-              .filter((id): id is string => id !== null)
-
-            // First add all main branch items to the resolution map
-            // Also build mainItemIdToMasterId for resolving relationships
-            for (const bi of mainBranchItemsResult) {
-              if (bi.currentItemId && bi.itemMasterId) {
-                masterIdToResolvedItemId.set(bi.itemMasterId, bi.currentItemId)
-                mainItemIdToMasterId.set(bi.currentItemId, bi.itemMasterId)
-              }
-            }
-
-            // Then override with ECO branch items (these take precedence)
-            for (const bi of ecoBranchItemsResult) {
-              if (bi.currentItemId && bi.itemMasterId) {
-                masterIdToResolvedItemId.set(bi.itemMasterId, bi.currentItemId)
-              }
-            }
-
-            // 4. Fetch all resolved items
-            const resolvedItemIds = Array.from(
-              masterIdToResolvedItemId.values(),
+          // Main's view of the design is the *union* of two sources keyed by
+          // masterId — branch_items overlaid on the design's current items —
+          // not whichever one happens to be non-empty first.
+          //
+          // Items created directly on main never get a branch_items row, so
+          // "branch_items, else fall back to isCurrent" showed all of them
+          // right up until the first ECO merge inserted a row, and from then
+          // on showed only the single item that merge released. A branch's
+          // view starts from the same union: reading main's branch_items
+          // alone for it hid every item no change order had ever touched
+          // from every change-order branch.
+          //
+          // Baseline: the design's current items. Working copies are excluded
+          // so a branch's unreleased drafts cannot be served as main's
+          // contents (the same guard VersionResolver.getReleasedItems uses).
+          const baselineItems = await db
+            .select(itemColumns)
+            .from(items)
+            .where(
+              and(
+                eq(items.designId, designId),
+                eq(items.isCurrent, true),
+                notDeleted(),
+                notWorkingRevision(),
+              ),
             )
-            if (resolvedItemIds.length > 0) {
-              allItems = await db
-                .select({
-                  id: items.id,
-                  itemNumber: items.itemNumber,
-                  name: items.name,
-                  revision: items.revision,
-                  state: items.state,
-                  itemType: items.itemType,
-                  inDesignStructure: items.inDesignStructure,
-                  designId: items.designId,
-                  masterId: items.masterId,
-                })
-                .from(items)
-                .where(inArray(items.id, resolvedItemIds))
-            }
-          } else {
-            // For main: the item set is the *union* of two sources keyed by
-            // masterId — branch_items overlaid on the design's current items —
-            // not whichever one happens to be non-empty first.
-            //
-            // Items created directly on main never get a branch_items row, so
-            // "branch_items, else fall back to isCurrent" showed all of them
-            // right up until the first ECO merge inserted a row, and from then
-            // on showed only the single item that merge released.
-            const branchItemsResult = await db
+
+          const mainTracked = await db
+            .select({
+              currentItemId: branchItems.currentItemId,
+              itemMasterId: branchItems.itemMasterId,
+            })
+            .from(branchItems)
+            .where(eq(branchItems.branchId, mainBranch?.id ?? targetBranchId))
+          const mainTrackedIds = mainTracked
+            .map((bi) => bi.currentItemId)
+            .filter((id): id is string => id !== null)
+          const mainTrackedItems =
+            mainTrackedIds.length > 0
+              ? await db
+                  .select(itemColumns)
+                  .from(items)
+                  .where(inArray(items.id, mainTrackedIds))
+              : []
+
+          // branch_items wins per masterId — it is the explicit record of
+          // what main points at, where isCurrent is only a global flag.
+          const resolvedByMaster = new Map<string, (typeof baselineItems)[0]>()
+          for (const item of baselineItems) {
+            resolvedByMaster.set(item.masterId, item)
+          }
+          for (const item of mainTrackedItems) {
+            resolvedByMaster.set(item.masterId, item)
+          }
+
+          // Main's item ids, for the relationship queries below: a BOM line
+          // stored against a main row must still be found when the branch
+          // resolves that master to its working copy.
+          for (const item of resolvedByMaster.values()) {
+            mainBranchItemIds.push(item.id)
+            mainItemIdToMasterId.set(item.id, item.masterId)
+          }
+
+          if (isChangeOrderBranch) {
+            // The branch's own rows override main's per masterId: its working
+            // copies, the items it created, and — as an absence — the items
+            // it deleted.
+            const branchRows = await db
               .select({
                 currentItemId: branchItems.currentItemId,
                 itemMasterId: branchItems.itemMasterId,
+                changeType: branchItems.changeType,
               })
               .from(branchItems)
               .where(eq(branchItems.branchId, targetBranchId))
-
-            const trackedItemIds = branchItemsResult
+            const branchRowIds = branchRows
               .map((bi) => bi.currentItemId)
               .filter((id): id is string => id !== null)
-
-            const itemColumns = {
-              id: items.id,
-              itemNumber: items.itemNumber,
-              name: items.name,
-              revision: items.revision,
-              state: items.state,
-              itemType: items.itemType,
-              inDesignStructure: items.inDesignStructure,
-              designId: items.designId,
-              masterId: items.masterId,
-            }
-
-            // Baseline: the design's current items. Working copies are excluded
-            // so a branch's unreleased drafts cannot be served as main's
-            // contents (the same guard VersionResolver.getReleasedItems uses).
-            const baselineItems = await db
-              .select(itemColumns)
-              .from(items)
-              .where(
-                and(
-                  eq(items.designId, designId),
-                  eq(items.isCurrent, true),
-                  notDeleted(),
-                  notWorkingRevision(),
-                ),
-              )
-
-            const trackedItems =
-              trackedItemIds.length > 0
+            const branchItemRows =
+              branchRowIds.length > 0
                 ? await db
                     .select(itemColumns)
                     .from(items)
-                    .where(inArray(items.id, trackedItemIds))
+                    .where(inArray(items.id, branchRowIds))
                 : []
-
-            // branch_items wins per masterId — it is the explicit record of
-            // what this branch points at, where isCurrent is only a global flag.
-            const resolvedByMaster = new Map<
-              string,
-              (typeof baselineItems)[0]
-            >()
-            for (const item of baselineItems) {
-              resolvedByMaster.set(item.masterId, item)
+            const branchItemById = new Map(branchItemRows.map((i) => [i.id, i]))
+            for (const bi of branchRows) {
+              if (bi.changeType === 'deleted') {
+                resolvedByMaster.delete(bi.itemMasterId)
+                continue
+              }
+              const row = bi.currentItemId
+                ? branchItemById.get(bi.currentItemId)
+                : undefined
+              if (row) {
+                resolvedByMaster.set(row.masterId, row)
+                mainItemIdToMasterId.set(row.id, row.masterId)
+              }
             }
-            for (const item of trackedItems) {
-              resolvedByMaster.set(item.masterId, item)
-            }
+          }
 
-            allItems = Array.from(resolvedByMaster.values())
+          allItems = Array.from(resolvedByMaster.values())
 
-            // Build masterId mappings for relationship resolution. Every item
-            // in the set needs one: resolveItemId() re-points a BOM line that
-            // still names a superseded revision onto the current one, and it
-            // can only do that for masters it knows about.
-            for (const item of allItems) {
-              masterIdToResolvedItemId.set(item.masterId, item.id)
-              mainItemIdToMasterId.set(item.id, item.masterId)
-            }
-            mainBranchItemIds = allItems.map((i) => i.id)
+          // Build masterId mappings for relationship resolution. Every item
+          // in the set needs one: resolveItemId() re-points a BOM line that
+          // still names a superseded revision onto the current one, and it
+          // can only do that for masters it knows about.
+          for (const item of allItems) {
+            masterIdToResolvedItemId.set(item.masterId, item.id)
           }
         } else {
           // Fallback: get isCurrent items for the design (legacy behavior)
@@ -2161,6 +2169,7 @@ app.get(
                 itemType: items.itemType,
                 inDesignStructure: items.inDesignStructure,
                 designId: items.designId,
+                masterId: items.masterId,
                 designCode: designs.code,
                 designName: designs.name,
               })
@@ -2217,6 +2226,7 @@ app.get(
               itemType: items.itemType,
               inDesignStructure: items.inDesignStructure,
               designId: items.designId,
+              masterId: items.masterId,
               designCode: designs.code,
               designName: designs.name,
             })
@@ -2277,17 +2287,23 @@ app.get(
       // (same relationship can exist across multiple item versions)
       const addedRelationships = new Set<string>()
 
-      // A BOM line belongs to the item version that owns it, but the query
-      // above deliberately reaches across every version sharing a masterId:
-      // checkout creates a working copy *without* copying its lines, so on an
-      // ECO branch they are still owned by the version it was checked out
-      // from. A version's BOM is therefore its own rows when it has any, and
-      // its master's other versions' rows only when it has none. Without that
-      // first half a released revision that dropped a line would show it
-      // again, resurrected from the row its superseded version still owns.
+      // A BOM line belongs to the item version that owns it, and a version's
+      // own rows ARE its structure — the authority rule the merge applies at
+      // release and the branch BOM reader applies when a part is opened.
+      // Every step that mints a version row carries the source's lines onto
+      // it (copyRelationshipsToItem), so a version with no rows has an
+      // emptied structure, not a missing one. The query above still reaches
+      // across every version sharing a masterId, because a line's *target*
+      // may name a superseded revision and is re-pointed below; but a line
+      // owned by another version of the source is that version's, and is
+      // dropped here. Falling back to those rows when the resolved version
+      // owned none resurrected a line deleted on the branch the moment it
+      // was the last one, and leaked a line added on a branch into main's
+      // view of a parent that has no children there.
       const relationshipsBySource = new Map<string, typeof relationships>()
       for (const rel of relationships) {
         const resolvedSourceId = resolveItemId(rel.sourceId)
+        if (rel.sourceId !== resolvedSourceId) continue
         const owned = relationshipsBySource.get(resolvedSourceId)
         if (owned) {
           owned.push(rel)
@@ -2296,12 +2312,7 @@ app.get(
         }
       }
 
-      for (const [resolvedSourceId, sourceRels] of relationshipsBySource) {
-        const ownRels = sourceRels.filter(
-          (r) => r.sourceId === resolvedSourceId,
-        )
-        const effectiveRels = ownRels.length > 0 ? ownRels : sourceRels
-
+      for (const [resolvedSourceId, effectiveRels] of relationshipsBySource) {
         for (const rel of effectiveRels) {
           const resolvedTargetId = resolveItemId(rel.targetId)
 
@@ -2557,14 +2568,17 @@ app.get(
         }
       }
 
-      // Find root items: Parts with inDesignStructure=true and no parent
+      // Roots: Parts designated top-level for this design that nothing in it
+      // points at. Designation is explicit — creation in the design, a usage
+      // copy's root, "Add to Structure" — and nesting a part clears it, so a
+      // child whose line was removed is not a root by default: it is listed
+      // below with the other non-structure items, to be added on purpose.
       const roots: Array<BOMTreeNode> = []
       for (const item of allItems) {
-        // Root items are Parts that are marked as in-structure and have no parent BOM relationship
         if (
           !hasParent.has(item.id) &&
           item.itemType === 'Part' &&
-          item.inDesignStructure !== false
+          item.inDesignStructure === true
         ) {
           const node = buildNode(item.id, new Set())
           if (node) {
@@ -2586,18 +2600,14 @@ app.get(
       // Sort roots by item number
       roots.sort((a, b) => a.itemNumber.localeCompare(b.itemNumber))
 
-      // Find orphan items: Items not in the BOM structure
-      // - Parts with inDesignStructure=false (removed from structure)
-      // - Documents and Requirements (never in BOM structure)
-      // Note: Child parts (those with a parent) are NOT orphans - they're managed via their parent
+      // Non-structure items: everything in the design the tree above does not
+      // show — every non-Part item, and every Part that is neither a root
+      // nor a child of one. A nested part's designation is false as well, so
+      // the parent check is what keeps children out of this list.
       const orphans: Array<OrphanItem> = allItems
         .filter((item) => {
-          // Non-Part items are always orphans
           if (item.itemType !== 'Part') return true
-          // Parts with inDesignStructure=false are orphans
-          if (item.inDesignStructure === false) return true
-          // Parts that are children (have a parent) are NOT orphans
-          return false
+          return !hasParent.has(item.id) && item.inDesignStructure !== true
         })
         .map((item) => ({
           id: item.id,

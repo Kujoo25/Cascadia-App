@@ -11,7 +11,7 @@ import {
   changeOrderRisks,
   changeOrders,
   items,
-  workflowInstances,
+  lifecycleInstances,
 } from '../../db/schema'
 import { CrossDesignReferenceService } from '../../services/CrossDesignReferenceService'
 import { ItemService } from './ItemService'
@@ -154,7 +154,9 @@ export class ImpactAssessmentService {
 
     // Traverse the structure this change order is proposing, not the one it
     // started from: its branches' BOM edits are part of its own impact.
-    const branchIds = (await ChangeOrderService.getEcoDesigns(changeOrderId))
+    const branchIds = (
+      await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
+    )
       .map((d) => d.branchId)
       .filter((id): id is string => id !== null)
 
@@ -616,7 +618,7 @@ export class ImpactAssessmentService {
     if (impactedItemIds.length === 0) return []
 
     // Find other active change orders that affect any of the impacted items
-    // Join to workflowInstances and check completedAt IS NULL to exclude closed ECOs
+    // Join to lifecycleInstances and check completedAt IS NULL to exclude closed ECOs
     const relatedChanges = await db
       .selectDistinct({
         changeOrderId: changeOrderAffectedItems.changeOrderId,
@@ -625,14 +627,14 @@ export class ImpactAssessmentService {
       })
       .from(changeOrderAffectedItems)
       .innerJoin(items, eq(items.id, changeOrderAffectedItems.changeOrderId))
-      .innerJoin(workflowInstances, eq(workflowInstances.itemId, items.id))
+      .innerJoin(lifecycleInstances, eq(lifecycleInstances.itemId, items.id))
       .where(
         and(
           inArray(changeOrderAffectedItems.affectedItemId, impactedItemIds),
           currentChangeOrderId
             ? ne(changeOrderAffectedItems.changeOrderId, currentChangeOrderId)
             : undefined,
-          isNull(workflowInstances.completedAt),
+          isNull(lifecycleInstances.completedAt),
         ),
       )
       .limit(50)
@@ -657,12 +659,14 @@ export class ImpactAssessmentService {
     whereUsedMap: Map<string, Array<WhereUsedNode>>,
   ): Promise<Array<CrossDesignImpact>> {
     // Collect all design IDs that belong to the ECO's own scope
-    const ecoDesignIds = new Set(
+    const changeOrderDesignIds = new Set(
       affectedItems
         .map((a) => a.affectedItemDetails?.designId ?? a.designId)
         .filter(Boolean),
     )
-    const ecoDesignIdArr = Array.from(ecoDesignIds) as Array<string>
+    const changeOrderDesignIdArr = Array.from(
+      changeOrderDesignIds,
+    ) as Array<string>
 
     // Map: external designId -> { designCode, designName, parts by compositeKey }
     // compositeKey = `${itemId}:${relationshipType}` to allow same item under multiple types
@@ -711,7 +715,7 @@ export class ImpactAssessmentService {
 
       for (const node of whereUsedNodes) {
         if (!node.designId || !node.designCode) continue
-        if (ecoDesignIds.has(node.designId)) continue
+        if (changeOrderDesignIds.has(node.designId)) continue
 
         const details = affected.affectedItemDetails
         addPart(
@@ -762,7 +766,8 @@ export class ImpactAssessmentService {
         )
 
       for (const usage of usages) {
-        if (!usage.designId || ecoDesignIds.has(usage.designId)) continue
+        if (!usage.designId || changeOrderDesignIds.has(usage.designId))
+          continue
 
         // Look up the affected definition to get its changeAction
         const affected = affectedById.get(usage.usageOf!)
@@ -820,7 +825,7 @@ export class ImpactAssessmentService {
         const defId = affected.affectedItemDetails!.usageOf as string
         const definition = definitionById.get(defId)
         if (!definition || !definition.designId) continue
-        if (ecoDesignIds.has(definition.designId)) continue
+        if (changeOrderDesignIds.has(definition.designId)) continue
 
         const designInfo = await this.getDesignInfo(definition.designId)
         if (!designInfo) continue
@@ -877,7 +882,8 @@ export class ImpactAssessmentService {
         )
 
         for (const cousin of cousins) {
-          if (!cousin.designId || ecoDesignIds.has(cousin.designId)) continue
+          if (!cousin.designId || changeOrderDesignIds.has(cousin.designId))
+            continue
           // Exclude the affected item itself
           if (affectedItemIds.has(cousin.id)) continue
 
@@ -912,10 +918,10 @@ export class ImpactAssessmentService {
       .map((a) => a.affectedItemId as string)
       .filter(Boolean)
 
-    if (allAffectedItemIds.length > 0 && ecoDesignIdArr.length > 0) {
+    if (allAffectedItemIds.length > 0 && changeOrderDesignIdArr.length > 0) {
       const crossRefs = await CrossDesignReferenceService.getReferencesToItems(
         allAffectedItemIds,
-        ecoDesignIdArr,
+        changeOrderDesignIdArr,
       )
 
       for (const ref of crossRefs) {

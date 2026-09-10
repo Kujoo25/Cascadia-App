@@ -4,7 +4,7 @@
 import { Link } from '@tanstack/react-router'
 import { useCallback } from 'react'
 import { CheckCircle, Edit2, Trash2, XCircle } from 'lucide-react'
-import type { WorkflowDefinition } from '@/lib/workflows/types'
+import type { LifecycleDefinition } from '@/lib/lifecycles/types'
 import type { DataGridColumn, Row } from '@/components/ui'
 import { Badge, Button, DataGrid } from '@/components/ui'
 import {
@@ -20,12 +20,12 @@ import {
 } from '@/components/ui/ContextMenu'
 
 interface LifecycleTableProps {
-  lifecycles: Array<WorkflowDefinition>
-  onDelete?: (lifecycle: WorkflowDefinition) => void
+  lifecycles: Array<LifecycleDefinition>
+  onDelete?: (lifecycle: LifecycleDefinition) => void
 }
 
 export function LifecycleTable({ lifecycles, onDelete }: LifecycleTableProps) {
-  const columns: Array<DataGridColumn<WorkflowDefinition>> = [
+  const columns: Array<DataGridColumn<LifecycleDefinition>> = [
     {
       id: 'name',
       header: 'Name',
@@ -112,7 +112,7 @@ export function LifecycleTable({ lifecycles, onDelete }: LifecycleTableProps) {
     },
   ]
 
-  const renderRowActions = (row: Row<WorkflowDefinition>) => {
+  const renderRowActions = (row: Row<LifecycleDefinition>) => {
     const lifecycle = row.original
     const hasActions = lifecycle.id || onDelete
     if (!hasActions) return null
@@ -120,7 +120,7 @@ export function LifecycleTable({ lifecycles, onDelete }: LifecycleTableProps) {
     return (
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button size="icon" variant="ghost" className="h-8 w-8">
+          <Button size="icon" variant="ghost">
             <Edit2 className="h-4 w-4" />
             <span className="sr-only">Open menu</span>
           </Button>
@@ -152,7 +152,7 @@ export function LifecycleTable({ lifecycles, onDelete }: LifecycleTableProps) {
   }
 
   const renderContextMenuItems = useCallback(
-    (row: Row<WorkflowDefinition>) => {
+    (row: Row<LifecycleDefinition>) => {
       const lifecycle = row.original
       if (!onDelete) return null
 
@@ -172,7 +172,7 @@ export function LifecycleTable({ lifecycles, onDelete }: LifecycleTableProps) {
     [onDelete],
   )
 
-  const getRowUrl = useCallback((row: WorkflowDefinition) => {
+  const getRowUrl = useCallback((row: LifecycleDefinition) => {
     return row.id ? `/lifecycles/${row.id}` : undefined
   }, [])
 

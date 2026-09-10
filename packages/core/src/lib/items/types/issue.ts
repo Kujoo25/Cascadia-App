@@ -32,10 +32,10 @@ export interface Issue extends BaseItem {
   priority?: IssuePriority
   category?: IssueCategory
   reportedBy?: string
-  reportedDate?: Date | string
+  reportedDate?: Date | string | null
   assignedTo?: string
   resolution?: string
-  resolvedDate?: Date | string
+  resolvedDate?: Date | string | null
   rootCause?: string
   /** Computed from issue_affected_items junction table */
   affectedItemIds?: Array<string>
@@ -52,10 +52,10 @@ export const issueSchema = baseItemSchema.extend({
   priority: z.enum(issuePriorities).optional().default('Medium'),
   category: z.enum(issueCategories).optional(),
   reportedBy: z.string().uuid().optional(),
-  reportedDate: z.union([z.string(), z.date()]).optional(),
+  reportedDate: z.union([z.string(), z.date()]).nullable().optional(),
   assignedTo: z.string().uuid().optional(),
   resolution: z.string().max(10000).optional(),
-  resolvedDate: z.union([z.string(), z.date()]).optional(),
+  resolvedDate: z.union([z.string(), z.date()]).nullable().optional(),
   rootCause: z.string().max(10000).optional(),
   affectedItemIds: z.array(z.string().uuid()).optional(),
   programId: z.string().uuid().optional(),

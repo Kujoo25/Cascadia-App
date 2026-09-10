@@ -93,7 +93,7 @@ export async function requireDesignManageAuthority(
  * because how many items or designs sit behind the boundary is itself a
  * disclosure — it sizes a program the caller cannot open.
  */
-export async function resolveEcoDesignScope(
+export async function resolveChangeOrderDesignScope(
   userId: string,
   changeOrderId: string,
 ): Promise<{
@@ -143,8 +143,11 @@ export async function resolveEcoDesignScope(
  * it. Testing `reachable` alone would have locked administrators out of
  * exactly the rows only they can fix.
  */
-export async function requireEcoAccess(userId: string, changeOrderId: string) {
-  const scope = await resolveEcoDesignScope(userId, changeOrderId)
+export async function requireChangeOrderAccess(
+  userId: string,
+  changeOrderId: string,
+) {
+  const scope = await resolveChangeOrderDesignScope(userId, changeOrderId)
   if (!scope.unrestricted && scope.reachable.length === 0) {
     throw new PermissionDeniedError('change order', 'read')
   }
@@ -188,7 +191,7 @@ export async function requireBranchAccess(
  * `items.designId` is NULL, so the `item.designId` arm below passes vacuously
  * and gates nothing at all.
  *
- *  - ChangeOrder → `requireEcoAccess`. An ECO's designs hang off
+ *  - ChangeOrder → `requireChangeOrderAccess`. An ECO's designs hang off
  *    `change_order_designs`.
  *  - Issue → `requireIssueAccess`, for that reason and one more: an issue may
  *    carry a design, a program, a set of design links, or none of them, and
@@ -268,7 +271,7 @@ export async function requireItemAccess(
   }
 
   if (item.itemType === 'ChangeOrder') {
-    await requireEcoAccess(userId, item.id)
+    await requireChangeOrderAccess(userId, item.id)
     return item
   }
 
@@ -344,7 +347,7 @@ export async function requireItemsAccess(
  *  - `issues.program_id`, from the CSV import wizard or the create-time
  *    derivation over the chosen designs
  *  - any `issue_designs` link, the designs the create form collects — one
- *    reachable link is enough, the rule `requireEcoAccess` applies to an ECO
+ *    reachable link is enough, the rule `requireChangeOrderAccess` applies to an ECO
  *
  * An issue carrying none of them is reachable by cross-program authority
  * alone, the rule `requireWorkOrderAccess` applies to a program-less order: a
@@ -399,7 +402,7 @@ export async function requireIssueAccess(
  * scopes on, so this is that same rule for one row.
  *
  * A program-less work order is reachable by cross-program authority alone —
- * the rule `requireEcoAccess` applies to a link-less ECO, for the same reason.
+ * the rule `requireChangeOrderAccess` applies to a link-less ECO, for the same reason.
  * A row with no program is a data gap, not a row that sits outside every
  * boundary: this is the only instance-level gate the work-order routes have,
  * and it covers the traveler, sign-off, material consumption and production,

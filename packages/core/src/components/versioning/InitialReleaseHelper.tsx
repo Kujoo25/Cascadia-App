@@ -25,7 +25,7 @@ interface InitialReleaseHelperProps {
   /**
    * Called when user clicks to create initial release ECO
    */
-  onCreateEco?: () => void
+  onCreateChangeOrder?: () => void
   className?: string
 }
 
@@ -36,7 +36,7 @@ interface InitialReleaseHelperProps {
 export function InitialReleaseHelper({
   designId,
   status: initialStatus,
-  onCreateEco,
+  onCreateChangeOrder: onCreateChangeOrder,
   className,
 }: InitialReleaseHelperProps) {
   // A caller that already holds the status passes it in rather than paying for
@@ -97,8 +97,8 @@ export function InitialReleaseHelper({
           </div>
 
           <div className="flex items-center gap-2">
-            {onCreateEco ? (
-              <Button onClick={onCreateEco} variant="default">
+            {onCreateChangeOrder ? (
+              <Button onClick={onCreateChangeOrder} variant="default">
                 <Rocket className="h-4 w-4 mr-2" />
                 Create Initial Release ECO
               </Button>

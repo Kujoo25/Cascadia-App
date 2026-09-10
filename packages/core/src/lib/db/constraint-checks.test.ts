@@ -39,13 +39,13 @@ import {
   designs,
   instructionExecutions,
   items,
+  lifecycleDefinitions,
+  lifecycleInstanceApprovers,
+  lifecycleInstances,
+  lifecycleStateApprovers,
   programs,
   workOrderInstructions,
   workOrders,
-  workflowDefinitions,
-  workflowInstanceApprovers,
-  workflowInstances,
-  workflowStateApprovers,
 } from '@/lib/db/schema'
 import { asPostgresError, constraintOf } from '@/lib/errors/pg'
 import { takeFirst } from '@/lib/db/take-first'
@@ -62,7 +62,7 @@ describe('database CHECK constraints (DBI-4)', () => {
   let user: TestUser
   let unique: string
   let designId: string
-  let ecoItemId: string
+  let changeOrderItemId: string
 
   beforeAll(async () => {
     await testDb.setup()
@@ -96,7 +96,7 @@ describe('database CHECK constraints (DBI-4)', () => {
     )
     designId = design.id
 
-    const eco = takeFirst(
+    const changeOrder = takeFirst(
       await testDb.db
         .insert(items)
         .values({
@@ -112,7 +112,7 @@ describe('database CHECK constraints (DBI-4)', () => {
         })
         .returning(),
     )
-    ecoItemId = eco.id
+    changeOrderItemId = changeOrder.id
   })
 
   afterEach(async () => {
@@ -210,7 +210,7 @@ describe('database CHECK constraints (DBI-4)', () => {
   describe('change_order_designs merge status', () => {
     function codRow(mergeStatus: string | null) {
       return {
-        changeOrderId: ecoItemId,
+        changeOrderId: changeOrderItemId,
         designId,
         mergeStatus,
       }
@@ -395,7 +395,7 @@ describe('database CHECK constraints (DBI-4)', () => {
    *
    * Written directly rather than through the service, because the point is
    * what the database refuses; the race the constraint closes is in
-   * `WorkflowApprovalService.race.test.ts`.
+   * `ApprovalService.race.test.ts`.
    */
   describe('workflow approver uniqueness', () => {
     let definitionId: string
@@ -404,11 +404,12 @@ describe('database CHECK constraints (DBI-4)', () => {
     beforeEach(async () => {
       const definition = takeFirst(
         await testDb.db
-          .insert(workflowDefinitions)
+          .insert(lifecycleDefinitions)
           .values({
             name: `Approver constraints ${unique}`,
             version: 1,
             workflowType: 'strict',
+            lifecycleType: 'Driving',
             definition: { states: [], transitions: [] },
           })
           .returning(),
@@ -416,7 +417,7 @@ describe('database CHECK constraints (DBI-4)', () => {
       definitionId = definition.id
       const instance = takeFirst(
         await testDb.db
-          .insert(workflowInstances)
+          .insert(lifecycleInstances)
           .values({ workflowDefinitionId: definition.id })
           .returning(),
       )
@@ -465,17 +466,18 @@ describe('database CHECK constraints (DBI-4)', () => {
       const other = await insertTestUser(testDb.db)
       const second = takeFirst(
         await testDb.db
-          .insert(workflowDefinitions)
+          .insert(lifecycleDefinitions)
           .values({
             name: `Approver constraints II ${unique}`,
             version: 1,
             workflowType: 'strict',
+            lifecycleType: 'Driving',
             definition: { states: [], transitions: [] },
           })
           .returning(),
       )
 
-      await testDb.db.insert(workflowStateApprovers).values([
+      await testDb.db.insert(lifecycleStateApprovers).values([
         stateRow(),
         stateRow({ stateId: 'Approved' }),
         // Same uuid, recorded as a role rather than as a person.
@@ -485,16 +487,16 @@ describe('database CHECK constraints (DBI-4)', () => {
       ])
 
       const rows = await testDb.db
-        .select({ id: workflowStateApprovers.id })
-        .from(workflowStateApprovers)
+        .select({ id: lifecycleStateApprovers.id })
+        .from(lifecycleStateApprovers)
       expect(rows).toHaveLength(5)
     })
 
     it('rejects a second definition-level row for the same approver', async () => {
-      await testDb.db.insert(workflowStateApprovers).values(stateRow())
+      await testDb.db.insert(lifecycleStateApprovers).values(stateRow())
 
       const pgError = await insertExpectingUnique(() =>
-        testDb.db.insert(workflowStateApprovers).values(stateRow()),
+        testDb.db.insert(lifecycleStateApprovers).values(stateRow()),
       )
       expect(constraintOf(pgError)).toBe('uq_wf_state_approvers')
     })
@@ -503,12 +505,12 @@ describe('database CHECK constraints (DBI-4)', () => {
       // is_required is outside the key on purpose: two rows differing only in
       // that flag are one approver to `mergeApproverLists`, which ORs them.
       await testDb.db
-        .insert(workflowStateApprovers)
+        .insert(lifecycleStateApprovers)
         .values(stateRow({ isRequired: true }))
 
       const pgError = await insertExpectingUnique(() =>
         testDb.db
-          .insert(workflowStateApprovers)
+          .insert(lifecycleStateApprovers)
           .values(stateRow({ isRequired: false })),
       )
       expect(constraintOf(pgError)).toBe('uq_wf_state_approvers')
@@ -518,13 +520,13 @@ describe('database CHECK constraints (DBI-4)', () => {
       const other = await insertTestUser(testDb.db)
       const secondInstance = takeFirst(
         await testDb.db
-          .insert(workflowInstances)
+          .insert(lifecycleInstances)
           .values({ workflowDefinitionId: definitionId })
           .returning(),
       )
 
       await testDb.db
-        .insert(workflowInstanceApprovers)
+        .insert(lifecycleInstanceApprovers)
         .values([
           instanceRow(),
           instanceRow({ stateId: 'Approved' }),
@@ -534,16 +536,16 @@ describe('database CHECK constraints (DBI-4)', () => {
         ])
 
       const rows = await testDb.db
-        .select({ id: workflowInstanceApprovers.id })
-        .from(workflowInstanceApprovers)
+        .select({ id: lifecycleInstanceApprovers.id })
+        .from(lifecycleInstanceApprovers)
       expect(rows).toHaveLength(5)
     })
 
     it('rejects a second instance-level row for the same approver', async () => {
-      await testDb.db.insert(workflowInstanceApprovers).values(instanceRow())
+      await testDb.db.insert(lifecycleInstanceApprovers).values(instanceRow())
 
       const pgError = await insertExpectingUnique(() =>
-        testDb.db.insert(workflowInstanceApprovers).values(instanceRow()),
+        testDb.db.insert(lifecycleInstanceApprovers).values(instanceRow()),
       )
       expect(constraintOf(pgError)).toBe('uq_wf_instance_approvers')
     })

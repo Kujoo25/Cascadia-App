@@ -142,9 +142,29 @@ describe('System-section access', () => {
       ).resolves.toBe(false)
     })
 
+    it('reads the retired workflows resource name as lifecycles', async () => {
+      // A role row from before migration 0007, or written by an older build
+      const user = await insertTestUser(testDb.db)
+      const role = await insertTestRole(
+        testDb.db,
+        createCustomTestRole(
+          `Legacy workflows (system-access test ${crypto.randomUUID()})`,
+          { workflows: ['read'] },
+        ),
+      )
+      await assignRoleToUser(testDb.db, user.id, role.id)
+
+      await expect(
+        permissionService.canUser(user.id, 'read', 'lifecycles'),
+      ).resolves.toBe(true)
+      const aggregated = await permissionService.getUserPermissions(user.id)
+      expect(aggregated.lifecycles).toEqual(['read'])
+      expect('workflows' in aggregated).toBe(false)
+    })
+
     it('leaves the reads the rest of the app depends on alone', async () => {
       // The System pages were not gated by tightening users:read or
-      // workflows:read — approver pickers, program team management and item
+      // lifecycles:read — approver pickers, program team management and item
       // state resolution all read those, from every role. Tightening them
       // instead of `system` would have broken non-System pages.
       const userId = await userWithRole('User')
@@ -153,7 +173,7 @@ describe('System-section access', () => {
         permissionService.canUser(userId, 'read', 'users'),
       ).resolves.toBe(true)
       await expect(
-        permissionService.canUser(userId, 'read', 'workflows'),
+        permissionService.canUser(userId, 'read', 'lifecycles'),
       ).resolves.toBe(true)
       await expect(
         permissionService.canUser(userId, 'read', 'roles'),

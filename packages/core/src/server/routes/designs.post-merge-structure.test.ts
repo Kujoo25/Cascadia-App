@@ -53,8 +53,8 @@ import {
   branchItems,
   itemRelationships,
   items,
-  workflowDefinitions,
-  workflowInstances,
+  lifecycleDefinitions,
+  lifecycleInstances,
 } from '@/lib/db/schema'
 
 // Import to register item types
@@ -98,7 +98,7 @@ describe('design structure and graph after an ECO merge', () => {
     await seedStandardPartLifecycle(testDb.db)
 
     await testDb.db
-      .insert(workflowDefinitions)
+      .insert(lifecycleDefinitions)
       .values({
         id: STRUCTURE_TEST_WORKFLOW_ID,
         name: 'Test ECO Workflow - PostMergeStructure',
@@ -135,7 +135,6 @@ describe('design structure and graph after an ECO merge', () => {
               toStateId: 'Released',
             },
           ],
-          definitionType: 'workflow',
           applicableItemTypes: ['ChangeOrder'],
         },
         isActive: true,
@@ -196,7 +195,7 @@ describe('design structure and graph after an ECO merge', () => {
   }
 
   async function createChangeOrder() {
-    const eco = await ItemService.create(
+    const changeOrder = await ItemService.create(
       'ChangeOrder',
       {
         revision: '-',
@@ -207,30 +206,31 @@ describe('design structure and graph after an ECO merge', () => {
       } as any,
       user.id,
     )
-    await testDb.db.insert(workflowInstances).values({
+    await testDb.db.insert(lifecycleInstances).values({
       workflowDefinitionId: STRUCTURE_TEST_WORKFLOW_ID,
-      itemId: eco.id,
+      itemId: changeOrder.id,
       currentState: 'Draft',
     })
-    return eco as { id: string }
+    return changeOrder as { id: string }
   }
 
-  async function approveEco(ecoId: string) {
-    const ecoDesigns = await ChangeOrderService.getEcoDesigns(ecoId)
-    for (const ecoDesign of ecoDesigns) {
-      if (!ecoDesign.branchId) continue
+  async function approveChangeOrder(changeOrderId: string) {
+    const changeOrderDesigns =
+      await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
+    for (const changeOrderDesign of changeOrderDesigns) {
+      if (!changeOrderDesign.branchId) continue
       const branchRows = await testDb.db
         .select()
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoDesign.branchId),
+            eq(branchItems.branchId, changeOrderDesign.branchId),
             isNotNull(branchItems.changeType),
           ),
         )
       for (const row of branchRows) {
         await ChangeOrderService.registerBranchChange(
-          ecoDesign.branchId,
+          changeOrderDesign.branchId,
           row.itemMasterId,
           row.currentItemId,
           user.id,
@@ -240,11 +240,11 @@ describe('design structure and graph after an ECO merge', () => {
     await testDb.db
       .update(items)
       .set({ state: 'Approved' })
-      .where(eq(items.id, ecoId))
+      .where(eq(items.id, changeOrderId))
     await testDb.db
-      .update(workflowInstances)
+      .update(lifecycleInstances)
       .set({ currentState: 'Approved' })
-      .where(eq(workflowInstances.itemId, ecoId))
+      .where(eq(lifecycleInstances.itemId, changeOrderId))
   }
 
   /**
@@ -252,7 +252,7 @@ describe('design structure and graph after an ECO merge', () => {
    * Returns the child's released revision, which is a different `items` row
    * from the one the assembly's BOM line still names.
    */
-  async function releaseChildThroughEco() {
+  async function releaseChildThroughChangeOrder() {
     const assembly = await createPart('ASSY')
     const child = await createPart('CHILD')
 
@@ -275,14 +275,14 @@ describe('design structure and graph after an ECO merge', () => {
       createdBy: user.id,
     })
 
-    const eco = await createChangeOrder()
+    const changeOrder = await createChangeOrder()
     await ChangeOrderService.addAffectedItem(
-      eco.id,
+      changeOrder.id,
       { affectedItemId: child.id, changeAction: 'revise' },
       user.id,
     )
-    await approveEco(eco.id)
-    await ChangeOrderMergeService.merge(eco.id, user.id)
+    await approveChangeOrder(changeOrder.id)
+    await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
     const releasedChild = await testDb.db
       .select()
@@ -311,7 +311,7 @@ describe('design structure and graph after an ECO merge', () => {
   }
 
   it('keeps every item on main in the structure, not just the released one', async () => {
-    const { assembly, releasedChild } = await releaseChildThroughEco()
+    const { assembly, releasedChild } = await releaseChildThroughChangeOrder()
 
     const { roots, orphans } = await fetchStructure()
     const present = new Set([
@@ -327,7 +327,8 @@ describe('design structure and graph after an ECO merge', () => {
   })
 
   it('re-points the untouched parent BOM line onto the released revision', async () => {
-    const { assembly, child, releasedChild } = await releaseChildThroughEco()
+    const { assembly, child, releasedChild } =
+      await releaseChildThroughChangeOrder()
 
     const { roots } = await fetchStructure()
 
@@ -341,7 +342,7 @@ describe('design structure and graph after an ECO merge', () => {
   })
 
   it('does not surface the released child as a second root', async () => {
-    const { assembly, releasedChild } = await releaseChildThroughEco()
+    const { assembly, releasedChild } = await releaseChildThroughChangeOrder()
 
     const { roots } = await fetchStructure()
     const rootIds = roots.map((r) => r.itemId)
@@ -351,7 +352,7 @@ describe('design structure and graph after an ECO merge', () => {
   })
 
   it('keeps the released child nested in the design scope graph', async () => {
-    const { assembly, releasedChild } = await releaseChildThroughEco()
+    const { assembly, releasedChild } = await releaseChildThroughChangeOrder()
 
     const response = await app.request(
       `/api/v1/designs/${designId}/graph?direction=down`,
@@ -368,7 +369,7 @@ describe('design structure and graph after an ECO merge', () => {
   })
 
   it('reports the released revision as used by its parent', async () => {
-    const { assembly, releasedChild } = await releaseChildThroughEco()
+    const { assembly, releasedChild } = await releaseChildThroughChangeOrder()
 
     const whereUsed = await ImpactAssessmentService.findWhereUsed(
       releasedChild.id,
@@ -378,7 +379,7 @@ describe('design structure and graph after an ECO merge', () => {
   })
 
   it('still finds the parent assemblies of a released revision', async () => {
-    const { assembly, releasedChild } = await releaseChildThroughEco()
+    const { assembly, releasedChild } = await releaseChildThroughChangeOrder()
 
     // This is what the "which parents do you want in this ECO?" prompt reads.
     // Reporting nothing here does not fail loudly — it silently leaves the
@@ -395,7 +396,7 @@ describe('design structure and graph after an ECO merge', () => {
     // top → assembly → child, with only the child revised. The chain has to
     // cross the superseded link at depth 1 to reach `top` at depth 2 at all.
     const top = await createPart('TOP')
-    const { assembly, releasedChild } = await releaseChildThroughEco()
+    const { assembly, releasedChild } = await releaseChildThroughChangeOrder()
 
     await testDb.db.insert(itemRelationships).values({
       sourceId: top.id,
@@ -415,7 +416,7 @@ describe('design structure and graph after an ECO merge', () => {
   })
 
   it('reaches the parent when expanding a released revision upstream', async () => {
-    const { assembly, releasedChild } = await releaseChildThroughEco()
+    const { assembly, releasedChild } = await releaseChildThroughChangeOrder()
 
     // The per-node expansion the design scope graph drills into. Matching the
     // rendered row alone, a revision looked unused the moment it was released.
@@ -435,7 +436,8 @@ describe('design structure and graph after an ECO merge', () => {
   })
 
   it('does not report the superseded row as a separate upstream node', async () => {
-    const { assembly, child, releasedChild } = await releaseChildThroughEco()
+    const { assembly, child, releasedChild } =
+      await releaseChildThroughChangeOrder()
 
     const response = await app.request(
       `/api/v1/items/${releasedChild.id}/graph?direction=incoming&depth=2`,
@@ -452,7 +454,8 @@ describe('design structure and graph after an ECO merge', () => {
   })
 
   it("reads the parent's BOM line back at the released revision", async () => {
-    const { assembly, child, releasedChild } = await releaseChildThroughEco()
+    const { assembly, child, releasedChild } =
+      await releaseChildThroughChangeOrder()
 
     const bom = await ItemService.getRelationshipsWithDetails(
       assembly.id,

@@ -31,14 +31,24 @@ export interface ProgramMember {
   user: { id: string; name: string | null; email: string }
 }
 
+/**
+ * The body `POST`/`PUT /api/v1/programs` accepts, spelled from the client's
+ * side. It is hand-written rather than inferred from `programCreateSchema`
+ * because that schema's inferred type describes its *output* — `Date` objects,
+ * which no JSON request can carry — while a caller sends strings.
+ *
+ * The date fields therefore admit `null` as well as a string: that is how a
+ * cleared date is spelled on the wire, and what the server's `clearableDate`
+ * normalizes. Keep the two in step — nothing checks that they agree.
+ */
 export type CreateProgramInput = {
   name: string
   code: string
   description?: string
   contractNumber?: string
   customer?: string
-  startDate?: Date | string
-  targetEndDate?: Date | string
+  startDate?: Date | string | null
+  targetEndDate?: Date | string | null
   status?: 'Active' | 'On Hold' | 'Completed' | 'Cancelled'
   attributes?: Record<string, unknown>
 }

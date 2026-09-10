@@ -20,7 +20,7 @@ import {
   useInvalidateResources,
 } from '@/lib/query'
 import { useDebouncedValue } from '@/lib/hooks/useDebouncedValue'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import {
   Badge,
   Button,
@@ -36,11 +36,6 @@ interface VerifyingTest extends TestCase {
   executionStatus?: 'NotRun' | 'Passed' | 'Failed' | 'Blocked'
 }
 
-/** The server's reason if it gave one, else a generic fallback. */
-function errorMessage(error: unknown, fallback: string): string {
-  return error instanceof Error && error.message ? error.message : fallback
-}
-
 interface RequirementVerificationPanelProps {
   requirementId: string
   designId?: string
@@ -52,7 +47,7 @@ export function RequirementVerificationPanel({
   designId,
   isEditable = false,
 }: RequirementVerificationPanelProps) {
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [searchQuery, setSearchQuery] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [linking, setLinking] = useState<string | null>(null)
@@ -97,14 +92,7 @@ export function RequirementVerificationPanel({
       // A released requirement is not editable outside a change order, so
       // this legitimately refuses. Silently dropping it left the user
       // clicking + with nothing happening and no reason given.
-      alert({
-        title: 'Could not link test case',
-        description: errorMessage(
-          error,
-          'The verification link could not be recorded.',
-        ),
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Could not link test case' })
     } finally {
       setLinking(null)
     }
@@ -119,14 +107,7 @@ export function RequirementVerificationPanel({
       )
       await invalidate('requirements')
     } catch (error) {
-      alert({
-        title: 'Could not remove test case',
-        description: errorMessage(
-          error,
-          'The verification link could not be removed.',
-        ),
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Could not remove test case' })
     } finally {
       setUnlinking(null)
     }

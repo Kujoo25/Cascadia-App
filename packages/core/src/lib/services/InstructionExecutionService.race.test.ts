@@ -40,16 +40,16 @@ import { ItemService } from '@/lib/items/services/ItemService'
 import { WorkOrderService } from '@/lib/services/WorkOrderService'
 import { WorkOrderInstructionService } from '@/lib/services/WorkOrderInstructionService'
 import { InstructionExecutionService } from '@/lib/services/InstructionExecutionService'
-import { LifecycleService } from '@/lib/services/LifecycleService'
 import { ValidationError } from '@/lib/errors'
 import { seedWorkOrderLifecycle } from '@/__tests__/fixtures/lifecycles'
 import {
   instructionExecutions,
   items,
+  lifecycleHistory,
+  lifecycleInstances,
   workInstructionSteps,
-  workflowHistory,
-  workflowInstances,
 } from '@/lib/db/schema'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
 
 // Import to register item types
 import '@/lib/items/registerItemTypes.server'
@@ -142,14 +142,14 @@ describe('InstructionExecutionService.start — one open run per unit', () => {
   async function activeInstances(workOrderId: string) {
     return concurrent.db
       .select({
-        id: workflowInstances.id,
-        state: workflowInstances.currentState,
+        id: lifecycleInstances.id,
+        state: lifecycleInstances.currentState,
       })
-      .from(workflowInstances)
+      .from(lifecycleInstances)
       .where(
         and(
-          eq(workflowInstances.itemId, workOrderId),
-          isNull(workflowInstances.completedAt),
+          eq(lifecycleInstances.itemId, workOrderId),
+          isNull(lifecycleInstances.completedAt),
         ),
       )
   }
@@ -157,16 +157,16 @@ describe('InstructionExecutionService.start — one open run per unit', () => {
   /** `state_adopted` rows written against the order's instances. */
   async function adoptions(workOrderId: string) {
     return concurrent.db
-      .select({ id: workflowHistory.id })
-      .from(workflowHistory)
+      .select({ id: lifecycleHistory.id })
+      .from(lifecycleHistory)
       .innerJoin(
-        workflowInstances,
-        eq(workflowInstances.id, workflowHistory.instanceId),
+        lifecycleInstances,
+        eq(lifecycleInstances.id, lifecycleHistory.instanceId),
       )
       .where(
         and(
-          eq(workflowInstances.itemId, workOrderId),
-          eq(workflowHistory.action, 'state_adopted'),
+          eq(lifecycleInstances.itemId, workOrderId),
+          eq(lifecycleHistory.action, 'state_adopted'),
         ),
       )
   }
@@ -220,7 +220,7 @@ describe('InstructionExecutionService.start — one open run per unit', () => {
 
     const results = await Promise.all(
       Array.from({ length: 4 }, () =>
-        LifecycleService.transitionFreeItem(
+        LifecycleInstanceService.transitionFreeItem(
           workOrderId,
           'In Progress',
           user.id,
@@ -246,7 +246,11 @@ describe('InstructionExecutionService.start — one open run per unit', () => {
     const { user, workOrderId } = await travelerLine('unreachable-target')
 
     await expect(
-      LifecycleService.transitionFreeItem(workOrderId, 'Complete', user.id),
+      LifecycleInstanceService.transitionFreeItem(
+        workOrderId,
+        'Complete',
+        user.id,
+      ),
     ).rejects.toBeInstanceOf(ValidationError)
     expect(await itemState(workOrderId)).toBe('Not Started')
   })

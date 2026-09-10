@@ -1,20 +1,20 @@
 # ECO-as-Branch: Change Management Architecture
 
-The signature feature of Cascadia PLM is "ECO-as-Branch" -- each Engineering Change Order gets its own isolated data branch, inspired by Git's branching model but applied to database records. This document explains the data model, the full lifecycle, and the implementation details.
+The signature feature of Cascadia PLM is "ECO-as-Branch" -- each change order gets its own isolated data branch, inspired by Git's branching model but applied to database records. This document explains the data model, the full lifecycle, and the implementation details.
 
 ---
 
 ## The Git Analogy
 
-| Git Concept   | Cascadia Concept       | Purpose                                             |
-| ------------- | ---------------------- | --------------------------------------------------- |
-| Repository    | Design                 | Container for versioned engineering data            |
-| Branch        | Branch (`eco/ECO-001`) | Isolated workspace for a change order               |
-| `main` branch | `main` branch          | The released, canonical state of the design         |
-| Commit        | Commit                 | Immutable snapshot recording what changed           |
-| Merge         | ECO Release            | Merge branch changes back to main, assign revisions |
-| Working copy  | branchItem + checkout  | Item checked out for editing on a branch            |
-| Conflict      | Cross-ECO conflict     | Two ECOs modify the same item concurrently          |
+| Git Concept   | Cascadia Concept            | Purpose                                             |
+| ------------- | --------------------------- | --------------------------------------------------- |
+| Repository    | Design                      | Container for versioned engineering data            |
+| Branch        | Branch (`eco/ECO-001`)      | Isolated workspace for a change order               |
+| `main` branch | `main` branch               | The released, canonical state of the design         |
+| Commit        | Commit                      | Immutable snapshot recording what changed           |
+| Merge         | Change-Order Release        | Merge branch changes back to main, assign revisions |
+| Working copy  | branchItem + checkout       | Item checked out for editing on a branch            |
+| Conflict      | Cross-change-order conflict | Two change orders modify the same item concurrently |
 
 The analogy is structural, not metaphorical. Cascadia implements actual branches, commits with parent pointers, merge commits with dual parents, and branch isolation via overlay records.
 
@@ -34,7 +34,7 @@ Design "UAV-T1" (designType = 'Engineering')
 
 ### branches
 
-Each design has a `main` branch. ECO branches are created when affected items are added.
+Each design has a `main` branch. change-order branches are created when affected items are added.
 
 ```sql
 -- Main branch
@@ -49,17 +49,17 @@ Each design has a `main` branch. ECO branches are created when affected items ar
 
 Key fields:
 
-| Field               | Purpose                                                                    |
-| ------------------- | -------------------------------------------------------------------------- |
-| `headCommitId`      | The tip of the branch -- advances with each commit                         |
-| `baseCommitId`      | The main branch commit this ECO was forked from (fixed at creation)        |
-| `changeOrderItemId` | Links to the ChangeOrder item that owns this branch                        |
-| `isLocked`          | Manual freeze (`PATCH /branches/:id`) -- blocks commits. Not set by review |
-| `isArchived`        | Set to `true` after merge -- branch becomes read-only for audit            |
+| Field               | Purpose                                                                      |
+| ------------------- | ---------------------------------------------------------------------------- |
+| `headCommitId`      | The tip of the branch -- advances with each commit                           |
+| `baseCommitId`      | The main branch commit this change order was forked from (fixed at creation) |
+| `changeOrderItemId` | Links to the ChangeOrder item that owns this branch                          |
+| `isLocked`          | Manual freeze (`PATCH /branches/:id`) -- blocks commits. Not set by review   |
+| `isArchived`        | Set to `true` after merge -- branch becomes read-only for audit              |
 
 ### branchItems
 
-The key table that makes branch isolation work. It stores **per-branch overrides** of items. Items not modified on the ECO branch have no `branchItem` record -- they are inherited from main by fallback.
+The key table that makes branch isolation work. It stores **per-branch overrides** of items. Items not modified on the change-order branch have no `branchItem` record -- they are inherited from main by fallback.
 
 ```sql
 -- Item P-1001 modified on ECO branch
@@ -106,22 +106,22 @@ These provide audit trail:
 
 ---
 
-## The Full ECO Lifecycle
+## The Full Change-Order Lifecycle
 
-### Phase 1: ECO Creation (Branch Creation)
+### Phase 1: Change-Order Creation (Branch Creation)
 
 ```
 Service: ChangeOrderService.addAffectedItem()
-         → BranchService.getOrCreateEcoBranch()
+         → BranchService.getOrCreateChangeOrderBranch()
 ```
 
 When a ChangeOrder is created and affected items are added:
 
-1. The ECO item is created in the `items` table with `state = 'Draft'`
-2. For each affected item with a design, `BranchService.getOrCreateEcoBranch()`:
+1. The change-order item is created in the `items` table with `state = 'Draft'`
+2. For each affected item with a design, `BranchService.getOrCreateChangeOrderBranch()`:
    - Creates an `eco/{ECO-number}` branch pointing to main's current HEAD
-   - Records the association in `changeOrderDesigns` (which designs this ECO affects)
-   - If the affected item is Released and the action is `revise`, creates a working copy on the ECO branch
+   - Records the association in `changeOrderDesigns` (which designs this change order affects)
+   - If the affected item is Released and the action is `revise`, creates a working copy on the change-order branch
 
 ```
 BEFORE:
@@ -142,7 +142,7 @@ Service: CheckoutService.checkout()
          CheckoutService.saveChanges()
 ```
 
-When a user edits an item on the ECO branch:
+When a user edits an item on the change-order branch:
 
 1. **Checkout**: `CheckoutService.checkout(itemMasterId, branchId, userId)`
    - Finds or creates a `branchItem` record
@@ -169,22 +169,22 @@ AFTER EDIT:
 
 ### Phase 3: Submission (Scope Locking)
 
-When the ECO leaves its initial state via the workflow:
+When the change order leaves its initial state via its lifecycle instance:
 
-- The workflow instance's `scopeLocked` flag is set
-- **New** items can no longer be brought into the ECO -- by any route: the
+- The lifecycle instance's `scopeLocked` flag is set
+- **New** items can no longer be brought into the change order -- by any route: the
   change-order service methods, `POST /items/:id/checkout`, batch checkout,
   create-on-branch, or the AI tools (`assertBranchAcceptsNewItems`)
 - Working copies already in scope stay fully editable
 
 The lock freezes _what the change covers_, not the work on it, so reviewers
 evaluate a fixed scope while engineers keep refining the detail. Returning the
-ECO to its initial state ("Return to Draft") clears the flag, so rework can
+change order to its initial state ("Return to Draft") clears the flag, so rework can
 correct the scope it was sent back to fix.
 
 The branch itself is **not** locked. `BranchService.lockBranch()` exists and
-`CommitService`/`CheckoutService` honour `isLocked`, but nothing in the ECO
-workflow calls it -- a manual `PATCH /api/v1/branches/:id` is the only caller.
+`CommitService`/`CheckoutService` honour `isLocked`, but nothing in the change-order
+lifecycle calls it -- a manual `PATCH /api/v1/branches/:id` is the only caller.
 
 ### Phase 4: Approval and Release (Merge)
 
@@ -194,7 +194,7 @@ Service: ChangeOrderService.close()
            → mergeBranchToMain()
 ```
 
-When the ECO transitions to its final state (e.g., "Approved"), `ChangeOrderService.close()` triggers the merge:
+When the change order transitions to its final state (e.g., "Approved"), `ChangeOrderService.close()` triggers the merge:
 
 1. **Validate** via `validateMerge(branchId)` -- checks for checkout locks and conflicts
 2. **Auto-checkin** all items still checked out
@@ -233,7 +233,7 @@ The isolation guarantee is implemented by `VersionResolver` in `packages/core/sr
 When the UI requests items for a branch, `VersionResolver.getBranchItems()` merges two sources:
 
 1. **Main branch items** -- all released items on main
-2. **Branch overrides** -- `branchItems` records for this ECO branch
+2. **Branch overrides** -- `branchItems` records for this change-order branch
 
 The merge logic:
 
@@ -248,28 +248,28 @@ For each item in the design:
 
 This means:
 
-- **ECO A modifying P-1001** sees its modified version; everyone else sees the released version
-- **ECO B adding P-2000** sees the new part; nobody else does until ECO B is merged
-- **ECO C deleting P-3000** sees the part removed; everyone else still sees it
+- **Change order A modifying P-1001** sees its modified version; everyone else sees the released version
+- **Change order B adding P-2000** sees the new part; nobody else does until it is merged
+- **Change order C deleting P-3000** sees the part removed; everyone else still sees it
 
 No data duplication for unmodified items. The branch stores only deltas.
 
 ### Version Resolution Methods
 
-| Method                                   | Context               | Behavior                                                  |
-| ---------------------------------------- | --------------------- | --------------------------------------------------------- |
-| `getReleasedVersion(masterId, designId)` | Main branch           | Walks commit history to find latest version at HEAD       |
-| `getWorkingVersion(masterId, branchId)`  | ECO/workspace branch  | Checks `branchItems` first, falls back to main            |
-| `getBranchItems(branchId, filters)`      | Full BOM for a branch | Merges main + branch overrides transparently              |
-| `getItemAtCommit(masterId, commitId)`    | Time-travel           | Walks ancestor commits to find version at a point in time |
+| Method                                   | Context                          | Behavior                                                  |
+| ---------------------------------------- | -------------------------------- | --------------------------------------------------------- |
+| `getReleasedVersion(masterId, designId)` | Main branch                      | Walks commit history to find latest version at HEAD       |
+| `getWorkingVersion(masterId, branchId)`  | Change-order or workspace branch | Checks `branchItems` first, falls back to main            |
+| `getBranchItems(branchId, filters)`      | Full BOM for a branch            | Merges main + branch overrides transparently              |
+| `getItemAtCommit(masterId, commitId)`    | Time-travel                      | Walks ancestor commits to find version at a point in time |
 
 ---
 
 ## Revision Assignment
 
-Revisions are assigned **only on merge to main**, never during ECO work.
+Revisions are assigned **only on merge to main**, never during change-order work.
 
-While on an ECO branch, items carry a branch-scoped working revision
+While on an change-order branch, items carry a branch-scoped working revision
 (`-{first 8 chars of branchId}`), so two branches can hold a working copy of
 the same item without colliding on the `(item_number, revision, design_id,
 item_type)` unique constraint. `RevisionService.getWorkingRevision()` writes it
@@ -286,8 +286,8 @@ calls `RevisionService.getNextRevision()`:
 
 This design ensures:
 
-- **Draft work does not consume revision letters** -- abandoned ECOs waste nothing
-- **Parallel ECOs cannot collide** -- revisions are assigned atomically at merge time
+- **Draft work does not consume revision letters** -- abandoned change orders waste nothing
+- **Parallel change orders cannot collide** -- revisions are assigned atomically at merge time
 - **Revision history is linear** -- no gaps, no out-of-order
 
 The merge commit stores the assignment map in JSONB: `{ "P-1001": "B", "P-1002": "C" }`.
@@ -296,12 +296,12 @@ The merge commit stores the assignment map in JSONB: `{ "P-1001": "B", "P-1002":
 
 ## Pre-Release vs. Post-Release Protection
 
-This is the one-way gate that forces the ECO workflow:
+This is the one-way gate that forces every change through a change order:
 
 - **Pre-release phase**: No item in the design has `state = 'Released'`. You can freely create, edit, and delete items directly on main. This is the initial design phase.
-- **Post-release phase**: At least one item has been Released (via an ECO merge). Now main is **protected** -- `ItemService.create()` throws `BranchProtectionError` if you try to add items directly.
+- **Post-release phase**: At least one item has been Released (via an change-order merge). Now main is **protected** -- `ItemService.create()` throws `BranchProtectionError` if you try to add items directly.
 
-Once a design enters post-release, there is no going back. All changes must flow through ECO branches.
+Once a design enters post-release, there is no going back. All changes must flow through change-order branches.
 
 ---
 
@@ -315,7 +315,7 @@ Same item checked out by different users on the same or different branches. Prev
 
 ### 2. Main Divergence
 
-Compares `branchItem.baseItemId` (version when branch was forked) against the current main version. If main has advanced (another ECO merged the same item), the branch base is stale.
+Compares `branchItem.baseItemId` (version when branch was forked) against the current main version. If main has advanced (another change order merged the same item), the branch base is stale.
 
 ```
 ECO-001 forked at C3 (P-1001 rev A)
@@ -323,9 +323,9 @@ ECO-002 merged at C5 (P-1001 rev B)   ← main advanced
 ECO-001 still has baseItemId pointing to rev A  ← STALE
 ```
 
-### 3. Cross-ECO Conflicts
+### 3. Cross-change-order Conflicts
 
-Two active ECOs modifying the same item. Detected by scanning `branchItems` across all open ECO branches for the same `itemMasterId`.
+Two active change orders modifying the same item. Detected by scanning `branchItems` across all open change-order branches for the same `itemMasterId`.
 
 ### Field-Level Conflict Resolution
 
@@ -348,20 +348,20 @@ current version and re-apply our non-conflicting changes) or
 
 | Service                    | File                                                         | Key Methods                                                       |
 | -------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `BranchService`            | `packages/core/src/lib/services/BranchService.ts`            | `createEcoBranch()`, `lockBranch()`, `archiveBranch()`            |
+| `BranchService`            | `packages/core/src/lib/services/BranchService.ts`            | `createChangeOrderBranch()`, `lockBranch()`, `archiveBranch()`    |
 | `CommitService`            | `packages/core/src/lib/services/CommitService.ts`            | `create()`, `createMergeCommit()`, `getBranchChanges()`           |
 | `CheckoutService`          | `packages/core/src/lib/services/CheckoutService.ts`          | `checkout()`, `saveChanges()`, `createOnBranch()`                 |
 | `VersionResolver`          | `packages/core/src/lib/services/VersionResolver.ts`          | `getReleasedVersion()`, `getWorkingVersion()`, `getBranchItems()` |
 | `ChangeOrderMergeService`  | `packages/core/src/lib/services/ChangeOrderMergeService.ts`  | `merge()`, `mergeBranchToMain()`, `validateMerge()`               |
-| `ConflictDetectionService` | `packages/core/src/lib/services/ConflictDetectionService.ts` | `detectConflictsForBranch()`, `detectCrossEcoConflicts()`         |
+| `ConflictDetectionService` | `packages/core/src/lib/services/ConflictDetectionService.ts` | `detectConflictsForBranch()`, `detectCrossChangeOrderConflicts()` |
 | `ChangeOrderService`       | `packages/core/src/lib/items/services/ChangeOrderService.ts` | `addAffectedItem()`, `close()`                                    |
 | `RevisionService`          | `packages/core/src/lib/services/RevisionService.ts`          | `getNextRevision()`                                               |
 
 ---
 
-## Workflow Trigger
+## Transition Trigger
 
-All ECO state transitions go through a single endpoint:
+All change-order state transitions go through a single endpoint on the lifecycle instance:
 
 ```
 POST /api/v1/change-orders/:id/workflow/transition

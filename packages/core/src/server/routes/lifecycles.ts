@@ -3,6 +3,7 @@
 
 import { Hono } from 'hono'
 import { tagged } from '../adapter'
+import { lifecycleDefinitionRoutes } from './lifecycle-definitions'
 import { apiHandler } from '@/lib/api/handler'
 import { LifecycleService } from '@/lib/services/LifecycleService'
 
@@ -16,13 +17,19 @@ const app = new Hono()
 // and flags, phases, and the change-action mappings the client needs to
 // derive the released family. Resolves Driving-governed types (ChangeOrder)
 // too, since their items mirror the Driving definition's states.
+//
+// `states` is every state an item of the type can hold, not only the
+// governing definition's: a change order runs whichever Driving definition
+// its change type maps to (`lifecyclesByChangeType`), so a list of them spans
+// several definitions and a badge must be able to name a state from any.
 app.get(
   '/by-item-type/:itemType',
   adapt(
     apiHandler<{ itemType: string }>({}, async ({ params }) => {
-      const definition = await LifecycleService.getGoverningDefinition(
-        params.itemType,
-      )
+      const [definition, states] = await Promise.all([
+        LifecycleService.getGoverningDefinition(params.itemType),
+        LifecycleService.getRenderableStates(params.itemType),
+      ])
 
       if (!definition) {
         return {
@@ -42,7 +49,7 @@ app.get(
         name: definition.name,
         lifecycleType: definition.lifecycleType,
         phases: definition.phases,
-        states: definition.states,
+        states,
         transitions: definition.transitions,
         revisionScheme: definition.revisionScheme,
         changeActionMappings: definition.changeActionMappings,
@@ -50,5 +57,10 @@ app.get(
     }),
   ),
 )
+
+// The definitions themselves, their approvers and validation — the routes
+// that shipped under `/api/v1/workflows`, which stays mounted as a deprecated
+// alias. Registered after `by-item-type` so that path is never read as an id.
+app.route('/', lifecycleDefinitionRoutes({ tag: 'Lifecycles' }))
 
 export default app

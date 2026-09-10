@@ -208,6 +208,78 @@ describe('ProgramService', () => {
       ).rejects.toThrow(ValidationError)
     })
 
+    // The dates are the one pair of fields where "absent" and "empty" are
+    // different instructions, and `z.coerce.date()` conflated them: `null`
+    // reached `new Date(null)` and stamped the Unix epoch, so clearing a date
+    // set it to 1970 instead of unsetting it. See `clearableDate`.
+    it('clears a date that was set rather than stamping the epoch', async () => {
+      const program = await ProgramService.create(
+        {
+          name: 'Dated',
+          code: uniqueCode(),
+          startDate: new Date('2026-03-01T00:00:00.000Z'),
+        },
+        user.id,
+      )
+      expect(program.startDate).not.toBeNull()
+
+      const updated = await ProgramService.update(
+        program.id,
+        { startDate: null },
+        user.id,
+      )
+
+      expect(updated?.startDate).toBeNull()
+    })
+
+    it('leaves a date it was not asked about alone', async () => {
+      const startDate = new Date('2026-03-01T00:00:00.000Z')
+      const program = await ProgramService.create(
+        { name: 'Dated', code: uniqueCode(), startDate },
+        user.id,
+      )
+
+      const updated = await ProgramService.update(
+        program.id,
+        { name: 'Renamed' },
+        user.id,
+      )
+
+      expect(updated?.startDate).toEqual(startDate)
+    })
+
+    it('accepts a full save of a program that has no dates', async () => {
+      // Every field the program edit page sends, for a program whose dates
+      // are unset — the shape that used to be rejected outright.
+      const code = uniqueCode()
+      const program = await ProgramService.create(
+        { name: 'Undated', code },
+        user.id,
+      )
+
+      const updated = await ProgramService.update(
+        program.id,
+        {
+          code,
+          name: 'Undated',
+          description: 'Now with a description',
+          status: 'Active',
+          customer: '',
+          contractNumber: '',
+          startDate: null,
+          targetEndDate: null,
+          attributes: {},
+        },
+        user.id,
+      )
+
+      expect(updated).toMatchObject({
+        description: 'Now with a description',
+        startDate: null,
+        targetEndDate: null,
+      })
+    })
+
     it('allows updating to the same code it already has', async () => {
       const code = uniqueCode()
       const program = await ProgramService.create(

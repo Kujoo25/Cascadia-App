@@ -8,6 +8,7 @@ import { RevisionService } from './RevisionService'
 import { VersionResolver } from './VersionResolver'
 import { DesignService } from './DesignService'
 import { ItemRelationshipService } from '@/lib/items/services/ItemRelationshipService'
+import { BRANCH_TYPES } from '@/lib/versioning/branch-types'
 
 /**
  * Enumerates every version of an item's master that the 3D comparison view
@@ -94,7 +95,11 @@ export class ModelVersionService {
               eq(branchItems.itemMasterId, masterId),
               eq(branches.designId, designId),
               eq(branches.isArchived, false),
-              inArray(branches.branchType, ['eco', 'workspace', 'release']),
+              inArray(branches.branchType, [
+                BRANCH_TYPES.changeOrder,
+                BRANCH_TYPES.workspace,
+                BRANCH_TYPES.release,
+              ]),
             ),
           )
       : []

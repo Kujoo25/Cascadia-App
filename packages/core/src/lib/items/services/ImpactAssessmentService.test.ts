@@ -102,8 +102,8 @@ describe('ImpactAssessmentService where-used branch context', () => {
     )
   }
 
-  async function createEcoBranch() {
-    const eco = await ItemService.create(
+  async function createChangeOrderBranch() {
+    const changeOrder = await ItemService.create(
       'ChangeOrder',
       {
         revision: '-',
@@ -113,9 +113,9 @@ describe('ImpactAssessmentService where-used branch context', () => {
       } as any,
       user.id,
     )
-    const { branch } = await BranchService.getOrCreateEcoBranch(
+    const { branch } = await BranchService.getOrCreateChangeOrderBranch(
       designId,
-      eco.id,
+      changeOrder.id,
       user.id,
     )
     return branch
@@ -124,7 +124,7 @@ describe('ImpactAssessmentService where-used branch context', () => {
   it('sees a BOM line the branch added', async () => {
     const child = await createPart('child')
     const parent = await createPart('parent')
-    const branch = await createEcoBranch()
+    const branch = await createChangeOrderBranch()
 
     // On main the parent has no children at all
     const beforeBranch = await ImpactAssessmentService.findWhereUsed(child.id)
@@ -186,7 +186,7 @@ describe('ImpactAssessmentService where-used branch context', () => {
       createdBy: user.id,
     })
 
-    const branch = await createEcoBranch()
+    const branch = await createChangeOrderBranch()
 
     // Main still uses it
     expect(await ImpactAssessmentService.findWhereUsed(child.id)).toHaveLength(
@@ -219,7 +219,7 @@ describe('ImpactAssessmentService where-used branch context', () => {
       createdBy: user.id,
     })
 
-    const branch = await createEcoBranch()
+    const branch = await createChangeOrderBranch()
     const unrelated = await createPart('unrelated')
     await testDb.db.insert(branchItems).values({
       branchId: branch.id,
@@ -258,7 +258,7 @@ describe('ImpactAssessmentService where-used branch context', () => {
       },
     ])
 
-    const branch = await createEcoBranch()
+    const branch = await createChangeOrderBranch()
     const onBranch = await ImpactAssessmentService.findWhereUsed(leaf.id, {
       branchIds: [branch.id],
     })

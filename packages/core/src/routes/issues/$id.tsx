@@ -95,7 +95,7 @@ function IssueDetailPage() {
       onCancel={handleCancel}
       onTransitioned={() => {
         showSuccess('Issue transitioned', 'The issue state has been updated')
-        void invalidate('workflows')
+        void invalidate('lifecycles')
       }}
       activeTab={search.tab}
       onTabChange={handleTabChange}

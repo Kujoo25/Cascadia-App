@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Label } from '@/components/ui/Label'
 import { Badge } from '@/components/ui/Badge'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 import { useResourceMutation } from '@/lib/query'
 import { cn } from '@/lib/utils'
@@ -55,7 +55,7 @@ export function AddPartToStructureDialog({
   currentDesignCode,
   onSuccess,
 }: AddPartToStructureDialogProps) {
-  const { alert } = useAlertDialog()
+  const { handleError } = useErrorHandler()
   const [designScope, setDesignScope] = useState<DesignScope>('current')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Array<EnrichedItem>>([])
@@ -138,12 +138,8 @@ export function AddPartToStructureDialog({
       onSuccess?.()
       onOpenChange(false)
     },
-    onError: () => {
-      alert({
-        title: 'Error',
-        description: 'Failed to add part to structure',
-        variant: 'destructive',
-      })
+    onError: (error: unknown) => {
+      handleError(error, { title: 'Failed to add part to structure' })
     },
   })
 

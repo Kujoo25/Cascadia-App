@@ -17,7 +17,7 @@ _above_ items, not item types — see [Program & Design Hierarchy](#program--des
 | -------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Part**             | ✅     | Parts with materials, partType (Manufacture/Purchase/Phantom/Software), cost, lead times                                                                                   |
 | **Document**         | ✅     | Version-controlled files with check-in/check-out                                                                                                                           |
-| **Change Order**     | ✅     | ECO/ECN/MCO/Deviation workflows for change management                                                                                                                      |
+| **Change Order**     | ✅     | ECO/ECN/MCO/Deviation change orders, each on its own branch                                                                                                                |
 | **Requirement**      | ✅     | Requirements tracking with acceptance criteria, priority, source. Coverage counts links: "verified" means a VERIFIED_BY edge to a test case exists, not that a test passed |
 | **Task**             | ✅     | Work items with assignees, due dates, estimated/actual hours                                                                                                               |
 | **Test Plan**        | ✅     | Verification planning: scope, environment, entry/exit criteria, grouped test cases                                                                                         |
@@ -44,18 +44,18 @@ This enables unified queries across all items while maintaining type-specific da
 
 The signature differentiator: Git-style branching for engineering changes.
 
-### Core Workflow ✅
+### Core Flow ✅
 
-| Feature                          | Status | Notes                                                                |
-| -------------------------------- | ------ | -------------------------------------------------------------------- |
-| Create ECO with branch isolation | ✅     | Each ECO gets its own working branch                                 |
-| Add affected items to ECO        | ✅     | Items checked out to ECO branch                                      |
-| Parallel ECOs on same items      | ✅     | Multiple ECOs can modify the same part independently                 |
-| ECO approval workflow            | ✅     | Configurable state machine (Draft → In Review → Approved → Released) |
-| ECO release with merge           | ✅     | Branch merged to main, revision letters assigned                     |
-| Conflict detection               | ✅     | Identifies when multiple ECOs modify same items                      |
-| Conflict review                  | ✅     | Warning-level conflicts can be acknowledged as reviewed, with audit  |
-| ECO cancellation                 | ✅     | Clean branch deletion, no residual state                             |
+| Feature                                   | Status | Notes                                                                |
+| ----------------------------------------- | ------ | -------------------------------------------------------------------- |
+| Create change order with branch isolation | ✅     | Each change order gets its own working branch                        |
+| Add affected items                        | ✅     | Items checked out to the change-order branch                         |
+| Parallel change orders on same items      | ✅     | Multiple change orders can modify the same part independently        |
+| Change-order lifecycle                    | ✅     | Configurable state machine (Draft → In Review → Approved; Cancelled) |
+| Release with merge                        | ✅     | Branch merged to main, revision letters assigned                     |
+| Conflict detection                        | ✅     | Identifies when multiple change orders modify the same items         |
+| Conflict review                           | ✅     | Warning-level conflicts can be acknowledged as reviewed, with audit  |
+| Cancellation                              | ✅     | Branches archived unmerged, no revisions consumed                    |
 
 ### Change Actions ✅
 
@@ -80,26 +80,26 @@ The signature differentiator: Git-style branching for engineering changes.
 
 ### Branch Operations ✅
 
-| Operation            | Status | Notes                              |
-| -------------------- | ------ | ---------------------------------- |
-| Create branch        | ✅     | ECO branches created automatically |
-| List branches        | ✅     | View all branches per design       |
-| Branch status        | ✅     | Ahead/behind commit counts         |
-| View branch items    | ✅     | Items modified on branch           |
-| Merge to main        | ✅     | On ECO release                     |
-| Branch history/graph | ✅     | Visual commit history              |
+| Operation            | Status | Notes                                       |
+| -------------------- | ------ | ------------------------------------------- |
+| Create branch        | ✅     | Change-order branches created automatically |
+| List branches        | ✅     | View all branches per design                |
+| Branch status        | ✅     | Ahead/behind commit counts                  |
+| View branch items    | ✅     | Items modified on branch                    |
+| Merge to main        | ✅     | On change-order release                     |
+| Branch history/graph | ✅     | Visual commit history                       |
 
 ### Workspaces ✅
 
-Personal sandbox branches for exploratory work that has not yet earned an ECO.
+Personal sandbox branches for exploratory work that has not yet earned a change order.
 
-| Feature              | Status | Notes                                                        |
-| -------------------- | ------ | ------------------------------------------------------------ |
-| Create workspace     | ✅     | Per-user branch on any design the user can access            |
-| Workspace item edits | ✅     | Same checkout/edit flow as an ECO branch, isolated from main |
-| Convert to ECO       | ✅     | Promote the workspace into a new change order                |
-| Merge into ECO       | ✅     | Fold workspace changes into an existing change order         |
-| Workspace UI         | ✅     | Context banner, items panel, create/convert/merge dialogs    |
+| Feature                 | Status | Notes                                                                |
+| ----------------------- | ------ | -------------------------------------------------------------------- |
+| Create workspace        | ✅     | Per-user branch on any design the user can access                    |
+| Workspace item edits    | ✅     | Same checkout/edit flow as a change-order branch, isolated from main |
+| Convert to change order | ✅     | Promote the workspace into a new change order                        |
+| Merge into change order | ✅     | Fold workspace changes into an existing change order                 |
+| Workspace UI            | ✅     | Context banner, items panel, create/convert/merge dialogs            |
 
 ---
 
@@ -107,18 +107,18 @@ Personal sandbox branches for exploratory work that has not yet earned an ECO.
 
 Bill of Materials with hierarchical relationships, where-used tracking, and cross-design references.
 
-| Feature                    | Status | Notes                                                                                |
-| -------------------------- | ------ | ------------------------------------------------------------------------------------ |
-| Parent/child relationships | ✅     | Parts can contain other parts                                                        |
-| Quantity tracking          | ✅     | Per-relationship quantity                                                            |
-| Find numbers               | ✅     | Position identifiers in assembly                                                     |
-| Reference designators      | ✅     | For electrical components                                                            |
-| BOM tree visualization     | ✅     | Expandable grid tree-table view                                                      |
-| Where-used queries         | ✅     | "What assemblies use this part?"                                                     |
-| Multi-level BOM expansion  | ✅     | Full indented BOM                                                                    |
-| BOM changes tracked by ECO | ✅     | Add/remove tracked in change orders                                                  |
-| Cross-design references    | ✅     | Read-only links to items in other designs                                            |
-| MBOM (Manufacturing BOM)   | 🟡     | Initial — EBOM-to-MBOM creation, upstream change tracking; full UI/workflows planned |
+| Feature                             | Status | Notes                                                                                |
+| ----------------------------------- | ------ | ------------------------------------------------------------------------------------ |
+| Parent/child relationships          | ✅     | Parts can contain other parts                                                        |
+| Quantity tracking                   | ✅     | Per-relationship quantity                                                            |
+| Find numbers                        | ✅     | Position identifiers in assembly                                                     |
+| Reference designators               | ✅     | For electrical components                                                            |
+| BOM tree visualization              | ✅     | Expandable grid tree-table view                                                      |
+| Where-used queries                  | ✅     | "What assemblies use this part?"                                                     |
+| Multi-level BOM expansion           | ✅     | Full indented BOM                                                                    |
+| BOM changes tracked by change order | ✅     | Add/remove tracked in change orders                                                  |
+| Cross-design references             | ✅     | Read-only links to items in other designs                                            |
+| MBOM (Manufacturing BOM)            | 🟡     | Initial — EBOM-to-MBOM creation, upstream change tracking; full UI/workflows planned |
 
 ---
 
@@ -126,25 +126,25 @@ Bill of Materials with hierarchical relationships, where-used tracking, and cros
 
 Enterprise-grade file management with PDM-style check-in/check-out.
 
-| Feature                   | Status | Notes                             |
-| ------------------------- | ------ | --------------------------------- |
-| File upload/download      | ✅     | Attach files to any item          |
-| Check-out for edit        | ✅     | Lock file for exclusive editing   |
-| Check-in with versioning  | ✅     | Create new file version           |
-| Discard checkout          | ✅     | Unlock without saving             |
-| Lock status indicators    | ✅     | Show who has file locked          |
-| Primary file designation  | ✅     | Main file per item                |
-| Multiple files per item   | ✅     | Supporting documents              |
-| File metadata             | ✅     | Size, type, dates                 |
-| Branch-aware file storage | ✅     | Files isolated per ECO branch     |
-| File promotion on merge   | ✅     | ECO files visible after release   |
-| Storage abstraction       | ✅     | Local filesystem or S3-compatible |
+| Feature                   | Status | Notes                                      |
+| ------------------------- | ------ | ------------------------------------------ |
+| File upload/download      | ✅     | Attach files to any item                   |
+| Check-out for edit        | ✅     | Lock file for exclusive editing            |
+| Check-in with versioning  | ✅     | Create new file version                    |
+| Discard checkout          | ✅     | Unlock without saving                      |
+| Lock status indicators    | ✅     | Show who has file locked                   |
+| Primary file designation  | ✅     | Main file per item                         |
+| Multiple files per item   | ✅     | Supporting documents                       |
+| File metadata             | ✅     | Size, type, dates                          |
+| Branch-aware file storage | ✅     | Files isolated per change-order branch     |
+| File promotion on merge   | ✅     | Branch files visible on main after release |
+| Storage abstraction       | ✅     | Local filesystem or S3-compatible          |
 
 ---
 
-## Workflow Engine
+## Lifecycle Engine
 
-Configurable state machines for lifecycle and approval workflows.
+One kind of definition for item states and change-order review: every lifecycle is a configurable state machine, and change orders run instances of the Driving ones.
 
 ### Lifecycle Management ✅
 
@@ -159,22 +159,22 @@ Configurable state machines for lifecycle and approval workflows.
 | Revision schemes         | ✅     | Alpha (A,B,C), numeric (1,2,3), prefixed-numeric (X1,X2), or none       |
 | Per-phase revision reset | ✅     | Optionally reset revision numbering on phase entry                      |
 
-### Workflow Features ✅
+### Instances and Approvals ✅
 
-| Feature                 | Status | Notes                                   |
-| ----------------------- | ------ | --------------------------------------- |
-| Workflow definitions    | ✅     | JSON-based workflow configuration       |
-| Workflow instances      | ✅     | Track workflow state per item           |
-| Transition history      | ✅     | Full audit trail                        |
-| Approval voting         | ✅     | Multi-approver support                  |
-| Comments on transitions | ✅     | Notes when changing state               |
-| Auto-start workflows    | ✅     | Workflow starts on ECO creation by type |
+| Feature                 | Status | Notes                                                    |
+| ----------------------- | ------ | -------------------------------------------------------- |
+| Lifecycle definitions   | ✅     | JSON-based state machines                                |
+| Lifecycle instances     | ✅     | Track state per item                                     |
+| Transition history      | ✅     | Full audit trail                                         |
+| Approval voting         | ✅     | Multi-approver support                                   |
+| Comments on transitions | ✅     | Notes when changing state                                |
+| Start on creation       | ✅     | Instance starts on change-order creation, by change type |
 
-### Default Workflows Included ✅
+### Shipped Lifecycles ✅
 
 - **Part Lifecycle**: Draft → In Review → Released → Superseded/Obsolete
 - **Document Lifecycle**: Draft → In Review → Released → Superseded/Obsolete
-- **ECO Workflow**: Draft → Submitted → In Review → Approved → Released | Rejected | Cancelled
+- **Change Order - Standard**: Draft → In Review → Approved | Cancelled (release on Approved); **XCO - Flexible Change Order**: Start → Complete, customised per instance
 
 ---
 
@@ -191,7 +191,7 @@ Beyond traditional PLM revision tracking.
 | Commit history               | ✅     | Full timeline per design                     |
 | Design history graph         | ✅     | Visual branch/merge diagram                  |
 | Branch isolation             | ✅     | Changes invisible until merged               |
-| Merge commits                | ✅     | Record ECO releases                          |
+| Merge commits                | ✅     | Record change-order releases                 |
 | Baseline tags                | ✅     | Named snapshots of design state              |
 | Change history tracking      | ✅     | Per-item edit history with field-level diffs |
 | Relationship change tracking | ✅     | BOM add/remove/modify tracked in history     |
@@ -249,11 +249,11 @@ Program-based permissions for enterprise data isolation.
 
 ### Default Roles ✅
 
-| Role          | Description                        |
-| ------------- | ---------------------------------- |
-| Administrator | Full system access                 |
-| Engineer      | Create/edit parts, documents, ECOs |
-| Viewer        | Read-only access                   |
+| Role          | Description                                 |
+| ------------- | ------------------------------------------- |
+| Administrator | Full system access                          |
+| Engineer      | Create/edit parts, documents, change orders |
+| Viewer        | Read-only access                            |
 
 ---
 
@@ -313,23 +313,24 @@ Graphical interfaces for complex data.
 | BOM tree view        | ✅     | Hierarchical grid tree-table                                     |
 | Relationship graph   | ✅     | React Flow visualization                                         |
 | Design history graph | ✅     | Branch/commit timeline                                           |
-| Affected items tree  | ✅     | ECO impact visualization                                         |
+| Affected items tree  | ✅     | Change-order impact visualization                                |
 | Digital thread view  | ✅     | Swim-lane navigator across five domains, with cross-context diff |
-| 3D CAD viewer        | ✅     | STL/OBJ/GLB rendering in browser                                 |
+| 3D CAD viewer        | ✅     | STL/OBJ/GLB rendering on part, design and program pages          |
 
 ### 3D Viewer Features ✅
 
-| Feature                   | Status |
-| ------------------------- | ------ |
-| STL file support          | ✅     |
-| OBJ file support          | ✅     |
-| GLB (binary glTF) support | ✅     |
-| Per-face/solid colors     | ✅     |
-| Orbit controls            | ✅     |
-| Auto-fit camera           | ✅     |
-| Wireframe mode            | ✅     |
-| Model statistics          | ✅     |
-| Reset view                | ✅     |
+| Feature                           | Status |
+| --------------------------------- | ------ |
+| STL file support                  | ✅     |
+| OBJ file support                  | ✅     |
+| GLB (binary glTF) support         | ✅     |
+| Per-face/solid colors             | ✅     |
+| Orbit controls                    | ✅     |
+| Auto-fit camera                   | ✅     |
+| Wireframe mode                    | ✅     |
+| Model statistics                  | ✅     |
+| Reset view                        | ✅     |
+| Part, design and program surfaces | ✅     |
 
 ---
 
@@ -379,10 +380,10 @@ Bulk data import from spreadsheets with intelligent BOM parsing.
 
 ### Import API ✅
 
-| Endpoint                    | Status | Notes                                  |
-| --------------------------- | ------ | -------------------------------------- |
-| `POST /api/v1/import/parts` | ✅     | Bulk part creation + BOM relationships |
-| Branch-aware import         | ✅     | Import to ECO branch or main           |
+| Endpoint                    | Status | Notes                                   |
+| --------------------------- | ------ | --------------------------------------- |
+| `POST /api/v1/import/parts` | ✅     | Bulk part creation + BOM relationships  |
+| Branch-aware import         | ✅     | Import to a change-order branch or main |
 
 ---
 
@@ -557,17 +558,17 @@ Production-ready infrastructure.
 
 System administration capabilities.
 
-| Feature                 | Status | Notes                           |
-| ----------------------- | ------ | ------------------------------- |
-| User management         | ✅     | Create, edit, deactivate        |
-| Role management         | ✅     | Define and assign roles         |
-| Item type configuration | ✅     | Runtime field metadata          |
-| Lifecycle configuration | ✅     | Define states and transitions   |
-| Workflow configuration  | ✅     | Create workflow definitions     |
-| Jobs dashboard          | ✅     | Monitor background jobs         |
-| AI settings             | ✅     | Configure provider, model, keys |
-| Vault configuration     | ✅     | View effective storage config   |
-| System settings         | 🟡     | Basic settings storage          |
+| Feature                 | Status | Notes                                 |
+| ----------------------- | ------ | ------------------------------------- |
+| User management         | ✅     | Create, edit, deactivate              |
+| Role management         | ✅     | Define and assign roles               |
+| Item type configuration | ✅     | Runtime field metadata                |
+| Lifecycle configuration | ✅     | Define states and transitions         |
+| Lifecycle editor        | ✅     | Create and edit lifecycle definitions |
+| Jobs dashboard          | ✅     | Monitor background jobs               |
+| AI settings             | ✅     | Configure provider, model, keys       |
+| Vault configuration     | ✅     | View effective storage config         |
+| System settings         | 🟡     | Basic settings storage                |
 
 ---
 
@@ -577,16 +578,17 @@ LLM-powered chatbot for navigating and querying PLM data.
 
 ### AI Chatbot ✅
 
-| Feature             | Status | Notes                                           |
-| ------------------- | ------ | ----------------------------------------------- |
-| Chat panel UI       | ✅     | Slide-out panel with markdown rendering         |
-| Session persistence | ✅     | Conversations saved to database                 |
-| Read-only PLM tools | ✅     | Search parts, get item details, navigate system |
-| Write tools         | ✅     | Create/update items with permission enforcement |
-| Confirmation flow   | ✅     | User confirms write actions before execution    |
-| Anthropic adapter   | ✅     | Claude integration via TanStack AI              |
-| OpenAI adapter      | ✅     | GPT integration via TanStack AI                 |
-| Admin settings      | ✅     | Configure AI provider and model                 |
+| Feature             | Status | Notes                                                                                                                      |
+| ------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Chat panel UI       | ✅     | Slide-out panel with markdown rendering                                                                                    |
+| Session persistence | ✅     | Conversations saved to database                                                                                            |
+| Read-only PLM tools | ✅     | Search parts, get item details, navigate system                                                                            |
+| Write tools         | ✅     | Create/update items with permission enforcement                                                                            |
+| Confirmation flow   | ✅     | User confirms write actions before execution                                                                               |
+| Anthropic adapter   | ✅     | Claude integration via TanStack AI                                                                                         |
+| OpenAI adapter      | ✅     | GPT integration via TanStack AI                                                                                            |
+| Admin settings      | ✅     | Configure AI provider and model                                                                                            |
+| Auto-fill new items | ✅     | Drop or paste a link, photo, nameplate or spec sheet on a new Part or Tool; fills fields, attributes and tool capabilities |
 
 ### MCP Servers ✅
 
@@ -665,16 +667,16 @@ quantity and value: no inventory balances, no costing.
 ## Software Management
 
 Firmware and software configuration items versioned alongside the hardware they
-ship with, ECO-controlled like any other engineering item.
+ship with, change-order-controlled like any other engineering item.
 
 ### Software Items ✅
 
-| Feature            | Status | Notes                                                                 |
-| ------------------ | ------ | --------------------------------------------------------------------- |
-| Software item type | ✅     | `softwareType`: firmware, application, library, configuration, fpga   |
-| Target & toolchain | ✅     | Target hardware and build toolchain recorded on the item              |
-| Part lifecycle     | ✅     | Shares the Part lifecycle, so it is ECO-controlled and gets revisions |
-| Build artifacts    | ✅     | Compiled output attached in the vault                                 |
+| Feature            | Status | Notes                                                                          |
+| ------------------ | ------ | ------------------------------------------------------------------------------ |
+| Software item type | ✅     | `softwareType`: firmware, application, library, configuration, fpga            |
+| Target & toolchain | ✅     | Target hardware and build toolchain recorded on the item                       |
+| Part lifecycle     | ✅     | Shares the Part lifecycle, so it is change-order-controlled and gets revisions |
+| Build artifacts    | ✅     | Compiled output attached in the vault                                          |
 
 ### Source Store ✅
 
@@ -832,17 +834,17 @@ Modern, responsive interface.
 
 User and developer documentation.
 
-| Doc Type                | Status | Notes                          |
-| ----------------------- | ------ | ------------------------------ |
-| Architecture overview   | ✅     | System mental model            |
-| Service patterns        | ✅     | Code organization              |
-| Database patterns       | ✅     | Schema design                  |
-| Git-style versioning    | ✅     | ECO-as-branch explained        |
-| Adding item types       | ✅     | Extension guide                |
-| User guides             | ✅     | Programs, designs, ECOs        |
-| API reference           | ✅     | Per-domain docs in `docs/api/` |
-| Deployment guides       | ✅     | Docker, Kubernetes             |
-| Configuration reference | ✅     | Environment variables          |
+| Doc Type                | Status | Notes                            |
+| ----------------------- | ------ | -------------------------------- |
+| Architecture overview   | ✅     | System mental model              |
+| Service patterns        | ✅     | Code organization                |
+| Database patterns       | ✅     | Schema design                    |
+| Git-style versioning    | ✅     | ECO-as-Branch explained          |
+| Adding item types       | ✅     | Extension guide                  |
+| User guides             | ✅     | Programs, designs, change orders |
+| API reference           | ✅     | Per-domain docs in `docs/api/`   |
+| Deployment guides       | ✅     | Docker, Kubernetes               |
+| Configuration reference | ✅     | Environment variables            |
 
 ---
 
@@ -852,7 +854,7 @@ User and developer documentation.
 
 | Feature              | Priority | Notes                                     |
 | -------------------- | -------- | ----------------------------------------- |
-| Flexible workflows   | High     | Ad-hoc workflow routing                   |
+| Flexible lifecycles  | High     | Ad-hoc routing per instance               |
 | Solid Edge connector | Medium   | Easy early CAD target; commercial edition |
 | SolidWorks connector | Medium   | Follows Solid Edge; commercial edition    |
 

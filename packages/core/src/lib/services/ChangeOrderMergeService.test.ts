@@ -42,14 +42,14 @@ import {
   designs,
   itemRelationships,
   items,
+  lifecycleDefinitions,
+  lifecycleInstances,
   parts,
   programMembers,
   programs,
   tags,
   upstreamChanges,
   vaultFiles,
-  workflowDefinitions,
-  workflowInstances,
 } from '@/lib/db/schema'
 import { ItemTypeRegistry } from '@/lib/items/registry'
 import { LIFECYCLE_IDS } from '@/lib/items/lifecycle-ids'
@@ -90,7 +90,7 @@ describe('ChangeOrderMergeService', () => {
     // ECO workflow is specific to these merge tests — unique ID avoids races
     // with other test files that define their own ECO workflows.
     await testDb.db
-      .insert(workflowDefinitions)
+      .insert(lifecycleDefinitions)
       .values({
         id: MERGE_TEST_WORKFLOW_ID,
         name: 'Test ECO Workflow - MergeService',
@@ -139,7 +139,6 @@ describe('ChangeOrderMergeService', () => {
               toStateId: 'Released',
             },
           ],
-          definitionType: 'workflow',
           applicableItemTypes: ['ChangeOrder'],
         },
         isActive: true,
@@ -226,7 +225,7 @@ describe('ChangeOrderMergeService', () => {
   // Helper to create a change order
   // Note: ChangeOrders use auto-generated item numbers
   async function createChangeOrder() {
-    const eco = await ItemService.create(
+    const changeOrder = await ItemService.create(
       'ChangeOrder',
       {
         // itemNumber is auto-generated for ChangeOrders
@@ -240,37 +239,38 @@ describe('ChangeOrderMergeService', () => {
     )
 
     // Start workflow instance for the ECO
-    await testDb.db.insert(workflowInstances).values({
+    await testDb.db.insert(lifecycleInstances).values({
       workflowDefinitionId: workflowId,
-      itemId: eco.id,
+      itemId: changeOrder.id,
       currentState: 'Draft',
     })
 
-    return eco
+    return changeOrder
   }
 
   // Helper to approve an ECO (skip workflow for testing)
-  async function approveEco(ecoId: string) {
+  async function approveChangeOrder(changeOrderId: string) {
     // Real change orders accumulate their affected items as branch content is
     // created - CheckoutService registers each one, so what merges and what
     // reviewers approved are the same set, and the merge refuses to release
     // branch content the change order does not list. These fixtures insert
     // branch rows directly, so mirror that registration before releasing.
-    const ecoDesignsForSync = await ChangeOrderService.getEcoDesigns(ecoId)
-    for (const ecoDesign of ecoDesignsForSync) {
-      if (!ecoDesign.branchId) continue
+    const changeOrderDesignsForSync =
+      await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
+    for (const changeOrderDesign of changeOrderDesignsForSync) {
+      if (!changeOrderDesign.branchId) continue
       const branchRows = await testDb.db
         .select()
         .from(branchItems)
         .where(
           and(
-            eq(branchItems.branchId, ecoDesign.branchId),
+            eq(branchItems.branchId, changeOrderDesign.branchId),
             isNotNull(branchItems.changeType),
           ),
         )
       for (const row of branchRows) {
         await ChangeOrderService.registerBranchChange(
-          ecoDesign.branchId,
+          changeOrderDesign.branchId,
           row.itemMasterId,
           row.currentItemId,
           user.id,
@@ -281,12 +281,12 @@ describe('ChangeOrderMergeService', () => {
     await testDb.db
       .update(items)
       .set({ state: 'Approved' })
-      .where(eq(items.id, ecoId))
+      .where(eq(items.id, changeOrderId))
 
     await testDb.db
-      .update(workflowInstances)
+      .update(lifecycleInstances)
       .set({ currentState: 'Approved' })
-      .where(eq(workflowInstances.itemId, ecoId))
+      .where(eq(lifecycleInstances.itemId, changeOrderId))
   }
 
   describe('validateMerge', () => {
@@ -304,12 +304,12 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('returns canMerge: false when no changes to merge', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Create ECO branch with no changes
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -322,12 +322,12 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('does not warn about branch locking', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Create ECO branch directly (without checkout flow)
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -350,12 +350,12 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('reports items still checked out as a warning, not a blocker', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Create ECO branch directly
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -388,9 +388,9 @@ describe('ChangeOrderMergeService', () => {
 
   describe('previewRelease', () => {
     it('returns empty preview when no designs associated', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.designs).toHaveLength(0)
       expect(preview.totalItems).toBe(0)
@@ -403,11 +403,11 @@ describe('ChangeOrderMergeService', () => {
     // has already succeeded. The transition API validates state transitions.
 
     it('throws error when no affected items or designs', async () => {
-      const eco = await createChangeOrder()
-      await approveEco(eco.id)
+      const changeOrder = await createChangeOrder()
+      await approveChangeOrder(changeOrder.id)
 
       await expect(
-        ChangeOrderMergeService.merge(eco.id, user.id),
+        ChangeOrderMergeService.merge(changeOrder.id, user.id),
       ).rejects.toThrow(ValidationError)
     })
 
@@ -424,11 +424,11 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('release-test', 'Draft')
 
       // Create and approve ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected item with release action
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'release',
@@ -437,10 +437,13 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.totalRevisionsAssigned).toBe(1)
 
@@ -454,11 +457,11 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('obsolete-test', 'Released')
 
       // Create and approve ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected item with obsolete action
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'obsolete',
@@ -467,10 +470,13 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.designs).toBeDefined()
 
@@ -484,11 +490,11 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('revise-test', 'Released')
 
       // Create and approve ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected item with revise action
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'revise',
@@ -498,10 +504,13 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.totalRevisionsAssigned).toBe(1)
 
@@ -527,21 +536,21 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('add-test', 'Draft')
 
       // Create and approve ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected item with add action (membership action)
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'add',
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO - should not throw
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       // Item state should be unchanged (add action doesn't modify state)
       const updatedPart = await ItemService.findById(part.id)
@@ -553,11 +562,11 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('design-assoc-test', 'Draft')
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected item using ChangeOrderService (which handles design association automatically)
       await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         {
           affectedItemId: part.id,
           changeAction: 'release',
@@ -565,16 +574,21 @@ describe('ChangeOrderMergeService', () => {
         user.id,
       )
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       // The release should succeed
       expect(result.totalRevisionsAssigned).toBe(1)
 
       // Verify design association was created
-      const ecoDesigns = await ChangeOrderService.getEcoDesigns(eco.id)
+      const ecoDesigns = await ChangeOrderService.getChangeOrderDesigns(
+        changeOrder.id,
+      )
       expect(ecoDesigns.length).toBeGreaterThan(0)
 
       // Verify the part was released
@@ -586,7 +600,7 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('baseline-tag-test', 'Draft')
       const baselineName = `BL-${uniquePrefix}`
 
-      const eco = await ItemService.create(
+      const changeOrder = await ItemService.create(
         'ChangeOrder',
         {
           revision: '-',
@@ -599,9 +613,9 @@ describe('ChangeOrderMergeService', () => {
         } as any,
         user.id,
       )
-      await testDb.db.insert(workflowInstances).values({
+      await testDb.db.insert(lifecycleInstances).values({
         workflowDefinitionId: workflowId,
-        itemId: eco.id,
+        itemId: changeOrder.id,
         currentState: 'Draft',
       })
 
@@ -610,17 +624,17 @@ describe('ChangeOrderMergeService', () => {
       const [coRow] = await testDb.db
         .select()
         .from(changeOrders)
-        .where(eq(changeOrders.itemId, eco.id))
+        .where(eq(changeOrders.itemId, changeOrder.id))
       expect(coRow?.isBaseline).toBe(true)
       expect(coRow?.baselineName).toBe(baselineName)
 
       await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         { affectedItemId: part.id, changeAction: 'release' },
         user.id,
       )
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       // On release the baseline tag lands on the affected design.
       const designTags = await testDb.db
@@ -663,9 +677,9 @@ describe('ChangeOrderMergeService', () => {
         },
       ])
 
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       const { workingCopyId } = await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         { affectedItemId: assembly.id, changeAction: 'revise' },
         user.id,
       )
@@ -699,8 +713,8 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       // The released revision reflects the branch edits: deleted line gone,
       // added line present, untouched line kept.
@@ -741,9 +755,9 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       const { workingCopyId } = await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         { affectedItemId: assembly.id, changeAction: 'revise' },
         user.id,
       )
@@ -751,8 +765,8 @@ describe('ChangeOrderMergeService', () => {
         .delete(itemRelationships)
         .where(eq(itemRelationships.sourceId, workingCopyId!))
 
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const released = await testDb.db
         .select()
@@ -774,12 +788,12 @@ describe('ChangeOrderMergeService', () => {
   describe('mergeBranchToMain', () => {
     it('throws error when branch not found', async () => {
       const nonExistentId = '00000000-0000-0000-0000-000000000000'
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       await expect(
         ChangeOrderMergeService.mergeBranchToMain(
           nonExistentId,
-          eco.id,
+          changeOrder.id,
           user.id,
         ),
       ).rejects.toThrow(NotFoundError)
@@ -788,35 +802,39 @@ describe('ChangeOrderMergeService', () => {
     it('throws error when branch is not ECO type', async () => {
       // Get main branch (which is not an ECO branch)
       const mainBranch = await BranchService.getMainBranch(designId)
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       await expect(
         ChangeOrderMergeService.mergeBranchToMain(
           mainBranch!.id,
-          eco.id,
+          changeOrder.id,
           user.id,
         ),
       ).rejects.toThrow(ValidationError)
     })
 
     it('throws error when no changes to merge', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
       await expect(
-        ChangeOrderMergeService.mergeBranchToMain(branch.id, eco.id, user.id),
+        ChangeOrderMergeService.mergeBranchToMain(
+          branch.id,
+          changeOrder.id,
+          user.id,
+        ),
       ).rejects.toThrow(ValidationError)
     })
 
     it('merges added items and assigns revision A', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -845,7 +863,7 @@ describe('ChangeOrderMergeService', () => {
       // Merge
       const result = await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -858,10 +876,10 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('merges modified items and increments revision', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -890,7 +908,7 @@ describe('ChangeOrderMergeService', () => {
       // Merge
       const result = await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -899,10 +917,10 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('releases a never-released part as A, not B', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -940,7 +958,7 @@ describe('ChangeOrderMergeService', () => {
 
       const result = await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -948,10 +966,10 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('marks deleted items as obsolete', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -980,7 +998,7 @@ describe('ChangeOrderMergeService', () => {
       // Merge
       const result = await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -999,10 +1017,10 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('creates merge commit with revision information', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1029,12 +1047,15 @@ describe('ChangeOrderMergeService', () => {
       // Merge
       const result = await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
       expect(result.mergeCommit).toBeDefined()
-      expect(result.mergeCommit.message).toContain('Merged ECO branch')
+      // The merge commit names the branch and the change order with its kind
+      expect(result.mergeCommit.message).toMatch(
+        /^Merged eco\/.+ for .+ \(ECO\)$/,
+      )
     })
   })
 
@@ -1089,10 +1110,10 @@ describe('ChangeOrderMergeService', () => {
     }
 
     it('keeps files reachable on the released revision of an added item', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1119,7 +1140,7 @@ describe('ChangeOrderMergeService', () => {
 
       await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1158,10 +1179,10 @@ describe('ChangeOrderMergeService', () => {
       // CAD released on main against revision A.
       await attachFile(part.id, { name: 'revA.step' })
 
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1179,7 +1200,7 @@ describe('ChangeOrderMergeService', () => {
 
       await ChangeOrderMergeService.mergeBranchToMain(
         branch.id,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1217,9 +1238,9 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('file-revise', 'Released')
       await attachFile(part.id, { name: 'drawing.pdf', category: 'drawing' })
 
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'revise',
@@ -1228,9 +1249,9 @@ describe('ChangeOrderMergeService', () => {
         targetRevision: 'B',
         createdBy: user.id,
       })
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const revisionB = takeFirst(
         await testDb.db
@@ -1248,9 +1269,9 @@ describe('ChangeOrderMergeService', () => {
 
   describe('previewRelease', () => {
     it('returns empty preview when no designs associated', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.designs).toHaveLength(0)
       expect(preview.totalItems).toBe(0)
@@ -1269,16 +1290,16 @@ describe('ChangeOrderMergeService', () => {
       // Regression: an initial-release ECO whose parts were added as
       // affected items (no branch content) previewed "0 items" while the
       // release applied them anyway — the preview only walked branches.
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       const part = await createPart('affected-preview', 'Draft')
 
       await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         { affectedItemId: part.id, changeAction: 'release' },
         user.id,
       )
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.totalItems).toBe(1)
       const allItems = preview.designs.flatMap((d) => d.items)
@@ -1290,16 +1311,16 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('returns preview with items and revisions', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
       // Associate design with ECO
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
@@ -1315,7 +1336,7 @@ describe('ChangeOrderMergeService', () => {
         changeType: 'added',
       })
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.designs).toHaveLength(1)
       expect(preview.designs[0]!.designName).toBe('Test Design')
@@ -1328,16 +1349,16 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('returns canRelease true when ECO is approved and no conflicts', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
       // Associate design with ECO
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
@@ -1354,25 +1375,25 @@ describe('ChangeOrderMergeService', () => {
       })
 
       // Approve the ECO
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.canRelease).toBe(true)
       expect(preview.allConflicts).toHaveLength(0)
     })
 
     it('still allows release when items are checked out', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
       // Associate design with ECO
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
@@ -1390,9 +1411,9 @@ describe('ChangeOrderMergeService', () => {
       })
 
       // Approve the ECO
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       // The release checks items in for you, so a held checkout is reported as
       // a warning and does not make the preview say "cannot release"
@@ -1406,16 +1427,16 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('calculates correct revision for modified items', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
       // Associate design with ECO
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
@@ -1443,7 +1464,7 @@ describe('ChangeOrderMergeService', () => {
         changeType: 'modified',
       })
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.designs[0]!.items[0]).toMatchObject({
         currentRevision: 'C',
@@ -1458,16 +1479,16 @@ describe('ChangeOrderMergeService', () => {
      * branch's placeholder revision) and the affected-item row checkout
      * registered against main's released row.
      */
-    async function ecoWithCheckedOutPart(suffix: string) {
-      const eco = await createChangeOrder()
+    async function changeOrderWithCheckedOutPart(suffix: string) {
+      const changeOrder = await createChangeOrder()
       const part = await createPart(suffix, 'Draft')
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId,
         branchId: branch.id,
         mergeStatus: 'pending',
@@ -1497,7 +1518,7 @@ describe('ChangeOrderMergeService', () => {
         user.id,
       )
 
-      return { eco, part, branch }
+      return { eco: changeOrder, part, branch }
     }
 
     it('lists a checked-out item once, at the revision the release will assign', async () => {
@@ -1507,9 +1528,10 @@ describe('ChangeOrderMergeService', () => {
       // figure was right either: the branch row reported its placeholder
       // revision bumped to "A", main's row reported "A" -> "A", and the
       // release then assigned "B".
-      const { eco, part } = await ecoWithCheckedOutPart('preview-dedupe')
+      const { eco: changeOrder, part } =
+        await changeOrderWithCheckedOutPart('preview-dedupe')
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       const rows = preview.designs
         .flatMap((d) => d.items)
@@ -1523,8 +1545,11 @@ describe('ChangeOrderMergeService', () => {
       expect(preview.totalItems).toBe(1)
 
       // What a preview is for: the letter it promises is the letter assigned
-      await approveEco(eco.id)
-      const merged = await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      const merged = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
       expect(
         merged.designs[0]!.mergeResult.revisionsAssigned[part.itemNumber],
       ).toBe(rows[0]!.newRevision)
@@ -1538,15 +1563,15 @@ describe('ChangeOrderMergeService', () => {
       // and registered nothing, so the branch carried modified content the
       // affected-items list did not show, and the preview refused the
       // release with no way forward short of re-adding the item by hand.
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       const part = await createPart('eager-mint', 'Released')
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId,
         branchId: branch.id,
         mergeStatus: 'pending',
@@ -1568,9 +1593,9 @@ describe('ChangeOrderMergeService', () => {
       )
 
       // What reviewers see: the mint registered the item, as 'revise' (the
-      // action the released row implies — approveEco's backstop sync below
+      // action the released row implies — approveChangeOrder's backstop sync below
       // must find nothing left to register)
-      const affected = await ChangeOrderService.getAffectedItems(eco.id)
+      const affected = await ChangeOrderService.getAffectedItems(changeOrder.id)
       const listed = affected.filter(
         (a) => a.affectedItemMasterId === part.masterId,
       )
@@ -1579,7 +1604,9 @@ describe('ChangeOrderMergeService', () => {
 
       // The reviewer's preview (still in Draft, so not yet releasable for
       // workflow-reachability reasons) reports no unlisted branch content
-      const draftPreview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const draftPreview = await ChangeOrderMergeService.previewMerge(
+        changeOrder.id,
+      )
       expect(
         draftPreview.validationIssues.some((i) =>
           i.includes('not in its affected items list'),
@@ -1587,8 +1614,8 @@ describe('ChangeOrderMergeService', () => {
       ).toBe(false)
 
       // Once approved, the preview says it will release...
-      await approveEco(eco.id)
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      await approveChangeOrder(changeOrder.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
       expect(preview.canRelease).toBe(true)
       const previewed = preview.designs
         .flatMap((d) => d.items)
@@ -1596,7 +1623,10 @@ describe('ChangeOrderMergeService', () => {
       expect(previewed).toHaveLength(1)
 
       // ...and the release assigns the letter the preview promised
-      const merged = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const merged = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
       expect(
         merged.designs[0]!.mergeResult.revisionsAssigned[part.itemNumber],
       ).toBe(previewed[0]!.newRevision)
@@ -1608,11 +1638,12 @@ describe('ChangeOrderMergeService', () => {
       // released change order bumped that revision a second time (B -> C) and
       // validateMerge read the row the merge had just promoted onto main as
       // someone else's concurrent modification of it.
-      const { eco, part } = await ecoWithCheckedOutPart('preview-released')
-      await approveEco(eco.id)
+      const { eco: changeOrder, part } =
+        await changeOrderWithCheckedOutPart('preview-released')
+      await approveChangeOrder(changeOrder.id)
 
       const outcome = await ChangeOrderService.executeWorkflowTransition(
-        eco.id,
+        changeOrder.id,
         'Released',
         user.id,
       )
@@ -1623,7 +1654,7 @@ describe('ChangeOrderMergeService', () => {
         ],
       ).toBe('B')
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.alreadyReleased).toBe(true)
       expect(preview.designs).toHaveLength(0)
@@ -1640,10 +1671,10 @@ describe('ChangeOrderMergeService', () => {
 
   describe('validateMerge advanced scenarios', () => {
     it('returns canMerge: true when branch has valid changes', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1668,10 +1699,10 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('detects concurrent modification conflicts', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1744,10 +1775,10 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('does not flag concurrent modification for revision-only changes', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1838,10 +1869,10 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('flags a concurrent change confined to the extension table', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1928,12 +1959,12 @@ describe('ChangeOrderMergeService', () => {
       const part2 = await createPart('multi-item2', 'Draft')
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected items
       await testDb.db.insert(changeOrderAffectedItems).values([
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           affectedItemId: part1.id,
           affectedItemMasterId: part1.masterId,
           changeAction: 'release',
@@ -1942,7 +1973,7 @@ describe('ChangeOrderMergeService', () => {
           createdBy: user.id,
         },
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           affectedItemId: part2.id,
           affectedItemMasterId: part2.masterId,
           changeAction: 'release',
@@ -1952,10 +1983,13 @@ describe('ChangeOrderMergeService', () => {
         },
       ])
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.totalRevisionsAssigned).toBe(2)
 
@@ -1972,11 +2006,11 @@ describe('ChangeOrderMergeService', () => {
       const part2 = await createPart('commit-d2', 'Draft')
 
       // Create ECO and add affected items
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       await testDb.db.insert(changeOrderAffectedItems).values([
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           affectedItemId: part1.id,
           affectedItemMasterId: part1.masterId,
           changeAction: 'release',
@@ -1985,7 +2019,7 @@ describe('ChangeOrderMergeService', () => {
           createdBy: user.id,
         },
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           affectedItemId: part2.id,
           affectedItemMasterId: part2.masterId,
           changeAction: 'release',
@@ -1995,18 +2029,23 @@ describe('ChangeOrderMergeService', () => {
         },
       ])
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       // Verify release commits were created on the design's main branch
       const { commits } = await import('@/lib/db/schema')
-      const ecoItem = await ItemService.findById(eco.id)
+      const changeOrderItem = await ItemService.findById(changeOrder.id)
       const releaseCommits = await testDb.db
         .select()
         .from(commits)
-        .where(eq(commits.message, `Released via ECO: ${ecoItem?.itemNumber}`))
+        .where(
+          eq(
+            commits.message,
+            `Released via ${changeOrderItem?.itemNumber} (ECO)`,
+          ),
+        )
 
       // Should have one commit for the design
       expect(releaseCommits.length).toBe(1)
@@ -2016,13 +2055,13 @@ describe('ChangeOrderMergeService', () => {
   describe('baseline ECO functionality', () => {
     it('defaults isBaseline to false when creating ECO', async () => {
       // Create standard ECO (without baseline flag)
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Query change_orders table directly to verify default behavior
       const [dbRecord] = await testDb.db
         .select()
         .from(changeOrders)
-        .where(eq(changeOrders.itemId, eco.id))
+        .where(eq(changeOrders.itemId, changeOrder.id))
 
       expect(dbRecord).toMatchObject({
         isBaseline: false,
@@ -2034,17 +2073,17 @@ describe('ChangeOrderMergeService', () => {
   // Give Parts a promote mapping (Released → Obsolete, assigns revision).
   // The test transaction rolls back, so this is local to the test — but the
   // registry memoizes lifecycle definitions, so a write straight to the table
-  // has to drop the memo the way WorkflowService.update does.
+  // has to drop the memo the way LifecycleDefinitionService.update does.
   async function enablePromoteOnParts() {
     const lifecycle = takeFirst(
       await testDb.db
         .select()
-        .from(workflowDefinitions)
-        .where(eq(workflowDefinitions.id, LIFECYCLE_IDS.part)),
+        .from(lifecycleDefinitions)
+        .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.part)),
     )
     const definition = lifecycle.definition as Record<string, unknown>
     await testDb.db
-      .update(workflowDefinitions)
+      .update(lifecycleDefinitions)
       .set({
         definition: {
           ...definition,
@@ -2058,7 +2097,7 @@ describe('ChangeOrderMergeService', () => {
           },
         },
       })
-      .where(eq(workflowDefinitions.id, LIFECYCLE_IDS.part))
+      .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.part))
 
     ItemTypeRegistry.invalidateLifecycleCache()
   }
@@ -2066,11 +2105,11 @@ describe('ChangeOrderMergeService', () => {
   describe('affected-item actions alongside a merging branch', () => {
     // An ECO branch carrying real content, so the branch merge runs and the
     // affected-items fallback path is skipped.
-    async function ecoWithBranchContent() {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+    async function changeOrderWithBranchContent() {
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -2099,23 +2138,23 @@ describe('ChangeOrderMergeService', () => {
         changeType: 'added',
       })
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId,
         branchId: branch.id,
         mergeStatus: 'pending',
       })
 
-      return eco
+      return changeOrder
     }
 
     it('promotes an affected item even when a branch merges', async () => {
       await enablePromoteOnParts()
 
       const part = await createPart('promo', 'Released')
-      const eco = await ecoWithBranchContent()
+      const changeOrder = await changeOrderWithBranchContent()
 
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'promote',
@@ -2124,8 +2163,8 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       // The branch merge never performs a promote, so gating the
       // affected-item pass on an action allow-list dropped this silently:
@@ -2137,10 +2176,10 @@ describe('ChangeOrderMergeService', () => {
 
     it('obsoletes an affected item even when a branch merges', async () => {
       const part = await createPart('obs-branch', 'Released')
-      const eco = await ecoWithBranchContent()
+      const changeOrder = await changeOrderWithBranchContent()
 
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'obsolete',
@@ -2149,16 +2188,18 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const obsoleted = await ItemService.findById(part.id)
       expect(obsoleted?.state).toBe('Obsolete')
     })
 
     it('refuses to release branch content the change order does not list', async () => {
-      const eco = await ecoWithBranchContent()
-      const ecoDesigns = await ChangeOrderService.getEcoDesigns(eco.id)
+      const changeOrder = await changeOrderWithBranchContent()
+      const ecoDesigns = await ChangeOrderService.getChangeOrderDesigns(
+        changeOrder.id,
+      )
       const branchId = ecoDesigns[0]!.branchId!
 
       // A second item edited on the branch without ever being added to the
@@ -2191,18 +2232,18 @@ describe('ChangeOrderMergeService', () => {
         changeType: 'modified',
       })
 
-      // Deliberately not calling approveEco's registration sync
+      // Deliberately not calling approveChangeOrder's registration sync
       await testDb.db
         .update(items)
         .set({ state: 'Approved' })
-        .where(eq(items.id, eco.id))
+        .where(eq(items.id, changeOrder.id))
       await testDb.db
-        .update(workflowInstances)
+        .update(lifecycleInstances)
         .set({ currentState: 'Approved' })
-        .where(eq(workflowInstances.itemId, eco.id))
+        .where(eq(lifecycleInstances.itemId, changeOrder.id))
 
       await expect(
-        ChangeOrderMergeService.merge(eco.id, user.id),
+        ChangeOrderMergeService.merge(changeOrder.id, user.id),
       ).rejects.toThrow(ValidationError)
 
       // Nothing released
@@ -2216,10 +2257,10 @@ describe('ChangeOrderMergeService', () => {
       // allows from Released. Applying it unchecked would force a Draft item
       // straight to Obsolete.
       const part = await createPart('bad-action', 'Draft')
-      const eco = await ecoWithBranchContent()
+      const changeOrder = await changeOrderWithBranchContent()
 
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'obsolete',
@@ -2228,10 +2269,10 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       await expect(
-        ChangeOrderMergeService.merge(eco.id, user.id),
+        ChangeOrderMergeService.merge(changeOrder.id, user.id),
       ).rejects.toThrow(ValidationError)
     })
   })
@@ -2240,10 +2281,10 @@ describe('ChangeOrderMergeService', () => {
     // Requirements release from 'Approved', not from the state they are
     // created in — the shape that made this fail. Creating one on the branch
     // is the author's whole interaction: no checkout, no affected-items call.
-    async function authorRequirementOnEco() {
-      const eco = await createChangeOrder()
-      const ecoDesign = await ChangeOrderService.addDesignToEco(
-        eco.id,
+    async function authorRequirementOnChangeOrder() {
+      const changeOrder = await createChangeOrder()
+      const changeOrderDesign = await ChangeOrderService.addDesign(
+        changeOrder.id,
         designId,
         user.id,
       )
@@ -2255,7 +2296,7 @@ describe('ChangeOrderMergeService', () => {
           name: 'Authored under this ECO',
           designId,
         } as any,
-        ecoDesign.branchId!,
+        changeOrderDesign.branchId!,
         'Authored on the ECO',
         user.id,
       )
@@ -2264,11 +2305,11 @@ describe('ChangeOrderMergeService', () => {
       const created = takeFirst(
         await testDb.db.select().from(items).where(eq(items.id, item.id!)),
       )
-      return { eco, item: created }
+      return { eco: changeOrder, item: created }
     }
 
     it('lists them in scope, even though release does not map from their state', async () => {
-      const { eco, item } = await authorRequirementOnEco()
+      const { eco: changeOrder, item } = await authorRequirementOnChangeOrder()
 
       // The state it was created in is not the one `release` maps from
       expect(item.state).toBe('Draft')
@@ -2280,7 +2321,7 @@ describe('ChangeOrderMergeService', () => {
         ),
       ).toMatchObject({ valid: false })
 
-      const affected = await ChangeOrderService.getAffectedItems(eco.id)
+      const affected = await ChangeOrderService.getAffectedItems(changeOrder.id)
       const listed = affected.find(
         (a) => a.affectedItemMasterId === item.masterId,
       )
@@ -2289,20 +2330,20 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('releases them without any manual scope work', async () => {
-      const { eco, item } = await authorRequirementOnEco()
+      const { eco: changeOrder, item } = await authorRequirementOnChangeOrder()
 
-      // Deliberately not approveEco(): its registration loop is what this
+      // Deliberately not approveChangeOrder(): its registration loop is what this
       // path must no longer need.
       await testDb.db
         .update(items)
         .set({ state: 'Approved' })
-        .where(eq(items.id, eco.id))
+        .where(eq(items.id, changeOrder.id))
       await testDb.db
-        .update(workflowInstances)
+        .update(lifecycleInstances)
         .set({ currentState: 'Approved' })
-        .where(eq(workflowInstances.itemId, eco.id))
+        .where(eq(lifecycleInstances.itemId, changeOrder.id))
 
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const versions = await testDb.db
         .select()
@@ -2314,24 +2355,24 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('previews as releasable rather than reporting a lifecycle violation', async () => {
-      const { eco } = await authorRequirementOnEco()
+      const { eco: changeOrder } = await authorRequirementOnChangeOrder()
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.validationIssues).toEqual([])
       expect(preview.totalItems).toBe(1)
     })
 
     it('reports branch content the change order does not list, before release', async () => {
-      const { eco, item } = await authorRequirementOnEco()
+      const { eco: changeOrder, item } = await authorRequirementOnChangeOrder()
 
       // Scope removed behind the merge's back — legacy rows, or content that
       // arrived by some path that never registered it
       await testDb.db
         .delete(changeOrderAffectedItems)
-        .where(eq(changeOrderAffectedItems.changeOrderId, eco.id))
+        .where(eq(changeOrderAffectedItems.changeOrderId, changeOrder.id))
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       expect(preview.canRelease).toBe(false)
       expect(
@@ -2341,7 +2382,7 @@ describe('ChangeOrderMergeService', () => {
       ).toBe(true)
       // …and the release itself still refuses, for the same reason
       await expect(
-        ChangeOrderMergeService.merge(eco.id, user.id),
+        ChangeOrderMergeService.merge(changeOrder.id, user.id),
       ).rejects.toThrow(ValidationError)
     })
   })
@@ -2353,11 +2394,11 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('wc-fallback', 'Released')
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected item without workingCopyId (will use fallback path)
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'revise',
@@ -2367,10 +2408,13 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.totalRevisionsAssigned).toBe(1)
 
@@ -2406,10 +2450,10 @@ describe('ChangeOrderMergeService', () => {
       })
 
       // Create ECO with branch
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -2443,16 +2487,19 @@ describe('ChangeOrderMergeService', () => {
 
       // Associate design with ECO
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release - should use the working copy from the branch via merge
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.designs.length).toBe(1)
       expect(result.designs[0]!.mergeResult.itemsMerged).toBe(1)
@@ -2465,16 +2512,16 @@ describe('ChangeOrderMergeService', () => {
 
     // Helper: put a Released part on main and hand back a ready ECO branch
     // carrying a working copy of it, forked from `baseItemId`.
-    async function ecoWithWorkingCopy(
+    async function changeOrderWithWorkingCopy(
       part: { id: string; masterId: string; itemNumber: string; name?: string },
       baseItemId: string,
       workingRevision: string,
       workingName?: string,
     ) {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -2505,14 +2552,14 @@ describe('ChangeOrderMergeService', () => {
       })
 
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId,
         branchId: branch.id,
         mergeStatus: 'pending',
       })
 
-      await approveEco(eco.id)
-      return { eco, workingCopy }
+      await approveChangeOrder(changeOrder.id)
+      return { eco: changeOrder, workingCopy }
     }
 
     it('never leaves two current versions when ECOs release in sequence', async () => {
@@ -2531,7 +2578,7 @@ describe('ChangeOrderMergeService', () => {
       // (weight, material, ...). validateMerge compares only `items`
       // columns, so it raises no concurrent-modification conflict and the
       // second merge proceeds over the first.
-      const first = await ecoWithWorkingCopy(
+      const first = await changeOrderWithWorkingCopy(
         part,
         part.id,
         '-aaaaaaaa',
@@ -2543,7 +2590,7 @@ describe('ChangeOrderMergeService', () => {
       // as-is would supersede a version that is no longer main's current and
       // leave both B and C claiming isCurrent. It is refused instead: the
       // base it was built on has been superseded.
-      const second = await ecoWithWorkingCopy(
+      const second = await changeOrderWithWorkingCopy(
         part,
         part.id,
         '-bbbbbbbb',
@@ -2577,8 +2624,12 @@ describe('ChangeOrderMergeService', () => {
         changeType: null,
       })
 
-      const { eco } = await ecoWithWorkingCopy(part, part.id, '-cccccccc')
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      const { eco: changeOrder } = await changeOrderWithWorkingCopy(
+        part,
+        part.id,
+        '-cccccccc',
+      )
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       // A branch merge of a modified item is a revise, so the version it
       // replaces follows revise.oldVersionState rather than staying
@@ -2602,12 +2653,9 @@ describe('ChangeOrderMergeService', () => {
       // 'DRAFT' is what saveChanges and rebase historically wrote. Read as a
       // released revision it took the legacy path and minted 'A' from the
       // marker text - colliding with the existing rev A, or regressing main.
-      const { eco, workingCopy } = await ecoWithWorkingCopy(
-        part,
-        part.id,
-        'DRAFT',
-      )
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      const { eco: changeOrder, workingCopy } =
+        await changeOrderWithWorkingCopy(part, part.id, 'DRAFT')
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const released = await ItemService.findById(workingCopy.id)
       expect(released?.revision).toBe('B')
@@ -2649,10 +2697,10 @@ describe('ChangeOrderMergeService', () => {
           .returning(),
       )
 
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -2683,14 +2731,14 @@ describe('ChangeOrderMergeService', () => {
       })
 
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
       })
 
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const notifications = await testDb.db
         .select()
@@ -2699,7 +2747,7 @@ describe('ChangeOrderMergeService', () => {
 
       expect(notifications.length).toBe(1)
       expect(notifications[0]!.sourceDesignId).toBe(designId)
-      expect(notifications[0]!.sourceEcoId).toBe(eco.id)
+      expect(notifications[0]!.sourceEcoId).toBe(changeOrder.id)
       expect(notifications[0]!.status).toBe('pending')
 
       // The payload must describe the change well enough to review it.
@@ -2724,10 +2772,10 @@ describe('ChangeOrderMergeService', () => {
         changeType: null,
       })
 
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -2758,14 +2806,14 @@ describe('ChangeOrderMergeService', () => {
       })
 
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
       })
 
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const notifications = await testDb.db
         .select()
@@ -2778,10 +2826,10 @@ describe('ChangeOrderMergeService', () => {
 
   describe('auto-checkin before merge', () => {
     it('releases checkout locks when merging branch', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -2818,16 +2866,19 @@ describe('ChangeOrderMergeService', () => {
 
       // Associate design with ECO
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release should auto-checkin items before merge
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.designs.length).toBe(1)
       expect(result.designs[0]!.mergeResult.itemsAdded).toBe(1)
@@ -2845,16 +2896,16 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('skip-branch', 'Draft')
 
       // Create ECO with a branch but no changes on it
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
       // Associate design with ECO (branch has no changes)
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
@@ -2862,7 +2913,7 @@ describe('ChangeOrderMergeService', () => {
 
       // Add affected item directly (not through branch)
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'release',
@@ -2871,10 +2922,13 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release should skip the empty branch and process affected items
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.totalRevisionsAssigned).toBe(1)
 
@@ -2883,14 +2937,14 @@ describe('ChangeOrderMergeService', () => {
       expect(releasedPart?.state).toBe('Released')
 
       // Verify branch was marked as skipped
-      const ecoDesign = await testDb.db
+      const changeOrderDesign = await testDb.db
         .select()
         .from(changeOrderDesigns)
-        .where(eq(changeOrderDesigns.changeOrderId, eco.id))
+        .where(eq(changeOrderDesigns.changeOrderId, changeOrder.id))
         .limit(1)
         .then((r) => r.at(0))
 
-      expect(ecoDesign?.mergeStatus).toBe('skipped')
+      expect(changeOrderDesign?.mergeStatus).toBe('skipped')
     })
   })
 
@@ -2904,12 +2958,12 @@ describe('ChangeOrderMergeService', () => {
       )
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected items with different actions
       await testDb.db.insert(changeOrderAffectedItems).values([
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           affectedItemId: draftPart.id,
           affectedItemMasterId: draftPart.masterId,
           changeAction: 'release',
@@ -2918,7 +2972,7 @@ describe('ChangeOrderMergeService', () => {
           createdBy: user.id,
         },
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           affectedItemId: releasedPartForObsolete.id,
           affectedItemMasterId: releasedPartForObsolete.masterId,
           changeAction: 'obsolete',
@@ -2928,10 +2982,13 @@ describe('ChangeOrderMergeService', () => {
         },
       ])
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       // 1 revision assigned (release only, obsolete doesn't count)
       expect(result.totalRevisionsAssigned).toBe(1)
@@ -2973,10 +3030,10 @@ describe('ChangeOrderMergeService', () => {
         changeType: null,
       })
 
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -3008,7 +3065,7 @@ describe('ChangeOrderMergeService', () => {
       })
 
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
@@ -3017,7 +3074,7 @@ describe('ChangeOrderMergeService', () => {
       // Affected items that are NOT branch content: state-only actions.
       await testDb.db.insert(changeOrderAffectedItems).values([
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           affectedItemId: eolPart.id,
           affectedItemMasterId: eolPart.masterId,
           changeAction: 'obsolete',
@@ -3026,7 +3083,7 @@ describe('ChangeOrderMergeService', () => {
           createdBy: user.id,
         },
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           affectedItemId: draftPart.id,
           affectedItemMasterId: draftPart.masterId,
           changeAction: 'release',
@@ -3036,9 +3093,12 @@ describe('ChangeOrderMergeService', () => {
         },
       ])
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       // The branch still merged — this does not replace the branch path.
       expect(result.designs.length).toBe(1)
@@ -3062,11 +3122,11 @@ describe('ChangeOrderMergeService', () => {
       const part = await createPart('bad-state', 'Obsolete')
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Try to release an Obsolete item (invalid transition)
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'release',
@@ -3075,19 +3135,19 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Should throw because lifecycle action is invalid
       await expect(
-        ChangeOrderMergeService.merge(eco.id, user.id),
+        ChangeOrderMergeService.merge(changeOrder.id, user.id),
       ).rejects.toThrow(ValidationError)
     })
 
     it('throws error when merge has concurrent modification conflicts', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -3151,17 +3211,17 @@ describe('ChangeOrderMergeService', () => {
 
       // Associate design with ECO
       await testDb.db.insert(changeOrderDesigns).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         designId: designId,
         branchId: branch.id,
         mergeStatus: 'pending',
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Should throw because of concurrent modification conflict
       await expect(
-        ChangeOrderMergeService.merge(eco.id, user.id),
+        ChangeOrderMergeService.merge(changeOrder.id, user.id),
       ).rejects.toThrow(MergeConflictError)
     })
   })
@@ -3183,11 +3243,11 @@ describe('ChangeOrderMergeService', () => {
       )
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected item with release action - item is already Released
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'release',
@@ -3196,10 +3256,13 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       // Revision should still be assigned even though state was skipped
       expect(result.totalRevisionsAssigned).toBe(1)
@@ -3225,11 +3288,11 @@ describe('ChangeOrderMergeService', () => {
       )
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Add affected item with release action
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'release',
@@ -3238,10 +3301,13 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
       // Release the ECO
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       // No revision assigned because it already has one
       expect(result.totalRevisionsAssigned).toBe(0)
@@ -3266,10 +3332,10 @@ describe('ChangeOrderMergeService', () => {
       )
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'release',
@@ -3278,9 +3344,12 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.totalRevisionsAssigned).toBe(1)
 
@@ -3304,10 +3373,10 @@ describe('ChangeOrderMergeService', () => {
       )
 
       // Create ECO
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'release',
@@ -3316,9 +3385,12 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      const result = await ChangeOrderMergeService.merge(eco.id, user.id)
+      const result = await ChangeOrderMergeService.merge(
+        changeOrder.id,
+        user.id,
+      )
 
       expect(result.totalRevisionsAssigned).toBe(1)
 
@@ -3345,30 +3417,32 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('aggregates validation issues from all designs', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
       // Create branches for both designs
-      const { branch: branch1 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
-      const { branch: branch2 } = await BranchService.getOrCreateEcoBranch(
-        secondDesignId,
-        eco.id,
-        user.id,
-      )
+      const { branch: branch1 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
+      const { branch: branch2 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          secondDesignId,
+          changeOrder.id,
+          user.id,
+        )
 
       // Associate both designs
       await testDb.db.insert(changeOrderDesigns).values([
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           designId: designId,
           branchId: branch1.id,
           mergeStatus: 'pending',
         },
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           designId: secondDesignId,
           branchId: branch2.id,
           mergeStatus: 'pending',
@@ -3408,9 +3482,9 @@ describe('ChangeOrderMergeService', () => {
         },
       ])
 
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
 
       // Both designs are validated and both report, each tagged with its own
       // design name — the point of the aggregation. Held checkouts are warnings
@@ -3440,28 +3514,30 @@ describe('ChangeOrderMergeService', () => {
     })
 
     it('does not re-release a design a previous attempt already merged', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
-      const { branch: branch1 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
-      const { branch: branch2 } = await BranchService.getOrCreateEcoBranch(
-        secondDesignId,
-        eco.id,
-        user.id,
-      )
+      const { branch: branch1 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
+      const { branch: branch2 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          secondDesignId,
+          changeOrder.id,
+          user.id,
+        )
 
       await testDb.db.insert(changeOrderDesigns).values([
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           designId,
           branchId: branch1.id,
           mergeStatus: 'pending',
         },
         {
-          changeOrderId: eco.id,
+          changeOrderId: changeOrder.id,
           designId: secondDesignId,
           branchId: branch2.id,
           mergeStatus: 'pending',
@@ -3530,8 +3606,8 @@ describe('ChangeOrderMergeService', () => {
         changeType: 'modified',
       })
 
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const revisionAfterFirst = await testDb.db
         .select({ revision: items.revision })
@@ -3544,7 +3620,7 @@ describe('ChangeOrderMergeService', () => {
       // order pre-final so the user can try again. The retry must not release
       // the designs that already succeeded a second time — without a
       // mergeStatus guard the per-design loop bumped their revisions again.
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const revisionAfterRetry = await testDb.db
         .select({ revision: items.revision })
@@ -3590,7 +3666,7 @@ describe('ChangeOrderMergeService', () => {
   // letter after main's current revision, and leaves exactly one current row.
   // ================================================================
 
-  describe('revise bumps from main current revision, not the pinned row', () => {
+  describe('revise acts on main current version, not the pinned row', () => {
     async function currentRow(masterId: string) {
       return testDb.db
         .select({ id: items.id, revision: items.revision })
@@ -3611,18 +3687,18 @@ describe('ChangeOrderMergeService', () => {
      * association and an ECO branch but nothing on it - the shape that sends
      * the release down the affected-items pass rather than a branch merge.
      */
-    async function ecoListing(itemId: string, masterId: string) {
-      const eco = await createChangeOrder()
+    async function changeOrderListing(itemId: string, masterId: string) {
+      const changeOrder = await createChangeOrder()
 
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await testDb.db
         .insert(changeOrderDesigns)
         .values({
-          changeOrderId: eco.id!,
+          changeOrderId: changeOrder.id!,
           designId,
           branchId: branch.id,
           mergeStatus: 'pending',
@@ -3630,7 +3706,7 @@ describe('ChangeOrderMergeService', () => {
         .onConflictDoNothing()
 
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id!,
+        changeOrderId: changeOrder.id!,
         affectedItemId: itemId,
         affectedItemMasterId: masterId,
         changeAction: 'revise',
@@ -3639,12 +3715,12 @@ describe('ChangeOrderMergeService', () => {
         createdBy: user.id,
       })
 
-      return eco
+      return changeOrder
     }
 
-    async function releaseEco(ecoId: string) {
-      await approveEco(ecoId)
-      await ChangeOrderMergeService.merge(ecoId, user.id)
+    async function releaseChangeOrder(changeOrderId: string) {
+      await approveChangeOrder(changeOrderId)
+      await ChangeOrderMergeService.merge(changeOrderId, user.id)
     }
 
     /**
@@ -3665,22 +3741,58 @@ describe('ChangeOrderMergeService', () => {
       )
     }
 
+    /**
+     * Unrelated content on the change order's branch, so its branch merges
+     * and the masters it lists fall to the remaining-actions pass.
+     */
+    async function addUnrelatedBranchContent(changeOrderId: string) {
+      const branchId = (
+        await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
+      ).at(0)?.branchId
+      expect(branchId).toBeTruthy()
+
+      const branchNewPart = takeFirst(
+        await testDb.db
+          .insert(items)
+          .values({
+            itemNumber: `PN-${uniquePrefix}-${Math.random().toString(36).slice(2, 7)}`,
+            itemType: 'Part',
+            revision: '-abcdef12',
+            name: 'Added on branch',
+            state: 'Draft',
+            masterId: randomUUID(),
+            designId,
+            isCurrent: false,
+            createdBy: user.id,
+            modifiedBy: user.id,
+          })
+          .returning(),
+      )
+      await testDb.db.insert(branchItems).values({
+        branchId: branchId!,
+        itemMasterId: branchNewPart.masterId,
+        currentItemId: branchNewPart.id,
+        baseItemId: null,
+        changeType: 'added',
+      })
+    }
+
     it('mints C when the pinned row is a letter behind main (no working copy)', async () => {
       const part = await createPart('pinned-nowc', 'Released')
 
       // Two change orders scoped while the part was at A, released in turn -
       // nothing stops a master being listed by more than one open ECO.
-      const first = await ecoListing(part.id, part.masterId)
-      const second = await ecoListing(part.id, part.masterId)
+      const first = await changeOrderListing(part.id, part.masterId)
+      const second = await changeOrderListing(part.id, part.masterId)
 
-      await releaseEco(first.id)
+      await releaseChangeOrder(first.id)
       expect((await currentRow(part.masterId))?.revision).toBe('B')
 
       // Bumping the pinned 'A' produced 'B' a second time, which the
       // (itemNumber, revision, designId, itemType) unique index rejects - and
       // since a stale base is deterministic rather than a race, the
       // serializable retry reproduced it three times and the release threw.
-      await releaseEco(second.id)
+      await releaseChangeOrder(second.id)
 
       await expectRevisions(part.masterId, {
         current: 'C',
@@ -3701,33 +3813,34 @@ describe('ChangeOrderMergeService', () => {
       )
       expect(workingCopyId).toBeTruthy()
 
-      const first = await ecoListing(part.id, part.masterId)
-      await releaseEco(first.id)
+      const first = await changeOrderListing(part.id, part.masterId)
+      await releaseChangeOrder(first.id)
       expect((await currentRow(part.masterId))?.revision).toBe('B')
 
       // Drop this change order's branch content so phase 1 finds nothing to
-      // merge and the affected-items pass runs, still holding the working
-      // copy. That copy carries a branch placeholder revision, so its letter
-      // comes from the base - which must be main's B, not the pinned A.
-      for (const ecoDesign of await ChangeOrderService.getEcoDesigns(
+      // merge and the affected-items pass runs. The working copy survives as
+      // an orphan, but a working copy is branch content: with the branch row
+      // gone there is nothing to release from it, and the new version comes
+      // from main's current B - not from the pinned A, and not from the copy.
+      for (const changeOrderDesign of await ChangeOrderService.getChangeOrderDesigns(
         second.id,
       )) {
-        if (!ecoDesign.branchId) continue
+        if (!changeOrderDesign.branchId) continue
         await testDb.db
           .delete(branchItems)
           .where(
             and(
-              eq(branchItems.branchId, ecoDesign.branchId),
+              eq(branchItems.branchId, changeOrderDesign.branchId),
               eq(branchItems.itemMasterId, part.masterId),
             ),
           )
       }
 
-      await releaseEco(second.id)
+      await releaseChangeOrder(second.id)
 
       const current = await currentRow(part.masterId)
       expect(current?.revision).toBe('C')
-      expect(current?.id).toBe(workingCopyId)
+      expect(current?.id).not.toBe(workingCopyId)
 
       const rows = await revisionsOf(part.masterId)
       expect(rows.filter((r) => r.isCurrent)).toHaveLength(1)
@@ -3737,14 +3850,14 @@ describe('ChangeOrderMergeService', () => {
     it('mints C for an affected item alongside a branch that does merge', async () => {
       const part = await createPart('pinned-phase3', 'Released')
 
-      const first = await ecoListing(part.id, part.masterId)
-      const second = await ecoListing(part.id, part.masterId)
+      const first = await changeOrderListing(part.id, part.masterId)
+      const second = await changeOrderListing(part.id, part.masterId)
 
       // Unrelated content on the second change order's branch, so its branch
       // merge runs and this master falls to the remaining-actions pass.
-      const branchId = (await ChangeOrderService.getEcoDesigns(second.id)).at(
-        0,
-      )?.branchId
+      const branchId = (
+        await ChangeOrderService.getChangeOrderDesigns(second.id)
+      ).at(0)?.branchId
       expect(branchId).toBeTruthy()
 
       const branchNewPart = takeFirst(
@@ -3772,10 +3885,10 @@ describe('ChangeOrderMergeService', () => {
         changeType: 'added',
       })
 
-      await releaseEco(first.id)
+      await releaseChangeOrder(first.id)
       expect((await currentRow(part.masterId))?.revision).toBe('B')
 
-      await releaseEco(second.id)
+      await releaseChangeOrder(second.id)
 
       await expectRevisions(part.masterId, {
         current: 'C',
@@ -3786,22 +3899,22 @@ describe('ChangeOrderMergeService', () => {
     it('mints D when the pinned row is two letters behind, never going backwards', async () => {
       const part = await createPart('pinned-two', 'Released')
 
-      const stale = await ecoListing(part.id, part.masterId)
+      const stale = await changeOrderListing(part.id, part.masterId)
 
-      const first = await ecoListing(part.id, part.masterId)
-      await releaseEco(first.id)
+      const first = await changeOrderListing(part.id, part.masterId)
+      await releaseChangeOrder(first.id)
       const revisionB = await currentRow(part.masterId)
       expect(revisionB?.revision).toBe('B')
 
-      const second = await ecoListing(revisionB!.id, part.masterId)
-      await releaseEco(second.id)
+      const second = await changeOrderListing(revisionB!.id, part.masterId)
+      await releaseChangeOrder(second.id)
       expect((await currentRow(part.masterId))?.revision).toBe('C')
 
       // Two letters behind, so bumping the pin minted 'B' rather than the
       // letter after main's C. A master that walked A -> B -> C still holds B,
       // so that re-mint collides here; had anything left a gap it would not,
       // and the lower letter would have become current and demoted C.
-      await releaseEco(stale.id)
+      await releaseChangeOrder(stale.id)
 
       await expectRevisions(part.masterId, {
         current: 'D',
@@ -3812,10 +3925,10 @@ describe('ChangeOrderMergeService', () => {
     it('previews the letter the release assigns', async () => {
       const part = await createPart('pinned-preview', 'Released')
 
-      const first = await ecoListing(part.id, part.masterId)
-      const second = await ecoListing(part.id, part.masterId)
+      const first = await changeOrderListing(part.id, part.masterId)
+      const second = await changeOrderListing(part.id, part.masterId)
 
-      await releaseEco(first.id)
+      await releaseChangeOrder(first.id)
 
       // The pairing `resolveModifiedRevision` was extracted to guarantee, on
       // the arm that never called it: the preview a reviewer approves from
@@ -3828,19 +3941,143 @@ describe('ChangeOrderMergeService', () => {
       expect(previewed?.currentRevision).toBe('B')
       expect(previewed?.newRevision).toBe('C')
 
-      await releaseEco(second.id)
+      await releaseChangeOrder(second.id)
 
       expect((await currentRow(part.masterId))?.revision).toBe('C')
+    })
+
+    it('retires the version it replaces into the old-version state, with no branch involved', async () => {
+      const part = await createPart('sup-nobranch', 'Released')
+      const changeOrder = await changeOrderListing(part.id, part.masterId)
+      await releaseChangeOrder(changeOrder.id)
+
+      // The branchless pass left the replaced version reading 'Released',
+      // distinguishable from the new one only by isCurrent - and a second
+      // change order that pinned it could release it again
+      const replaced = await ItemService.findById(part.id)
+      expect(replaced?.state).toBe('Superseded')
+      expect(replaced?.isCurrent).toBe(false)
+
+      const current = await currentRow(part.masterId)
+      expect(current?.revision).toBe('B')
+
+      // ...and main's structure resolves to the new version
+      const mainBranch = await BranchService.getMainBranch(designId)
+      const tracking = await testDb.db
+        .select()
+        .from(branchItems)
+        .where(
+          and(
+            eq(branchItems.branchId, mainBranch!.id),
+            eq(branchItems.itemMasterId, part.masterId),
+          ),
+        )
+        .then((r) => r.at(0))
+      expect(tracking?.currentItemId).toBe(current?.id)
+    })
+
+    it('retires the version in service, not the pinned row, alongside a branch that merges', async () => {
+      const part = await createPart('sup-phase3', 'Released')
+      const first = await changeOrderListing(part.id, part.masterId)
+      const second = await changeOrderListing(part.id, part.masterId)
+      await addUnrelatedBranchContent(second.id)
+
+      await releaseChangeOrder(first.id)
+      const revisionB = await currentRow(part.masterId)
+      expect(revisionB?.revision).toBe('B')
+
+      await releaseChangeOrder(second.id)
+
+      // The remaining-actions pass stamped the old-version state onto the
+      // row the change order pinned - A, retired long since - and left B,
+      // the version it actually replaced, reading 'Released'
+      const replaced = await ItemService.findById(revisionB!.id)
+      expect(replaced?.state).toBe('Superseded')
+      expect(replaced?.isCurrent).toBe(false)
+
+      await expectRevisions(part.masterId, {
+        current: 'C',
+        all: ['A', 'B', 'C'],
+      })
+    })
+
+    it('creates the new version from the content in service, not the pinned row', async () => {
+      const part = await createPart('sup-content', 'Released')
+      const stale = await changeOrderListing(part.id, part.masterId)
+
+      // Another change order releases B, renamed
+      const first = await changeOrderListing(part.id, part.masterId)
+      await releaseChangeOrder(first.id)
+      const revisionB = await currentRow(part.masterId)
+      await testDb.db
+        .update(items)
+        .set({ name: 'Renamed at B' })
+        .where(eq(items.id, revisionB!.id))
+
+      await releaseChangeOrder(stale.id)
+
+      // C carries B's content; created from the pinned A it would have
+      // silently reverted the rename
+      const current = await currentRow(part.masterId)
+      expect(current?.revision).toBe('C')
+      expect((await ItemService.findById(current!.id))?.name).toBe(
+        'Renamed at B',
+      )
+    })
+
+    it('previews the revise and the promote applied alongside a merging branch', async () => {
+      await enablePromoteOnParts()
+      // Both created while the design is still clean - branch protection
+      // refuses a direct create on main once it holds a released item
+      const revised = await createPart('prev-revise')
+      const promoted = await createPart('prev-promote')
+      await testDb.db
+        .update(items)
+        .set({ state: 'Released' })
+        .where(inArray(items.id, [revised.id, promoted.id]))
+
+      const changeOrder = await changeOrderListing(revised.id, revised.masterId)
+      await testDb.db.insert(changeOrderAffectedItems).values({
+        changeOrderId: changeOrder.id!,
+        affectedItemId: promoted.id,
+        affectedItemMasterId: promoted.masterId,
+        changeAction: 'promote',
+        currentState: 'Released',
+        currentRevision: 'A',
+        createdBy: user.id,
+      })
+      await addUnrelatedBranchContent(changeOrder.id)
+      await approveChangeOrder(changeOrder.id)
+
+      // Beside a merging branch the preview listed only releases and
+      // obsoletions, while the release also revises and promotes whatever
+      // the branch does not carry - so a reviewer approved from a preview
+      // missing two of the letters the release then assigned
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
+      const rows = preview.designs.flatMap((d) => d.items)
+      expect(
+        rows.find((i) => i.itemNumber === revised.itemNumber),
+      ).toMatchObject({ currentRevision: 'A', newRevision: 'B' })
+      expect(
+        rows.find((i) => i.itemNumber === promoted.itemNumber),
+      ).toMatchObject({ currentRevision: 'A', newRevision: 'B' })
+
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
+
+      expect((await currentRow(revised.masterId))?.revision).toBe('B')
+      const afterPromote = await ItemService.findById(promoted.id)
+      expect(afterPromote?.revision).toBe('B')
+      expect(afterPromote?.state).toBe('Obsolete')
     })
   })
 
   describe('release never uses the stored revision prediction', () => {
     it('recomputes the revision at merge, ignoring targetRevision', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       const part = await createPart('stale-target', 'Released')
 
       await ChangeOrderService.addAffectedItem(
-        eco.id,
+        changeOrder.id,
         { affectedItemId: part.id, changeAction: 'revise' },
         user.id,
       )
@@ -3851,7 +4088,7 @@ describe('ChangeOrderMergeService', () => {
       await testDb.db
         .update(changeOrderAffectedItems)
         .set({ targetRevision: '[' })
-        .where(eq(changeOrderAffectedItems.changeOrderId, eco.id))
+        .where(eq(changeOrderAffectedItems.changeOrderId, changeOrder.id))
 
       // Drop the working copy so the merge takes the no-working-copy path,
       // which is the one that used to prefer the stored value
@@ -3859,8 +4096,8 @@ describe('ChangeOrderMergeService', () => {
         .delete(branchItems)
         .where(eq(branchItems.itemMasterId, part.masterId))
 
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const released = await testDb.db
         .select({ revision: items.revision })
@@ -3944,9 +4181,9 @@ describe('ChangeOrderMergeService', () => {
         .where(eq(items.id, requirement.id))
 
       // An ECO that revises the requirement and nothing else.
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: requirement.id,
         affectedItemMasterId: requirement.masterId,
         changeAction: 'revise',
@@ -3955,8 +4192,8 @@ describe('ChangeOrderMergeService', () => {
         targetRevision: 'B',
         createdBy: user.id,
       })
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const revised = await currentRevision(requirement.masterId)
       expect(revised.id).not.toBe(requirement.id)
@@ -4017,9 +4254,9 @@ describe('ChangeOrderMergeService', () => {
 
       // An ECO that revises the parent and nothing else — the children are
       // untouched, so nothing re-points what they name.
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: parent.id,
         affectedItemMasterId: parent.masterId,
         changeAction: 'revise',
@@ -4028,8 +4265,8 @@ describe('ChangeOrderMergeService', () => {
         targetRevision: 'B',
         createdBy: user.id,
       })
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const revised = await currentRevision(parent.masterId)
       expect(revised.id).not.toBe(parent.id)
@@ -4092,9 +4329,9 @@ describe('ChangeOrderMergeService', () => {
         .set({ state: 'Released' })
         .where(eq(items.id, part.id))
 
-      const eco = await createChangeOrder()
-      const { branchItem } = await ChangeOrderService.checkoutItemToEco(
-        eco.id,
+      const changeOrder = await createChangeOrder()
+      const { branchItem } = await ChangeOrderService.checkoutItem(
+        changeOrder.id,
         part.id,
         user.id,
       )
@@ -4103,8 +4340,8 @@ describe('ChangeOrderMergeService', () => {
         requirementId: requirement.id,
         otherId: other.id,
       })
-      await approveEco(eco.id)
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await approveChangeOrder(changeOrder.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       return { requirement, other, part }
     }
@@ -4183,9 +4420,9 @@ describe('ChangeOrderMergeService', () => {
         .set({ state: 'Released' })
         .where(eq(items.id, revBId))
 
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: revBId,
         affectedItemMasterId: part.masterId,
         changeAction: 'revise',
@@ -4194,15 +4431,15 @@ describe('ChangeOrderMergeService', () => {
         targetRevision: 'B', // stale add-time prediction
         createdBy: user.id,
       })
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
       const previewRow = preview.designs
         .flatMap((d) => d.items)
         .find((i) => i.itemId === revBId)
       expect(previewRow?.newRevision).toBe('C')
 
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const current = takeFirst(
         await testDb.db
@@ -4219,9 +4456,9 @@ describe('ChangeOrderMergeService', () => {
       await enablePromoteOnParts()
 
       const part = await createPart('stale-promote', 'Released')
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
       await testDb.db.insert(changeOrderAffectedItems).values({
-        changeOrderId: eco.id,
+        changeOrderId: changeOrder.id,
         affectedItemId: part.id,
         affectedItemMasterId: part.masterId,
         changeAction: 'promote',
@@ -4232,15 +4469,15 @@ describe('ChangeOrderMergeService', () => {
         targetRevision: 'A',
         createdBy: user.id,
       })
-      await approveEco(eco.id)
+      await approveChangeOrder(changeOrder.id)
 
-      const preview = await ChangeOrderMergeService.previewMerge(eco.id)
+      const preview = await ChangeOrderMergeService.previewMerge(changeOrder.id)
       const previewRow = preview.designs
         .flatMap((d) => d.items)
         .find((i) => i.itemId === part.id)
       expect(previewRow?.newRevision).toBe('B')
 
-      await ChangeOrderMergeService.merge(eco.id, user.id)
+      await ChangeOrderMergeService.merge(changeOrder.id, user.id)
 
       const promoted = await ItemService.findById(part.id)
       expect(promoted?.revision).toBe(previewRow?.newRevision)

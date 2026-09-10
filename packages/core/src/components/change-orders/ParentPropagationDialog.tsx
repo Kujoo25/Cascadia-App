@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ChevronRight, Loader2 } from 'lucide-react'
-import type { BOMTreeNode } from './EcoTreeTable'
+import type { BOMTreeNode } from './ChangeOrderTreeTable'
 import { changeActionOptionsQuery } from '@/lib/query'
 import {
   Badge,
@@ -21,6 +21,8 @@ import {
 } from '@/components/ui'
 import { apiFetch } from '@/lib/api/client'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
+import { formatRevision } from '@/lib/types/lifecycle'
 
 interface AncestorNode {
   itemId: string
@@ -51,6 +53,7 @@ export function ParentPropagationDialog({
   onSuccess,
 }: ParentPropagationDialogProps) {
   const { alert } = useAlertDialog()
+  const { handleError, showWarning } = useErrorHandler()
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [ancestors, setAncestors] = useState<Array<AncestorNode>>([])
@@ -75,12 +78,8 @@ export function ParentPropagationDialog({
       )
 
       setAncestors(response.data.ancestors)
-    } catch {
-      alert({
-        title: 'Error',
-        description: 'Failed to load parent items.',
-        variant: 'destructive',
-      })
+    } catch (error) {
+      handleError(error, { title: 'Failed to load parent items' })
     } finally {
       setLoading(false)
     }
@@ -184,12 +183,10 @@ export function ParentPropagationDialog({
       }
 
       if (itemsToAdd.length === 0) {
-        alert({
-          title: 'Nothing to add',
-          description:
-            'None of the selected items are in a state this change order can act on.',
-          variant: 'destructive',
-        })
+        showWarning(
+          'Nothing to add',
+          'None of the selected items are in a state this change order can act on.',
+        )
         return
       }
 
@@ -202,19 +199,12 @@ export function ParentPropagationDialog({
 
       alert({
         title: 'Items Added',
-        description: `${itemsToAdd.length} item(s) have been added to the ECO.`,
+        description: `${itemsToAdd.length} item(s) have been added to the change order.`,
       })
 
       onSuccess()
     } catch (error) {
-      alert({
-        title: 'Error',
-        description:
-          error instanceof Error
-            ? error.message
-            : 'Failed to add items to ECO.',
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Failed to add items to the change order' })
     } finally {
       setSubmitting(false)
     }
@@ -264,7 +254,7 @@ export function ParentPropagationDialog({
                 </span>
               </div>
               <div className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                Rev {targetItem.revision} ({targetItem.state}) →{' '}
+                Rev {formatRevision(targetItem.revision)} ({targetItem.state}) →{' '}
                 {describeTarget(targetItem.itemId) ?? 'no action available'}
               </div>
             </div>
@@ -297,8 +287,8 @@ export function ParentPropagationDialog({
                         </span>
                       </div>
                       <div className="text-xs text-slate-600 dark:text-slate-400 ml-5">
-                        Rev {ancestor.revision} ({ancestor.state}) →{' '}
-                        {describeTarget(ancestor.itemId)}
+                        Rev {formatRevision(ancestor.revision)} (
+                        {ancestor.state}) → {describeTarget(ancestor.itemId)}
                       </div>
                     </div>
                     <Badge variant="warning" className="text-xs">
@@ -336,7 +326,8 @@ export function ParentPropagationDialog({
                         </span>
                       </div>
                       <div className="text-xs text-slate-600 dark:text-slate-400 ml-5">
-                        Rev {ancestor.revision} ({ancestor.state}) —{' '}
+                        Rev {formatRevision(ancestor.revision)} (
+                        {ancestor.state}) —{' '}
                         {describeTarget(ancestor.itemId) ?? 'no change needed'}
                       </div>
                     </div>

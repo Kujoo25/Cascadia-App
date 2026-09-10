@@ -144,7 +144,7 @@ repeat a procedure at different sequence points. `populate` dedupes; manual adds
   auto-starts the order), `updateStepData`, `updateProgress`, `complete` (sign-off
   routing via the instance's order), `abandon`, `submitSignOff`, `resubmitForApproval`,
   finders by instance / work order / template.
-- **`LifecycleService.transitionFreeItem`** — the one write path for Free-lifecycle
+- **`LifecycleInstanceService.transitionFreeItem`** — the one write path for Free-lifecycle
   state, and where a work order's completion semantics live: entry into a
   `finalKind: 'complete'` state is gated on the traveler
   (`assertReadyForCompletion`) and stamps `completedAt` on the way in. Every door

@@ -11,7 +11,11 @@
  * - none: No revision tracking — released items sit at `NO_REVISION` forever
  */
 
-import { NO_REVISION_MARKER } from '../types/lifecycle'
+import {
+  NO_REVISION_MARKER,
+  UNRELEASED_REVISION_DISPLAY,
+  isWorkingRevisionValue,
+} from '../types/lifecycle'
 import type { RevisionScheme } from '../types/lifecycle'
 
 export class RevisionService {
@@ -88,7 +92,7 @@ export class RevisionService {
    * there anyway.
    */
   static getUnreleasedRevision(): string {
-    return '-'
+    return UNRELEASED_REVISION_DISPLAY
   }
 
   /**
@@ -114,8 +118,7 @@ export class RevisionService {
    * and '-' markers, and empty values.
    */
   static isWorkingRevision(revision: string | null | undefined): boolean {
-    if (!revision) return true
-    return revision === 'DRAFT' || revision === '-' || revision.startsWith('-')
+    return isWorkingRevisionValue(revision)
   }
 
   // ============================================

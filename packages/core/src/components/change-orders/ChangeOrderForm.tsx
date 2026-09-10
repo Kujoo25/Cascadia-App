@@ -242,7 +242,7 @@ export function ChangeOrderForm({
                 value={
                   field.state.value instanceof Date
                     ? field.state.value.toISOString().split('T')[0]
-                    : field.state.value
+                    : (field.state.value ?? '')
                 }
                 onChange={(e) => field.handleChange(e.target.value)}
                 onBlur={field.handleBlur}

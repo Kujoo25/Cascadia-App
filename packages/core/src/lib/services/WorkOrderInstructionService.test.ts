@@ -32,7 +32,6 @@ import {
 import { eq } from 'drizzle-orm'
 import { ItemService } from '../items/services/ItemService'
 import { DesignService } from './DesignService'
-import { LifecycleService } from './LifecycleService'
 import { WorkOrderService } from './WorkOrderService'
 import { WorkOrderInstructionService } from './WorkOrderInstructionService'
 import { InstructionExecutionService } from './InstructionExecutionService'
@@ -51,6 +50,7 @@ import {
   workOrders,
 } from '@/lib/db/schema'
 import { takeFirst } from '@/lib/db/take-first'
+import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
 
 // Import to register item types
 import '@/lib/items/registerItemTypes.server'
@@ -654,7 +654,7 @@ describe('WorkOrderInstructionService', () => {
       expect(await woState(wo.id)).toBe('In Progress')
 
       await expect(
-        LifecycleService.transitionFreeItem(wo.id, 'Complete', user.id),
+        LifecycleInstanceService.transitionFreeItem(wo.id, 'Complete', user.id),
       ).rejects.toThrow(ValidationError)
 
       // Asserted on the row, not on which error was raised — and on
@@ -669,7 +669,11 @@ describe('WorkOrderInstructionService', () => {
         user.id,
         'Inspection waived for this batch',
       )
-      await LifecycleService.transitionFreeItem(wo.id, 'Complete', user.id)
+      await LifecycleInstanceService.transitionFreeItem(
+        wo.id,
+        'Complete',
+        user.id,
+      )
 
       expect(await woState(wo.id)).toBe('Complete')
       const stamped = await completedAt(wo.id)
@@ -677,7 +681,11 @@ describe('WorkOrderInstructionService', () => {
 
       // Re-asserting the goal is a no-op: it must not slide the completion
       // timestamp of a record that is already closed.
-      await LifecycleService.transitionFreeItem(wo.id, 'Complete', user.id)
+      await LifecycleInstanceService.transitionFreeItem(
+        wo.id,
+        'Complete',
+        user.id,
+      )
       expect((await completedAt(wo.id))?.getTime()).toBe(stamped!.getTime())
     })
 

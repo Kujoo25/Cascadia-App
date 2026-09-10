@@ -355,8 +355,8 @@ export default [
   //
   // Still to convert — each conversion deletes its own line:
   //
-  //  - AddDesignToEcoDialog          `fetchDesigns` on open
-  //  - EcoAffectedItemsPanel         `buildGraph` per design structure
+  //  - AddDesignToChangeOrderDialog  `fetchDesigns` on open
+  //  - ChangeOrderAffectedItemsPanel `buildGraph` per design structure
   //  - ParentPropagationDialog       `fetchAncestors` on open
   //  - AddPartToStructureDialog      `handleSearch` behind a debounce
   //  - MembersTab                    `fetchMembers` on mount
@@ -374,8 +374,8 @@ export default [
   //    the edit context through the query client.
   {
     files: [
-      'packages/core/src/components/change-orders/AddDesignToEcoDialog.tsx',
-      'packages/core/src/components/change-orders/EcoAffectedItemsPanel.tsx',
+      'packages/core/src/components/change-orders/AddDesignToChangeOrderDialog.tsx',
+      'packages/core/src/components/change-orders/ChangeOrderAffectedItemsPanel.tsx',
       'packages/core/src/components/change-orders/ParentPropagationDialog.tsx',
       'packages/core/src/components/designs/AddPartToStructureDialog.tsx',
       'packages/core/src/components/designs/MembersTab.tsx',

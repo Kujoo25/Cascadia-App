@@ -122,4 +122,28 @@ function rowDependentStatements(migration) {
   return [...new Set(found)]
 }
 
-export { rowDependentStatements }
+/**
+ * Whether this migration changes rows and nothing else: every statement in it
+ * is an `UPDATE`, `INSERT` or `DELETE`.
+ *
+ * `db:baseline` places a database by comparing its schema with the snapshot
+ * beside each migration, and a migration like this leaves the schema exactly
+ * as it found it — so the placement cannot show whether it has run, stops
+ * before it, and leaves it for `db:migrate`, which then applies it to a
+ * database that may already carry its effect. That is why the backfill check
+ * applies every such migration twice. Anything that is not plainly a write —
+ * a `DO` block included — is read as DDL here: a miss costs one unproven
+ * re-application, a false claim re-runs a `CREATE` against an object that
+ * exists, so the reading is the conservative one.
+ */
+function isDataOnly(migration) {
+  const pieces = migration.sql
+    .flatMap((statement) => bareSql(statement).split(';'))
+    .filter((piece) => piece.trim() !== '')
+  return (
+    pieces.length > 0 &&
+    pieces.every((piece) => /^\s*(update|insert|delete)\s/i.test(piece))
+  )
+}
+
+export { isDataOnly, rowDependentStatements }

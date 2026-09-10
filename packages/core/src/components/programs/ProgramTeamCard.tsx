@@ -179,8 +179,8 @@ export function ProgramTeamCard({ program }: { program: Program }) {
                 </TableCell>
                 <TableCell>
                   <div className="flex flex-wrap gap-1">
-                    {flagBadge('Create ECO', member.canCreateEco)}
-                    {flagBadge('Approve ECO', member.canApproveEco)}
+                    {flagBadge('Create change orders', member.canCreateEco)}
+                    {flagBadge('Approve change orders', member.canApproveEco)}
                     {flagBadge('Manage Designs', member.canManageDesigns)}
                   </div>
                 </TableCell>
@@ -392,8 +392,16 @@ function EditMemberDialog({
     value: boolean
     set: (v: boolean) => void
   }> = [
-    { label: 'Can create ECOs', value: canCreateEco, set: setCanCreateEco },
-    { label: 'Can approve ECOs', value: canApproveEco, set: setCanApproveEco },
+    {
+      label: 'Can create change orders',
+      value: canCreateEco,
+      set: setCanCreateEco,
+    },
+    {
+      label: 'Can approve change orders',
+      value: canApproveEco,
+      set: setCanApproveEco,
+    },
     {
       label: 'Can manage designs',
       value: canManageDesigns,

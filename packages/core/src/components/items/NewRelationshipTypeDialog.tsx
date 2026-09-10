@@ -32,7 +32,7 @@ import {
   DEFAULT_BOM_QUANTITY,
   isValidQuantity,
 } from '@/components/items/bom-quantity'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
 import { useInvalidateResources } from '@/lib/query'
 import { StateBadge } from '@/components/items/StateBadge'
@@ -67,7 +67,7 @@ export function NewRelationshipTypeDialog({
   itemId,
   onSuccess,
 }: NewRelationshipTypeDialogProps) {
-  const { alert } = useAlertDialog()
+  const { handleError, showError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   const [relationshipType, setRelationshipType] = useState('')
   const [customType, setCustomType] = useState('')
@@ -122,11 +122,7 @@ export function NewRelationshipTypeDialog({
     if (!selectedItem || quantityInvalid) return
 
     if (!finalType) {
-      alert({
-        title: 'Error',
-        description: 'Please specify a relationship type',
-        variant: 'destructive',
-      })
+      showError('Please specify a relationship type')
       return
     }
 
@@ -158,12 +154,7 @@ export function NewRelationshipTypeDialog({
       setReferenceDesignator('')
       setFindNumber('')
     } catch (error) {
-      alert({
-        title: 'Failed to add relationship',
-        description:
-          error instanceof Error ? error.message : 'Failed to add relationship',
-        variant: 'destructive',
-      })
+      handleError(error, { title: 'Failed to add relationship' })
     } finally {
       setLoading(false)
     }

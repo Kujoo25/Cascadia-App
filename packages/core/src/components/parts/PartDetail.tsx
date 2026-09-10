@@ -17,7 +17,8 @@ import {
 } from 'lucide-react'
 import type { Part } from '@/lib/items/types/part'
 import type { Design } from '@/lib/types/design'
-import type { UrlEnrichmentResult } from '@/components/items/useUrlDropEnrichment'
+import type { EnrichmentResult } from '@/components/items/useDropEnrichment'
+import type { EnrichmentSources } from '@/components/items/enrichment-sources'
 import { PageContainer } from '@/components/layout'
 import { DigitalThreadNavigator } from '@/components/thread'
 import { PartRelationshipsPanel } from '@/components/items/PartRelationshipsPanel'
@@ -39,10 +40,16 @@ import { PartDetailSidebar } from '@/components/parts/PartDetailSidebar'
 import { PartManufacturingCard } from '@/components/parts/PartManufacturingCard'
 import { useCADViewerState } from '@/components/parts/useCADViewerState'
 import { useCADCompareState } from '@/components/parts/useCADCompareState'
-import { UrlDropOverlay } from '@/components/items/UrlDropOverlay'
-import { useUrlDropEnrichment } from '@/components/items/useUrlDropEnrichment'
+import { DropOverlay } from '@/components/items/DropOverlay'
+import { useDropEnrichment } from '@/components/items/useDropEnrichment'
+import { PendingImageStrip } from '@/components/items/PendingImageStrip'
+import {
+  describeEnrichment,
+  fillEmptyFields,
+  mergeEnrichmentAttributes,
+} from '@/components/items/apply-enrichment'
 import { useVersionContext } from '@/lib/hooks/useVersionContext'
-import { useEditLock } from '@/lib/hooks/useEditLock'
+import { useEditLock, useItemEditContext } from '@/lib/hooks/useEditLock'
 import { WorkspaceContextBanner } from '@/components/workspaces/WorkspaceContextBanner'
 import {
   Badge,
@@ -123,6 +130,12 @@ export const PART_DETAIL_TABS = [
 ] as const
 export type PartDetailTab = (typeof PART_DETAIL_TABS)[number]
 
+/** What a create-mode save carries besides the part itself. */
+export interface PartSaveOptions {
+  /** Images dropped onto the form, to attach once the part exists. */
+  attachments?: Array<File>
+}
+
 interface PartDetailProps {
   /** Existing part data, or undefined for create mode */
   part?: Part
@@ -130,8 +143,15 @@ interface PartDetailProps {
   designs?: Array<Design>
   /** Default design ID (for create mode from a design context) */
   defaultDesignId?: string
-  /** Callback when part is saved (create or update) */
-  onSave: (part: Part, branchId?: string) => Promise<void>
+  /**
+   * Callback when part is saved (create or update). `options` is only sent
+   * from create mode, and only when there is something in it.
+   */
+  onSave: (
+    part: Part,
+    branchId?: string,
+    options?: PartSaveOptions,
+  ) => Promise<void>
   /** Callback when part is deleted */
   onDelete?: () => Promise<void>
   /** Callback when user cancels (navigates back) */
@@ -175,65 +195,34 @@ export function PartDetail({
     initialPart?.attributes ?? {},
   )
 
-  // Drag-and-drop a web link onto the create form to auto-fill it.
+  // Images dropped onto the create form, attached once the part exists.
+  const [pendingImages, setPendingImages] = useState<Array<File>>([])
+
+  // Drag-and-drop (or paste) a web link or images onto the create form to
+  // auto-fill it. The merge rules live in apply-enrichment.ts, shared with
+  // the Tool form: suggestions fill empty or still-default fields only.
   const applyEnrichment = useCallback(
-    (result: UrlEnrichmentResult) => {
-      // Always keep the source link as provenance (existing keys win).
-      setAttributes((prev) => {
-        const merged: Record<string, unknown> = {
-          ...result.attributes,
-          ...prev,
-        }
-        // A `link` already on the item wins, but only if it is usable text -
-        // attributes can hold any JSON, and a structured value is not a link.
-        if (typeof merged.link !== 'string' || !merged.link.trim()) {
-          merged.link = result.link
-        }
-        return merged
-      })
-
-      // Fill only empty or still-default fields; never clobber user input.
-      setPart((prev) => {
-        const defaults = createEmptyPart() as unknown as Record<string, unknown>
-        const prevRecord = prev as unknown as Record<string, unknown>
-        const next: Record<string, unknown> = { ...prevRecord }
-        for (const [key, value] of Object.entries(result.fields)) {
-          const current = prevRecord[key]
-          if (
-            current === undefined ||
-            current === null ||
-            current === '' ||
-            current === defaults[key]
-          ) {
-            next[key] = value
-          }
-        }
-        return next as unknown as Part
-      })
-
-      const fieldCount = Object.keys(result.fields).length
-      const attrCount = Object.keys(result.attributes).length
-      if (!result.aiEnabled) {
-        showInfo(
-          'Link saved',
-          'AI isn’t connected — the link was saved as a custom attribute. Connect AI in settings to auto-fill more.',
-        )
-      } else if (fieldCount === 0 && attrCount === 0) {
-        showInfo(
-          'Link saved',
-          'Couldn’t pull details from that page, but the link was saved.',
-        )
-      } else {
-        showSuccess(
-          'Details added',
-          `Filled ${fieldCount} field${fieldCount === 1 ? '' : 's'} and ${attrCount} attribute${attrCount === 1 ? '' : 's'} from the link.`,
-        )
+    (result: EnrichmentResult, sources: EnrichmentSources) => {
+      setAttributes((prev) => mergeEnrichmentAttributes(prev, result))
+      setPart((prev) => fillEmptyFields(prev, createEmptyPart(), result.fields))
+      if (sources.images.length > 0) {
+        setPendingImages((prev) => [...prev, ...sources.images])
       }
+
+      const notice = describeEnrichment(result, sources)
+      const attached =
+        sources.images.length === 0
+          ? ''
+          : sources.images.length === 1
+            ? ' The image will be attached when you save.'
+            : ' The images will be attached when you save.'
+      const show = notice.variant === 'success' ? showSuccess : showInfo
+      show(notice.title, `${notice.description}${attached}`)
     },
     [showSuccess, showInfo],
   )
 
-  const { isDragging, isEnriching, dropHandlers } = useUrlDropEnrichment({
+  const { isDragging, enriching, dropHandlers } = useDropEnrichment({
     itemType: 'Part',
     enabled: isCreateMode,
     onEnriched: applyEnrichment,
@@ -243,9 +232,17 @@ export function PartDetail({
   const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>()
 
   // Version context (only applicable for existing parts with a design)
-  const { context, contextLabel, isEditable, setContext } = useVersionContext(
-    isCreateMode ? undefined : part.designId,
-  )
+  // Where the server says this item may be edited: the branch holding its
+  // edit lock, and whether main is protected for this item's TYPE (a design
+  // with released items protects main for everything in it, but a Free or
+  // Driving lifecycle stays editable there). Asked once and fed to both the
+  // version context — which decides whether main is editable at all — and the
+  // edit lock below, because neither answer is derivable from the item.
+  const editContext = useItemEditContext(isCreateMode ? undefined : part.id)
+  const { context, contextLabel, isEditable, setContext } = useVersionContext({
+    designId: isCreateMode ? undefined : part.designId,
+    isMainProtected: editContext?.isMainProtected ?? false,
+  })
 
   // The part as it stood at the selected version context. Unlike the other
   // detail pages, `main` is a real request here (released=true): the route
@@ -304,17 +301,23 @@ export function PartDetail({
       resolvedItemId &&
       resolvedItemId !== part.id
     ) {
-      const search: Record<string, string | undefined> = {}
+      const search: Record<string, string | undefined> = { tab: activeTab }
       if (context.type === 'branch' && context.branchId) {
         search.branch = context.branchId
       }
+      // `replace`, because this is a correction of the id the user arrived
+      // with, not a place they chose to be. Pushing it left Back pointing at
+      // the URL that redirects here, so Back could not escape the page — and
+      // made each correction a new history entry while the breadcrumb's own
+      // auto-select was still settling the branch half of the same URL.
       navigate({
         to: '/parts/$id',
         params: { id: resolvedItemId },
         search,
+        replace: true,
       } as any)
     }
-  }, [versionAtContext.data, context, part.id, navigate])
+  }, [versionAtContext.data, context, part.id, activeTab, navigate])
 
   // Check if current context is a workspace branch
   // Whether the viewing context is a workspace branch, read through the
@@ -376,14 +379,13 @@ export function PartDetail({
   const needsCheckout =
     !isCreateMode && isReleasedLineage && context.type === 'main'
 
-  // The server-side edit lock behind the Edit button. Released-on-main goes
-  // through the CheckoutDialog (revise onto a branch) instead of a direct
-  // main-branch lock, so treat that case as "protected main" for the hook.
+  // The server-side edit lock behind the Edit button. The hook reads where the
+  // lock lives off `editContext`, so released-on-main resolves to no lock
+  // branch at all and the Edit button becomes Revise (the CheckoutDialog).
   const editLock = useEditLock({
     itemId: isCreateMode ? undefined : currentPart.id,
-    designId: isCreateMode ? undefined : part.designId,
     context,
-    isMainProtected: needsCheckout,
+    editContext,
   })
 
   const handleEdit = async () => {
@@ -433,7 +435,13 @@ export function PartDetail({
       : context.type === 'branch'
         ? context.branchId
         : undefined
-    await onSave({ ...part, attributes }, branchId)
+    await onSave(
+      { ...part, attributes },
+      branchId,
+      isCreateMode && pendingImages.length > 0
+        ? { attachments: pendingImages }
+        : undefined,
+    )
     if (!isCreateMode) {
       // Leaving edit mode releases the lock (changes are kept)
       if (editLock.heldByMe) {
@@ -475,14 +483,25 @@ export function PartDetail({
 
   // Get reason for disabled Edit button
   const getEditDisabledReason = (): string | undefined => {
+    // Ordered by what actually stops the click. Someone else's lock stops
+    // every path including Revise, so it is asked first. Then Revise: a
+    // released item on a protected main is not blocked at all, since the
+    // button opens the CheckoutDialog and revises onto a branch. What is left
+    // is the context itself.
+    if (editLock.lockedByOther) {
+      return `Checked out by ${editLock.lockHolderLabel}`
+    }
+    if (needsCheckout) {
+      return undefined
+    }
     if (!isEditable) {
       if (context.type === 'tag' || context.type === 'commit') {
         return 'Cannot edit historical versions'
       }
+      if (context.type === 'main' && editLock.isMainProtected) {
+        return 'This design has released items, so main is protected. Switch to an ECO or workspace branch to edit this item.'
+      }
       return 'Editing not available in this context'
-    }
-    if (editLock.lockedByOther) {
-      return `Checked out by ${editLock.lockHolderLabel}`
     }
     return undefined
   }
@@ -619,7 +638,10 @@ export function PartDetail({
                             <Button
                               variant="outline"
                               onClick={handleEdit}
-                              disabled={!isEditable || editLock.lockedByOther}
+                              disabled={
+                                (!isEditable && !needsCheckout) ||
+                                editLock.lockedByOther
+                              }
                             >
                               {needsCheckout ? (
                                 <>
@@ -644,7 +666,10 @@ export function PartDetail({
                     <Button
                       variant="outline"
                       onClick={handleEdit}
-                      disabled={!isEditable || editLock.lockedByOther}
+                      disabled={
+                        (!isEditable && !needsCheckout) ||
+                        editLock.lockedByOther
+                      }
                     >
                       {needsCheckout ? (
                         <>
@@ -680,6 +705,16 @@ export function PartDetail({
             </div>
           </div>
         </div>
+
+        {/* Images dropped onto the form, waiting for the part to exist */}
+        {isCreateMode && (
+          <PendingImageStrip
+            files={pendingImages}
+            onRemove={(index) =>
+              setPendingImages((prev) => prev.filter((_, i) => i !== index))
+            }
+          />
+        )}
 
         {/* Workspace Context Banner */}
         {!isCreateMode &&
@@ -958,7 +993,7 @@ export function PartDetail({
           />
         )}
       </PageContainer>
-      <UrlDropOverlay isDragging={isDragging} isEnriching={isEnriching} />
+      <DropOverlay isDragging={isDragging} enriching={enriching} />
     </div>
   )
 }

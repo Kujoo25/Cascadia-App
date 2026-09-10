@@ -7,7 +7,7 @@ import type {
   LifecyclePhaseConfig,
   RevisionScheme,
 } from '@/lib/types/lifecycle'
-import type { WorkflowState } from '@/lib/workflows/types'
+import type { LifecycleState } from '@/lib/lifecycles/types'
 import { apiFetch } from '@/lib/api/client'
 
 interface LifecycleData {
@@ -15,7 +15,7 @@ interface LifecycleData {
   name: string | null
   lifecycleType?: 'Free' | 'Driven' | 'Driving' | null
   phases: Array<LifecyclePhaseConfig>
-  states: Array<WorkflowState>
+  states: Array<LifecycleState>
   revisionScheme: RevisionScheme | null
   changeActionMappings?: ChangeActionMappings
 }

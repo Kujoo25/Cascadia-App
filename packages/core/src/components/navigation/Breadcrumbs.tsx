@@ -7,7 +7,6 @@ import { useBreadcrumbRouteInfo } from './useBreadcrumbRouteInfo'
 import { useBreadcrumbData } from './useBreadcrumbData'
 import { BreadcrumbDropdown } from './BreadcrumbDropdown'
 import { BreadcrumbLink } from './BreadcrumbLink'
-import type { VersionContext } from '@/lib/hooks/useVersionContext'
 import { useVersionContext } from '@/lib/hooks/useVersionContext'
 import { VersionContextSelector } from '@/components/versioning/VersionContextSelector'
 
@@ -82,11 +81,6 @@ export function Breadcrumbs() {
     })
   }
 
-  // Handle version context change
-  const handleVersionContextChange = (newContext: VersionContext) => {
-    setContext(newContext)
-  }
-
   // Filter designs by selected program
   const filteredDesigns = selectedProgramId
     ? designs.filter((d) => d.programId === selectedProgramId)
@@ -145,7 +139,7 @@ export function Breadcrumbs() {
                   <VersionContextSelector
                     designId={selectedDesignId}
                     value={context}
-                    onChange={handleVersionContextChange}
+                    onChange={setContext}
                     variant="breadcrumb"
                   />
                 </>
@@ -191,7 +185,7 @@ export function Breadcrumbs() {
                 <VersionContextSelector
                   designId={detailPageDesignId}
                   value={context}
-                  onChange={handleVersionContextChange}
+                  onChange={setContext}
                   variant="breadcrumb"
                   itemId={breadcrumbData.item?.id}
                 />

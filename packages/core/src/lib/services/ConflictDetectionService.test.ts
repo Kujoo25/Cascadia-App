@@ -332,10 +332,10 @@ describe('ConflictDetectionService', () => {
     })
 
     it('returns no conflicts for empty branch', async () => {
-      const eco = await createChangeOrder()
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder()
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -350,22 +350,23 @@ describe('ConflictDetectionService', () => {
 
     it('reports a still-checked-out item without blocking release', async () => {
       // Create ECO and part
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       const part = await createPartOnMain('Test Part')
 
       // Checkout part to ECO branch (leaves it checked out)
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
 
       const result = await ConflictDetectionService.detectConflictsForBranch(
-        ecoBranch.id,
+        changeOrderBranch.id,
       )
 
       expect(result.hasConflicts).toBe(true)
@@ -395,24 +396,29 @@ describe('ConflictDetectionService', () => {
       )
 
       // Create ECO and checkout part
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Update the part on our branch via direct DB update to avoid complex workflow
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       if (branchItem.currentItemId) {
@@ -441,7 +447,7 @@ describe('ConflictDetectionService', () => {
       }
 
       const result = await ConflictDetectionService.detectConflictsForBranch(
-        ecoBranch.id,
+        changeOrderBranch.id,
       )
 
       // Should detect concurrent modification or field conflict
@@ -466,17 +472,22 @@ describe('ConflictDetectionService', () => {
         createdBy: user.id,
       })
 
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: parent.masterId, branchId: ecoBranch.id },
+        { itemMasterId: parent.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(parent.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        parent.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // The branch holds a working copy carrying the structure it forked with,
       // so only main diverges — no field conflict, just a stale base.
@@ -487,7 +498,7 @@ describe('ConflictDetectionService', () => {
             masterId: parent.masterId,
             designId,
             itemNumber: parent.itemNumber!,
-            revision: `-${ecoBranch.id.substring(0, 8)}`,
+            revision: `-${changeOrderBranch.id.substring(0, 8)}`,
             itemType: 'Part',
             name: parent.name,
             state: 'Draft',
@@ -509,7 +520,7 @@ describe('ConflictDetectionService', () => {
         .set({ currentItemId: workingCopy.id, changeType: 'modified' })
         .where(
           and(
-            eq(branchItems.branchId, ecoBranch.id),
+            eq(branchItems.branchId, changeOrderBranch.id),
             eq(branchItems.itemMasterId, parent.masterId),
           ),
         )
@@ -564,7 +575,7 @@ describe('ConflictDetectionService', () => {
         })
 
       const result = await ConflictDetectionService.detectConflictsForBranch(
-        ecoBranch.id,
+        changeOrderBranch.id,
       )
 
       const divergence = result.conflicts.find(
@@ -579,12 +590,13 @@ describe('ConflictDetectionService', () => {
 
     it('does not report conflict for newly added items', async () => {
       // Create ECO
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
 
       // Create a new part directly on the ECO branch (simulating "added" item)
       const newPart = await ItemService.create(
@@ -602,7 +614,7 @@ describe('ConflictDetectionService', () => {
 
       // Add branchItem record for the new part with changeType = 'added'
       await testDb.db.insert(branchItems).values({
-        branchId: ecoBranch.id,
+        branchId: changeOrderBranch.id,
         itemMasterId: newPart.masterId,
         currentItemId: newPart.id,
         baseItemId: null,
@@ -610,7 +622,7 @@ describe('ConflictDetectionService', () => {
       })
 
       const result = await ConflictDetectionService.detectConflictsForBranch(
-        ecoBranch.id,
+        changeOrderBranch.id,
       )
 
       // Added items should not cause conflicts
@@ -632,10 +644,10 @@ describe('ConflictDetectionService', () => {
     })
   })
 
-  describe('detectConflictsForEco', () => {
+  describe('detectConflictsForChangeOrder', () => {
     it('returns no conflicts for new ECO with no branches', async () => {
       // Create an ECO without any branch activity
-      const eco = await ItemService.create(
+      const changeOrder = await ItemService.create(
         'ChangeOrder',
         {
           revision: 'A',
@@ -648,32 +660,35 @@ describe('ConflictDetectionService', () => {
         user.id,
       )
 
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco.id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(
+          changeOrder.id,
+        )
 
       expect(result.hasConflicts).toBe(false)
       expect(result.conflicts).toHaveLength(0)
     })
 
     it('aggregates conflicts from all ECO branches', async () => {
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
 
       // Create and checkout a part (leaving it checked out creates a conflict)
       const part = await createPartOnMain('Aggregate Test Part')
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
 
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco.id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(
+          changeOrder.id,
+        )
 
       // Should have checkout conflict
       expect(result.hasConflicts).toBe(true)
@@ -687,16 +702,18 @@ describe('ConflictDetectionService', () => {
       const eco1 = await createChangeOrder('ECO 1')
       const eco2 = await createChangeOrder('ECO 2')
 
-      const { branch: branch1 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco1.id,
-        user.id,
-      )
-      const { branch: branch2 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco2.id,
-        user.id,
-      )
+      const { branch: branch1 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco1.id,
+          user.id,
+        )
+      const { branch: branch2 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco2.id,
+          user.id,
+        )
 
       // Create part and checkout to both ECOs
       const part = await createPartOnMain('Cross ECO Part')
@@ -715,20 +732,20 @@ describe('ConflictDetectionService', () => {
       )
       await CheckoutService.checkin(part.masterId, branch2.id, user2.id)
 
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco1.id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(eco1.id)
 
       // Should detect cross-ECO situation (both ECOs modifying same item)
       expect(result.checkedAt).toBeInstanceOf(Date)
     })
 
     it('calculates summary correctly', async () => {
-      const eco = await createChangeOrder()
+      const changeOrder = await createChangeOrder()
 
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco.id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(
+          changeOrder.id,
+        )
 
       expect(result.summary.total).toBe(result.conflicts.length)
       expect(result.summary.errors).toBe(
@@ -757,26 +774,31 @@ describe('ConflictDetectionService', () => {
 
     it('returns error when required items cannot be found', async () => {
       // Create ECO and checkout a part
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       const part = await createPartOnMain('Rebase Test Part')
 
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Get the branch item
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       // Try to rebase to non-existent item
@@ -798,24 +820,29 @@ describe('ConflictDetectionService', () => {
       )
 
       // Create ECO and checkout
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Get branch item
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       // Create a new base version
@@ -870,23 +897,28 @@ describe('ConflictDetectionService', () => {
         uploadedBy: user.id,
       })
 
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       const newBaseItem = takeFirst(
@@ -951,23 +983,28 @@ describe('ConflictDetectionService', () => {
         createdBy: user.id,
       })
 
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       const newBaseItem = takeFirst(
@@ -1020,24 +1057,29 @@ describe('ConflictDetectionService', () => {
       )
 
       // Create ECO and checkout
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Get branch item
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       // Create a new base version
@@ -1079,24 +1121,29 @@ describe('ConflictDetectionService', () => {
       )
 
       // Create ECO and checkout
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Get branch item
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       // Modify our working copy - change description
@@ -1166,24 +1213,29 @@ describe('ConflictDetectionService', () => {
       )
 
       // Create ECO and checkout
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Get branch item
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       // Modify our working copy - change name
@@ -1237,11 +1289,12 @@ describe('ConflictDetectionService', () => {
 
       // Create first ECO and checkout part
       const eco1 = await createChangeOrder('ECO 1')
-      const { branch: branch1 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco1.id,
-        user.id,
-      )
+      const { branch: branch1 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco1.id,
+          user.id,
+        )
       await CheckoutService.checkout(
         { itemMasterId: part.masterId, branchId: branch1.id },
         user.id,
@@ -1263,11 +1316,12 @@ describe('ConflictDetectionService', () => {
 
       // Create second ECO and checkout same part
       const eco2 = await createChangeOrder('ECO 2')
-      const { branch: branch2 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco2.id,
-        user2.id,
-      )
+      const { branch: branch2 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco2.id,
+          user2.id,
+        )
       await CheckoutService.checkout(
         { itemMasterId: part.masterId, branchId: branch2.id },
         user2.id,
@@ -1288,16 +1342,15 @@ describe('ConflictDetectionService', () => {
       }
 
       // Detect conflicts for ECO 1
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco1.id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(eco1.id)
 
       // Should detect cross-ECO field conflict
-      const crossEcoConflicts = result.conflicts.filter(
+      const crossChangeOrderConflicts = result.conflicts.filter(
         (c) =>
           c.conflictType === 'field_conflict' || c.conflictType === 'cross_eco',
       )
-      expect(crossEcoConflicts.length).toBeGreaterThanOrEqual(0) // May or may not have conflicts depending on state
+      expect(crossChangeOrderConflicts.length).toBeGreaterThanOrEqual(0) // May or may not have conflicts depending on state
       expect(result.checkedAt).toBeInstanceOf(Date)
     })
 
@@ -1307,11 +1360,12 @@ describe('ConflictDetectionService', () => {
 
       // Create first ECO and checkout part
       const eco1 = await createChangeOrder('ECO Alpha')
-      const { branch: branch1 } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco1.id,
-        user.id,
-      )
+      const { branch: branch1 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco1.id,
+          user.id,
+        )
       await CheckoutService.checkout(
         { itemMasterId: part.masterId, branchId: branch1.id },
         user.id,
@@ -1320,7 +1374,11 @@ describe('ConflictDetectionService', () => {
 
       // Create second ECO but DON'T checkout - just add to affected items
       const eco2 = await createChangeOrder('ECO Beta')
-      await BranchService.getOrCreateEcoBranch(designId, eco2.id, user2.id)
+      await BranchService.getOrCreateChangeOrderBranch(
+        designId,
+        eco2.id,
+        user2.id,
+      )
 
       // Add to change order affected items without checkout
       await testDb.db.insert(changeOrderAffectedItems).values({
@@ -1332,9 +1390,8 @@ describe('ConflictDetectionService', () => {
       })
 
       // Detect conflicts for ECO 1
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco1.id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(eco1.id)
 
       // Should detect cross-ECO co-modification warning
       expect(result.checkedAt).toBeInstanceOf(Date)
@@ -1343,12 +1400,17 @@ describe('ConflictDetectionService', () => {
 
     it('handles cross-ECO detection with no affected items', async () => {
       // Create ECO without any items
-      const eco = await createChangeOrder('Empty ECO')
-      await BranchService.getOrCreateEcoBranch(designId, eco.id, user.id)
-
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco.id,
+      const changeOrder = await createChangeOrder('Empty ECO')
+      await BranchService.getOrCreateChangeOrderBranch(
+        designId,
+        changeOrder.id,
+        user.id,
       )
+
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(
+          changeOrder.id,
+        )
 
       expect(result.hasConflicts).toBe(false)
       expect(result.conflicts).toHaveLength(0)
@@ -1361,24 +1423,29 @@ describe('ConflictDetectionService', () => {
       const part = await createPartOnMain('Part Name', 'Part description')
 
       // Create ECO and checkout
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Update branch's working copy
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       if (branchItem.currentItemId) {
@@ -1422,7 +1489,7 @@ describe('ConflictDetectionService', () => {
       }
 
       const result = await ConflictDetectionService.detectConflictsForBranch(
-        ecoBranch.id,
+        changeOrderBranch.id,
       )
 
       // Should not report conflict since main only changed revision
@@ -1440,24 +1507,29 @@ describe('ConflictDetectionService', () => {
       const part = await createPartOnMain('Part Name', 'Part description')
 
       // Create ECO and checkout
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Get branch item
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       // Change name on ECO branch
@@ -1500,7 +1572,7 @@ describe('ConflictDetectionService', () => {
       }
 
       const result = await ConflictDetectionService.detectConflictsForBranch(
-        ecoBranch.id,
+        changeOrderBranch.id,
       )
 
       // May or may not have concurrent modification depending on exact setup
@@ -1512,24 +1584,29 @@ describe('ConflictDetectionService', () => {
       const part = await createPartOnMain('Original', 'Original description')
 
       // Create ECO and checkout
-      const eco = await createChangeOrder()
-      const { branch: ecoBranch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco.id,
-        user.id,
-      )
+      const changeOrder = await createChangeOrder()
+      const { branch: changeOrderBranch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
-        { itemMasterId: part.masterId, branchId: ecoBranch.id },
+        { itemMasterId: part.masterId, branchId: changeOrderBranch.id },
         user.id,
       )
-      await CheckoutService.checkin(part.masterId, ecoBranch.id, user.id)
+      await CheckoutService.checkin(
+        part.masterId,
+        changeOrderBranch.id,
+        user.id,
+      )
 
       // Get branch item
       const branchItem = takeFirst(
         await testDb.db
           .select()
           .from(branchItems)
-          .where(eq(branchItems.branchId, ecoBranch.id)),
+          .where(eq(branchItems.branchId, changeOrderBranch.id)),
       )
 
       // Change name on ECO branch
@@ -1572,7 +1649,7 @@ describe('ConflictDetectionService', () => {
       }
 
       const result = await ConflictDetectionService.detectConflictsForBranch(
-        ecoBranch.id,
+        changeOrderBranch.id,
       )
 
       // Should detect field conflict
@@ -1727,11 +1804,12 @@ describe('ConflictDetectionService', () => {
 
       // Create first ECO and checkout
       const eco1 = await createChangeOrder('ECO-1')
-      const { branch: eco1Branch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco1.id,
-        user.id,
-      )
+      const { branch: eco1Branch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco1.id,
+          user.id,
+        )
       await CheckoutService.checkout(
         { itemMasterId: part.masterId, branchId: eco1Branch.id },
         user.id,
@@ -1752,11 +1830,12 @@ describe('ConflictDetectionService', () => {
 
       // Create second ECO and checkout same item
       const eco2 = await createChangeOrder('ECO-2')
-      const { branch: eco2Branch } = await BranchService.getOrCreateEcoBranch(
-        designId,
-        eco2.id,
-        user2.id,
-      )
+      const { branch: eco2Branch } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          designId,
+          eco2.id,
+          user2.id,
+        )
       await CheckoutService.checkout(
         { itemMasterId: part.masterId, branchId: eco2Branch.id },
         user2.id,
@@ -1776,16 +1855,15 @@ describe('ConflictDetectionService', () => {
       }
 
       // Detect conflicts for ECO1 - should see ECO2 as conflicting
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco1.id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(eco1.id)
 
       expect(result.hasConflicts).toBe(true)
       // Should have cross-ECO conflict
-      const crossEcoConflicts = result.conflicts.filter(
+      const crossChangeOrderConflicts = result.conflicts.filter(
         (c) => c.conflictType === 'cross_eco',
       )
-      expect(crossEcoConflicts.length).toBeGreaterThanOrEqual(0) // May be 0 if not yet detected
+      expect(crossChangeOrderConflicts.length).toBeGreaterThanOrEqual(0) // May be 0 if not yet detected
     })
 
     it('detects conflicts when three ECOs modify the same item', async () => {
@@ -1793,16 +1871,16 @@ describe('ConflictDetectionService', () => {
       const part = await createPartOnMain('Multi ECO Part', 'Description')
 
       // Create three ECOs and checkout same item
-      const ecos = await Promise.all([
+      const changeOrders = await Promise.all([
         createChangeOrder('Multi-ECO-1'),
         createChangeOrder('Multi-ECO-2'),
         createChangeOrder('Multi-ECO-3'),
       ])
 
-      for (let i = 0; i < ecos.length; i++) {
-        const { branch } = await BranchService.getOrCreateEcoBranch(
+      for (let i = 0; i < changeOrders.length; i++) {
+        const { branch } = await BranchService.getOrCreateChangeOrderBranch(
           designId,
-          ecos[i].id,
+          changeOrders[i].id,
           user.id,
         )
         await CheckoutService.checkout(
@@ -1827,9 +1905,10 @@ describe('ConflictDetectionService', () => {
       }
 
       // Detect conflicts for the first ECO
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        ecos[0].id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(
+          changeOrders[0].id,
+        )
 
       // Should detect some form of conflict
       expect(result).toBeDefined()
@@ -1865,10 +1944,10 @@ describe('ConflictDetectionService', () => {
       )
 
       // Create ECO - it will only have branch for main design
-      const eco = await createChangeOrder('Cross-Design ECO')
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder('Cross-Design ECO')
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await CheckoutService.checkout(
@@ -1877,20 +1956,22 @@ describe('ConflictDetectionService', () => {
       )
 
       // Create branch for second design too
-      const { branch: branch2 } = await BranchService.getOrCreateEcoBranch(
-        design2.id,
-        eco.id,
-        user.id,
-      )
+      const { branch: branch2 } =
+        await BranchService.getOrCreateChangeOrderBranch(
+          design2.id,
+          changeOrder.id,
+          user.id,
+        )
       await CheckoutService.checkout(
         { itemMasterId: part2.masterId, branchId: branch2.id },
         user.id,
       )
 
       // Detect conflicts
-      const result = await ConflictDetectionService.detectConflictsForEco(
-        eco.id,
-      )
+      const result =
+        await ConflictDetectionService.detectConflictsForChangeOrder(
+          changeOrder.id,
+        )
 
       expect(result).toBeDefined()
       expect(result.summary).toBeDefined()
@@ -1900,10 +1981,10 @@ describe('ConflictDetectionService', () => {
   describe('Rebase edge cases', () => {
     it('handles rebase when base item was never set (new item)', async () => {
       // Create ECO
-      const eco = await createChangeOrder('New Item ECO')
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder('New Item ECO')
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -1986,10 +2067,10 @@ describe('ConflictDetectionService', () => {
       )
 
       // Create ECO and branch
-      const eco = await createChangeOrder('Name Conflict ECO')
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder('Name Conflict ECO')
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -2065,10 +2146,10 @@ describe('ConflictDetectionService', () => {
       const part = await createPartOnMain('Empty Res Part', 'Desc')
 
       // Create ECO and checkout
-      const eco = await createChangeOrder('Empty Res ECO')
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder('Empty Res ECO')
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await CheckoutService.checkout(
@@ -2123,10 +2204,10 @@ describe('ConflictDetectionService', () => {
       const part = await createPartOnMain('Rebase Ref Part', 'Desc')
 
       // Create ECO and checkout
-      const eco = await createChangeOrder('Rebase Ref ECO')
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder('Rebase Ref ECO')
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await CheckoutService.checkout(
@@ -2197,16 +2278,16 @@ describe('ConflictDetectionService', () => {
    * this file pass over the defect.
    */
   describe('rebase and pull onto an existing branch working copy', () => {
-    async function ecoWithWorkingCopy(label: string) {
+    async function changeOrderWithWorkingCopy(label: string) {
       const part = await createPartOnMain(`${label} Part`, 'original desc')
       const released = takeFirst(
         await testDb.db.select().from(items).where(eq(items.id, part.id)),
       )
 
-      const eco = await createChangeOrder(`${label} ECO`)
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder(`${label} ECO`)
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
 
@@ -2259,7 +2340,7 @@ describe('ConflictDetectionService', () => {
 
     it('rebases the existing working copy in place instead of colliding', async () => {
       const { part, branch, workingCopy, branchItem } =
-        await ecoWithWorkingCopy('Rebase InPlace')
+        await changeOrderWithWorkingCopy('Rebase InPlace')
 
       // A branch edit main also made differently — a real field conflict, so
       // the resolution path is exercised too.
@@ -2313,7 +2394,7 @@ describe('ConflictDetectionService', () => {
 
     it('takes the new base for fields only main changed', async () => {
       const { part, branchItem, workingCopy } =
-        await ecoWithWorkingCopy('Rebase Fields')
+        await changeOrderWithWorkingCopy('Rebase Fields')
 
       const newBase = await newBaseOnMain(part, 'Main Only Name')
 
@@ -2337,7 +2418,7 @@ describe('ConflictDetectionService', () => {
 
     it('keeps the working copy files and relationships attached', async () => {
       const { part, branch, branchItem, workingCopy } =
-        await ecoWithWorkingCopy('Rebase Content')
+        await changeOrderWithWorkingCopy('Rebase Content')
 
       await testDb.db.insert(vaultFiles).values({
         itemId: workingCopy.id,
@@ -2389,7 +2470,7 @@ describe('ConflictDetectionService', () => {
 
     it('pulls main into the existing working copy in place', async () => {
       const { part, branch, branchItem, workingCopy } =
-        await ecoWithWorkingCopy('Pull InPlace')
+        await changeOrderWithWorkingCopy('Pull InPlace')
 
       await testDb.db
         .update(items)
@@ -2437,10 +2518,10 @@ describe('ConflictDetectionService', () => {
       // The other shape: currentItemId is the shared released row, which
       // belongs to main and must not be written in place.
       const part = await createPartOnMain('Checkout Shape Part')
-      const eco = await createChangeOrder('Checkout Shape ECO')
-      const { branch } = await BranchService.getOrCreateEcoBranch(
+      const changeOrder = await createChangeOrder('Checkout Shape ECO')
+      const { branch } = await BranchService.getOrCreateChangeOrderBranch(
         designId,
-        eco.id,
+        changeOrder.id,
         user.id,
       )
       await CheckoutService.checkout(

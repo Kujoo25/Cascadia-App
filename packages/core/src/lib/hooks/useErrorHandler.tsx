@@ -9,6 +9,22 @@ import { ApiError } from '@/lib/api/client'
 import { ErrorCode } from '@/lib/errors/codes'
 import { getErrorStrategy } from '@/lib/errors/severity'
 
+/**
+ * The text to show for an error. A validation failure's `message` is the bare
+ * string "Validation failed" — everything that identifies the problem is in
+ * `fieldErrors`, which until now only a form rendering inline errors would
+ * ever read. Fold it in, so a toast or dialog names the field instead of
+ * asking the reader to open the network tab.
+ */
+function describeError(error: ApiError): string {
+  const fields = error.fieldErrors ?? []
+  if (fields.length === 0) return error.message
+  const detail = fields
+    .map((f) => (f.field ? `${f.field}: ${f.message}` : f.message))
+    .join('; ')
+  return `${error.message} — ${detail}`
+}
+
 interface ErrorHandlerOptions {
   /** Override the default presentation for this error */
   presentation?: ErrorPresentation
@@ -78,18 +94,15 @@ export function useErrorHandler() {
       // Present error based on strategy
       switch (presentation) {
         case 'none':
-          // Silent - already logged above
-          break
-
-        case 'inline':
-          // Inline errors are handled by the form component
-          // Just return the error for the caller to handle
+          // Nothing to show — either the error is not worth interrupting for,
+          // or the caller asked to present it itself and reads the ApiError
+          // returned below.
           break
 
         case 'toast':
           addToast({
             title: options.title ?? 'Error',
-            description: apiError.message,
+            description: describeError(apiError),
             variant: 'destructive',
           })
           break
@@ -97,7 +110,7 @@ export function useErrorHandler() {
         case 'dialog':
           alert({
             title: options.title ?? 'Error',
-            description: apiError.message,
+            description: describeError(apiError),
             variant: 'destructive',
           })
           break
@@ -125,6 +138,23 @@ export function useErrorHandler() {
   )
 
   /**
+   * Show an error toast for a failure with no `Error` to hand — a client-side
+   * guard that stopped the request before it was made, say.
+   *
+   * The absence of this was why a dozen call sites reached past this hook for
+   * `alert()` and put a blocking modal in front of "pick a relationship type
+   * first": `showSuccess`/`showWarning`/`showInfo` existed and their opposite
+   * did not. Anything with an actual error belongs in `handleError`, which
+   * knows the code, the field errors and the auth redirect.
+   */
+  const showError = useCallback(
+    (title: string, description?: string) => {
+      addToast({ title, description, variant: 'destructive' })
+    },
+    [addToast],
+  )
+
+  /**
    * Show a warning toast.
    */
   const showWarning = useCallback(
@@ -144,5 +174,5 @@ export function useErrorHandler() {
     [addToast],
   )
 
-  return { handleError, showSuccess, showWarning, showInfo }
+  return { handleError, showSuccess, showError, showWarning, showInfo }
 }

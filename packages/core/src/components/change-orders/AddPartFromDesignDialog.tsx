@@ -34,8 +34,10 @@ import { changeOrderAffectedItemsQuery } from '@/lib/query/options/change-orders
 import { designItemsGridQuery } from '@/lib/query/options/design-items'
 import { itemTextSearchQuery } from '@/lib/query/options/item-search'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { cn } from '@/lib/utils'
 import { StateBadge } from '@/components/items/StateBadge'
+import { formatRevision } from '@/lib/types/lifecycle'
 
 interface DesignItem {
   id: string
@@ -82,6 +84,7 @@ export function AddPartFromDesignDialog({
   onSuccess,
 }: AddPartFromDesignDialogProps) {
   const { alert } = useAlertDialog()
+  const { handleError, showWarning } = useErrorHandler()
   const isLibrary = designType === 'Library'
   const [step, setStep] = useState<'select' | 'review'>('select')
   const [submitting, setSubmitting] = useState(false)
@@ -286,12 +289,10 @@ export function AddPartFromDesignDialog({
       })
 
       if (itemsPayload.length === 0) {
-        alert({
-          title: 'Nothing to add',
-          description:
-            'None of the selected items are in a state this change order can act on.',
-          variant: 'destructive',
-        })
+        showWarning(
+          'Nothing to add',
+          'None of the selected items are in a state this change order can act on.',
+        )
         return
       }
 
@@ -303,17 +304,13 @@ export function AddPartFromDesignDialog({
 
       alert({
         title: 'Items Added',
-        description: `${selectedItems.length} item${selectedItems.length !== 1 ? 's' : ''} added to ECO.`,
+        description: `${selectedItems.length} item${selectedItems.length !== 1 ? 's' : ''} added to the change order.`,
       })
 
       onOpenChange(false)
       onSuccess()
-    } catch {
-      alert({
-        title: 'Error',
-        description: 'Failed to add items to ECO.',
-        variant: 'destructive',
-      })
+    } catch (error) {
+      handleError(error, { title: 'Failed to add items to the change order' })
     } finally {
       setSubmitting(false)
     }
@@ -375,12 +372,9 @@ export function AddPartFromDesignDialog({
 
       onOpenChange(false)
       onSuccess()
-    } catch {
-      alert({
-        title: 'Error',
-        description:
-          'Failed to import parts. Some items may have been partially imported.',
-        variant: 'destructive',
+    } catch (error) {
+      handleError(error, {
+        title: 'Failed to import parts — some may have been partially imported',
       })
     } finally {
       setSubmitting(false)
@@ -472,6 +466,7 @@ export function AddPartFromDesignDialog({
       accessorKey: 'revision',
       enableSorting: false,
       meta: { width: '60px', align: 'center' as const },
+      cell: ({ getValue }) => formatRevision(getValue() as string),
     },
     {
       id: 'state',
@@ -592,7 +587,7 @@ export function AddPartFromDesignDialog({
             {step === 'select'
               ? isLibrary
                 ? 'Add existing library parts or import from other designs.'
-                : 'Select parts to add as affected items in this ECO.'
+                : 'Select parts to add as affected items in this change order.'
               : isLibrary && libraryMode === 'import'
                 ? 'Review the parts to be imported as usages.'
                 : 'Review the change actions for each item before adding them.'}
@@ -721,7 +716,7 @@ export function AddPartFromDesignDialog({
                                 {item.name || '-'}
                               </span>
                               <span className="text-xs text-slate-500 w-10 text-center">
-                                {item.revision}
+                                {formatRevision(item.revision)}
                               </span>
                               <StateBadge
                                 itemType="Part"
@@ -799,7 +794,7 @@ export function AddPartFromDesignDialog({
                         {item.name || '-'}
                       </td>
                       <td className="px-3 py-1.5 text-center text-xs text-slate-500 dark:text-slate-400">
-                        {item.revision}
+                        {formatRevision(item.revision)}
                       </td>
                       <td className="px-3 py-1.5 text-center">
                         <StateBadge
@@ -873,7 +868,7 @@ export function AddPartFromDesignDialog({
                           {item.name || '-'}
                         </td>
                         <td className="px-3 py-1.5 text-center text-xs text-slate-500 dark:text-slate-400">
-                          {item.revision}
+                          {formatRevision(item.revision)}
                         </td>
                         <td className="px-3 py-1.5 text-center">
                           <StateBadge
@@ -982,7 +977,7 @@ export function AddPartFromDesignDialog({
               {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
               {isLibrary && libraryMode === 'import'
                 ? `Import ${effectiveSelectedCount} Part${effectiveSelectedCount !== 1 ? 's' : ''}`
-                : `Add ${selectedItems.length} Item${selectedItems.length !== 1 ? 's' : ''} to ECO`}
+                : `Add ${selectedItems.length} Item${selectedItems.length !== 1 ? 's' : ''} to Change Order`}
             </Button>
           )}
         </DialogFooter>

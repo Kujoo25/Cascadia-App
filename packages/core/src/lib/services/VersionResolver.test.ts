@@ -36,6 +36,7 @@ import { setTestDb } from '@/lib/db'
 import { takeFirst } from '@/lib/db/take-first'
 import {
   branchItems,
+  changeOrderAffectedItems,
   changeOrders,
   itemVersions,
   items,
@@ -225,7 +226,7 @@ describe('VersionResolver', () => {
     })
 
     describe('branch context', () => {
-      let ecoBranchId: string
+      let changeOrderBranchId: string
       let itemRevBId: string
       let changeOrderItemId: string
 
@@ -260,12 +261,12 @@ describe('VersionResolver', () => {
         })
 
         // Create an ECO branch
-        const ecoBranch = await BranchService.createEcoBranch(
+        const changeOrderBranch = await BranchService.createChangeOrderBranch(
           designId,
           changeOrderItemId,
           user.id,
         )
-        ecoBranchId = ecoBranch.id
+        changeOrderBranchId = changeOrderBranch.id
 
         // Create Rev B on the ECO branch
         const itemRevB = takeFirst(
@@ -298,7 +299,7 @@ describe('VersionResolver', () => {
 
         // Add branchItem entry pointing to Rev B
         await testDb.db.insert(branchItems).values({
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
           itemMasterId,
           currentItemId: itemRevBId,
         })
@@ -307,7 +308,7 @@ describe('VersionResolver', () => {
       it('returns branch-specific version when viewing branch', async () => {
         const context: VersionContext = {
           type: 'branch',
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         }
 
         const result = await VersionResolver.getItemAtContext(
@@ -355,7 +356,7 @@ describe('VersionResolver', () => {
 
         const context: VersionContext = {
           type: 'branch',
-          branchId: ecoBranchId,
+          branchId: changeOrderBranchId,
         }
 
         const result = await VersionResolver.getItemAtContext(
@@ -597,7 +598,7 @@ describe('VersionResolver', () => {
       })
 
       // Create an ECO branch (name will be eco/ECO-002)
-      const branch = await BranchService.createEcoBranch(
+      const branch = await BranchService.createChangeOrderBranch(
         designId,
         coItem.id,
         user.id,
@@ -1127,7 +1128,7 @@ describe('VersionResolver', () => {
         priority: 'Medium',
       })
 
-      const branch = await BranchService.createEcoBranch(
+      const branch = await BranchService.createChangeOrderBranch(
         designId,
         coItem.id,
         user.id,
@@ -1312,7 +1313,7 @@ describe('VersionResolver', () => {
         priority: 'Medium',
       })
 
-      const ecoBranch = await BranchService.createEcoBranch(
+      const changeOrderBranch = await BranchService.createChangeOrderBranch(
         designId,
         coItem.id,
         user.id,
@@ -1323,14 +1324,14 @@ describe('VersionResolver', () => {
         itemMasterId,
         designId,
       )
-      let ecoBranchContext = contexts.branches.find(
-        (b) => b.id === ecoBranch.id,
+      let changeOrderBranchContext = contexts.branches.find(
+        (b) => b.id === changeOrderBranch.id,
       )
-      expect(ecoBranchContext?.exists).toBe(false)
+      expect(changeOrderBranchContext?.exists).toBe(false)
 
       // Track the item on ECO branch
       await testDb.db.insert(branchItems).values({
-        branchId: ecoBranch.id,
+        branchId: changeOrderBranch.id,
         itemMasterId,
         currentItemId: (
           await testDb.db
@@ -1347,8 +1348,109 @@ describe('VersionResolver', () => {
         itemMasterId,
         designId,
       )
-      ecoBranchContext = contexts.branches.find((b) => b.id === ecoBranch.id)
-      expect(ecoBranchContext?.exists).toBe(true)
+      changeOrderBranchContext = contexts.branches.find(
+        (b) => b.id === changeOrderBranch.id,
+      )
+      expect(changeOrderBranchContext?.exists).toBe(true)
+    })
+
+    it('offers the ECO branch for an affected item with no branch row', async () => {
+      // The scope-only half of an ECO's membership: `addAffectedItem` mints a
+      // working copy (and with it a branch_items row) only for `revise` of a
+      // released item, so a `release`/`obsolete`/`promote` affected item is in
+      // the ECO's scope with nothing tracking it on the branch. It still has
+      // to be able to reach that branch - it is where its checkout is taken,
+      // and on a protected main there is nowhere else it can be edited.
+      const coMasterId = crypto.randomUUID()
+      const coItem = takeFirst(
+        await testDb.db
+          .insert(items)
+          .values({
+            masterId: coMasterId,
+            itemNumber: `${uniquePrefix}-ECO-SCOPE`,
+            revision: 'A',
+            itemType: 'ChangeOrder',
+            name: 'Scope-only ECO',
+            state: 'Draft',
+            isCurrent: true,
+            createdBy: user.id,
+            modifiedBy: user.id,
+            designId,
+          })
+          .returning(),
+      )
+
+      await testDb.db.insert(changeOrders).values({
+        itemId: coItem.id,
+        changeType: 'ECO',
+        priority: 'Medium',
+      })
+
+      const changeOrderBranch = await BranchService.createChangeOrderBranch(
+        designId,
+        coItem.id,
+        user.id,
+      )
+
+      await testDb.db.insert(changeOrderAffectedItems).values({
+        changeOrderId: coItem.id,
+        affectedItemMasterId: itemMasterId,
+        changeAction: 'release',
+        createdBy: user.id,
+      })
+
+      const contexts = await VersionResolver.getAvailableContextsForItem(
+        itemMasterId,
+        designId,
+      )
+
+      expect(
+        contexts.branches.find((b) => b.id === changeOrderBranch.id)?.exists,
+      ).toBe(true)
+    })
+
+    it('does not offer an ECO branch to an item outside its scope', async () => {
+      // The other half of the same rule: scope is the whole of it. An ECO on
+      // this design must not surface on every item the design contains.
+      const coMasterId = crypto.randomUUID()
+      const coItem = takeFirst(
+        await testDb.db
+          .insert(items)
+          .values({
+            masterId: coMasterId,
+            itemNumber: `${uniquePrefix}-ECO-OTHER`,
+            revision: 'A',
+            itemType: 'ChangeOrder',
+            name: 'Unrelated ECO',
+            state: 'Draft',
+            isCurrent: true,
+            createdBy: user.id,
+            modifiedBy: user.id,
+            designId,
+          })
+          .returning(),
+      )
+
+      await testDb.db.insert(changeOrders).values({
+        itemId: coItem.id,
+        changeType: 'ECO',
+        priority: 'Medium',
+      })
+
+      const changeOrderBranch = await BranchService.createChangeOrderBranch(
+        designId,
+        coItem.id,
+        user.id,
+      )
+
+      const contexts = await VersionResolver.getAvailableContextsForItem(
+        itemMasterId,
+        designId,
+      )
+
+      expect(
+        contexts.branches.find((b) => b.id === changeOrderBranch.id)?.exists,
+      ).toBe(false)
     })
 
     it('returns empty arrays for non-existent item', async () => {
@@ -1365,7 +1467,7 @@ describe('VersionResolver', () => {
 
   describe('getBranchItems', () => {
     let designId: string
-    let ecoBranchId: string
+    let changeOrderBranchId: string
     let itemMasterId: string
     let branchItemId: string
     let initialCommitId: string
@@ -1438,12 +1540,12 @@ describe('VersionResolver', () => {
         priority: 'Medium',
       })
 
-      const ecoBranch = await BranchService.createEcoBranch(
+      const changeOrderBranch = await BranchService.createChangeOrderBranch(
         designId,
         coItem.id,
         user.id,
       )
-      ecoBranchId = ecoBranch.id
+      changeOrderBranchId = changeOrderBranch.id
 
       // Create modified version on branch
       const branchItem = takeFirst(
@@ -1468,7 +1570,7 @@ describe('VersionResolver', () => {
 
       // Track on branch
       await testDb.db.insert(branchItems).values({
-        branchId: ecoBranchId,
+        branchId: changeOrderBranchId,
         itemMasterId: masterId,
         currentItemId: branchItem.id,
         changeType: 'modified',
@@ -1476,7 +1578,7 @@ describe('VersionResolver', () => {
     })
 
     it('returns branch-specific versions for modified items', async () => {
-      const result = await VersionResolver.getBranchItems(ecoBranchId)
+      const result = await VersionResolver.getBranchItems(changeOrderBranchId)
 
       const modifiedItem = result.items.find((i) => i.masterId === itemMasterId)
       expect(modifiedItem?.id).toBe(branchItemId)
@@ -1512,13 +1614,13 @@ describe('VersionResolver', () => {
       )
 
       await testDb.db.insert(branchItems).values({
-        branchId: ecoBranchId,
+        branchId: changeOrderBranchId,
         itemMasterId: newMasterId,
         currentItemId: newItem.id,
         changeType: 'added',
       })
 
-      const result = await VersionResolver.getBranchItems(ecoBranchId)
+      const result = await VersionResolver.getBranchItems(changeOrderBranchId)
 
       const addedItem = result.items.find((i) => i.masterId === newMasterId)
       expect(addedItem).toBeDefined()
@@ -1530,9 +1632,9 @@ describe('VersionResolver', () => {
       await testDb.db
         .update(branchItems)
         .set({ changeType: 'deleted' })
-        .where(eq(branchItems.branchId, ecoBranchId))
+        .where(eq(branchItems.branchId, changeOrderBranchId))
 
-      const result = await VersionResolver.getBranchItems(ecoBranchId)
+      const result = await VersionResolver.getBranchItems(changeOrderBranchId)
 
       const deletedItem = result.items.find((i) => i.masterId === itemMasterId)
       expect(deletedItem).toBeUndefined()
@@ -2069,15 +2171,49 @@ describe('VersionResolver', () => {
     ).getBranchItemsInMemory.bind(VersionResolver)
 
     let designId: string
-    let ecoBranchId: string
-    let checkedOutUnchangedIds: Array<string>
+    let changeOrderBranchId: string
+    let checkedOutUnchangedKeys: Array<string>
 
-    const idsOf = (result: PaginatedItemsResult) =>
-      result.items.map((item) => item.id).sort()
+    /**
+     * Number, revision and id together, so a mismatch names the arm that
+     * diverged — `OV-012@A` is a release the branch deleted, `OV-003@-` a
+     * working copy — where a list of uuids says nothing. Keeping the id makes
+     * the comparison exactly as strict as one on ids alone.
+     */
+    const keyOf = (item: {
+      id: string
+      itemNumber: string
+      revision: string
+    }) => `${item.itemNumber}@${item.revision}#${item.id}`
+    const keysOf = (result: PaginatedItemsResult) =>
+      result.items.map(keyOf).sort()
+
+    const indices = (from: number, to: number) =>
+      Array.from({ length: to - from }, (_, offset) => from + offset)
+
+    /**
+     * Fresh master ids as plain strings: `crypto.randomUUID()` is typed as a
+     * UUID template literal, which `includes()` would then demand of the
+     * `masterId` a row comes back with.
+     */
+    const newMasters = (count: number): Array<string> =>
+      Array.from({ length: count }, () => crypto.randomUUID())
+
+    /**
+     * The id each master's row came back with, looked up by master rather
+     * than taken by position: RETURNING promises nothing about order.
+     */
+    const idsByMaster = (rows: Array<{ id: string; masterId: string }>) => {
+      const byMaster = new Map(rows.map((row) => [row.masterId, row.id]))
+      return (masterId: string): string => {
+        const id = byMaster.get(masterId)
+        if (!id)
+          throw new Error(`fixture inserted no row for master ${masterId}`)
+        return id
+      }
+    }
 
     beforeEach(async () => {
-      checkedOutUnchangedIds = []
-
       const design = await DesignService.create(
         {
           programId,
@@ -2090,38 +2226,40 @@ describe('VersionResolver', () => {
       designId = design.id
       const mainBranchId = design.mainBranch!.id
 
-      // Sixty masters released on main.
-      const masterIds = Array.from({ length: 60 }, () => crypto.randomUUID())
-      const releasedIds: Array<string> = []
-      const changes: Array<{ itemId: string; changeType: 'added' }> = []
+      const numberOf = (index: number) =>
+        `${uniquePrefix}-OV-${String(index).padStart(3, '0')}`
+      const typeOf = (index: number) => (index % 4 === 0 ? 'Document' : 'Part')
+      const authored = { createdBy: user.id, modifiedBy: user.id, designId }
 
-      for (const [index, masterId] of masterIds.entries()) {
-        const row = takeFirst(
-          await testDb.db
-            .insert(items)
-            .values({
-              masterId,
-              itemNumber: `${uniquePrefix}-OV-${String(index).padStart(3, '0')}`,
-              revision: 'A',
-              itemType: index % 4 === 0 ? 'Document' : 'Part',
-              name: `Overlay item ${index}`,
-              state: 'Released',
-              isCurrent: true,
-              createdBy: user.id,
-              modifiedBy: user.id,
-              designId,
-            })
-            .returning(),
+      // Sixty masters released on main. Each arm of the fixture is one
+      // multi-row insert: a statement per row cost a hundred round trips to
+      // build thirty-five branch rows before a single assertion ran.
+      const masterIds = newMasters(60)
+      const released = await testDb.db
+        .insert(items)
+        .values(
+          masterIds.map((masterId, index) => ({
+            ...authored,
+            masterId,
+            itemNumber: numberOf(index),
+            revision: 'A',
+            itemType: typeOf(index),
+            name: `Overlay item ${index}`,
+            state: 'Released',
+            isCurrent: true,
+          })),
         )
-        releasedIds.push(row.id)
-        changes.push({ itemId: row.id, changeType: 'added' })
-      }
+        .returning({ id: items.id, masterId: items.masterId })
+      const releasedIdOf = idsByMaster(released)
 
       await CommitService.create(
         {
           branchId: mainBranchId,
           message: 'release the overlay set',
-          itemChanges: changes,
+          itemChanges: released.map((row) => ({
+            itemId: row.id,
+            changeType: 'added' as const,
+          })),
         },
         user.id,
       )
@@ -2131,6 +2269,7 @@ describe('VersionResolver', () => {
         await testDb.db
           .insert(items)
           .values({
+            ...authored,
             masterId: crypto.randomUUID(),
             itemNumber: `${uniquePrefix}-OVECO-001`,
             revision: 'A',
@@ -2138,9 +2277,6 @@ describe('VersionResolver', () => {
             name: 'Overlay ECO',
             state: 'Draft',
             isCurrent: true,
-            createdBy: user.id,
-            modifiedBy: user.id,
-            designId,
           })
           .returning(),
       )
@@ -2149,175 +2285,155 @@ describe('VersionResolver', () => {
         changeType: 'ECO',
         priority: 'Medium',
       })
-      const ecoBranch = await BranchService.createEcoBranch(
+      const changeOrderBranch = await BranchService.createChangeOrderBranch(
         designId,
         coItem.id,
         user.id,
       )
-      ecoBranchId = ecoBranch.id
+      changeOrderBranchId = changeOrderBranch.id
 
-      const workingCopy = async (index: number, deleted = false) => {
-        const row = takeFirst(
-          await testDb.db
-            .insert(items)
-            .values({
-              masterId: masterIds[index]!,
-              itemNumber: `${uniquePrefix}-OV-${String(index).padStart(3, '0')}`,
-              revision: '-',
-              itemType: index % 4 === 0 ? 'Document' : 'Part',
-              name: `Overlay item ${index} (working)`,
-              state: 'In Work',
-              isCurrent: false,
-              isDeleted: deleted,
-              createdBy: user.id,
-              modifiedBy: user.id,
-              designId,
-            })
-            .returning(),
-        )
-        return row.id
-      }
+      // Working copies of released masters: 0–9 live, 20–22 since soft-deleted.
+      const workingCopyOf = (index: number, deleted: boolean) => ({
+        ...authored,
+        masterId: masterIds[index]!,
+        itemNumber: numberOf(index),
+        revision: '-',
+        itemType: typeOf(index),
+        name: `Overlay item ${index} (working)`,
+        state: 'In Work',
+        isCurrent: false,
+        isDeleted: deleted,
+      })
+      const workingIdOf = idsByMaster(
+        await testDb.db
+          .insert(items)
+          .values([
+            ...indices(0, 10).map((index) => workingCopyOf(index, false)),
+            ...indices(20, 23).map((index) => workingCopyOf(index, true)),
+          ])
+          .returning({ id: items.id, masterId: items.masterId }),
+      )
 
-      // 0–9 modified on the branch: the branch version wins.
-      for (let index = 0; index < 10; index++) {
-        await testDb.db.insert(branchItems).values({
-          branchId: ecoBranchId,
-          itemMasterId: masterIds[index]!,
-          currentItemId: await workingCopy(index),
-          changeType: 'modified',
+      // Masters main has never released: five created on the branch, five
+      // tracked in branch_items but absent from item_versions, and two checked
+      // out unchanged.
+      const branchOnlyMasters = newMasters(5)
+      const unversionedMasters = newMasters(5)
+      const checkedOutMasters = newMasters(2)
+      const branchNew = await testDb.db
+        .insert(items)
+        .values([
+          ...branchOnlyMasters.map((masterId, index) => ({
+            ...authored,
+            masterId,
+            itemNumber: `${uniquePrefix}-OVNEW-${index}`,
+            revision: '-',
+            itemType: 'Part',
+            name: `Branch-only item ${index}`,
+            state: 'In Work',
+            isCurrent: false,
+          })),
+          ...unversionedMasters.map((masterId, offset) => ({
+            ...authored,
+            masterId,
+            itemNumber: `${uniquePrefix}-OVUNV-${23 + offset}`,
+            revision: '-',
+            itemType: 'Part',
+            name: `Unversioned item ${23 + offset}`,
+            state: 'In Work',
+            isCurrent: false,
+          })),
+          ...checkedOutMasters.map((masterId, offset) => ({
+            ...authored,
+            masterId,
+            itemNumber: `${uniquePrefix}-OVCHK-${28 + offset}`,
+            revision: 'A',
+            itemType: 'Part',
+            name: `Checked out unchanged item ${28 + offset}`,
+            state: 'Released',
+            isCurrent: true,
+          })),
+        ])
+        .returning({
+          id: items.id,
+          masterId: items.masterId,
+          itemNumber: items.itemNumber,
+          revision: items.revision,
         })
-      }
+      const newIdOf = idsByMaster(branchNew)
+      checkedOutUnchangedKeys = branchNew
+        .filter((row) => checkedOutMasters.includes(row.masterId))
+        .map(keyOf)
 
-      // 10–14 deleted on the branch: they disappear from the branch view.
-      for (let index = 10; index < 15; index++) {
-        await testDb.db.insert(branchItems).values({
-          branchId: ecoBranchId,
-          itemMasterId: masterIds[index]!,
-          currentItemId: releasedIds[index]!,
-          changeType: 'deleted',
-        })
-      }
+      const tracked = (
+        itemMasterId: string,
+        currentItemId: string | null,
+        changeType: string | null,
+      ) => ({
+        branchId: changeOrderBranchId,
+        itemMasterId,
+        currentItemId,
+        changeType,
+      })
 
-      // 15–19 tracked with no version yet: main's version still stands.
-      for (let index = 15; index < 20; index++) {
-        await testDb.db.insert(branchItems).values({
-          branchId: ecoBranchId,
-          itemMasterId: masterIds[index]!,
-          currentItemId: null,
-          changeType: 'modified',
-        })
-      }
+      await testDb.db.insert(branchItems).values([
+        // 0–9 modified on the branch: the branch version wins.
+        ...masterIds
+          .slice(0, 10)
+          .map((masterId) =>
+            tracked(masterId, workingIdOf(masterId), 'modified'),
+          ),
 
-      // 20–22 point at a working copy that has since been soft-deleted. The
-      // item is not on the branch, and main's version must not resurface.
-      for (let index = 20; index < 23; index++) {
-        await testDb.db.insert(branchItems).values({
-          branchId: ecoBranchId,
-          itemMasterId: masterIds[index]!,
-          currentItemId: await workingCopy(index, true),
-          changeType: 'modified',
-        })
-      }
+        // 10–14 deleted on the branch: they disappear from the branch view.
+        ...masterIds
+          .slice(10, 15)
+          .map((masterId) =>
+            tracked(masterId, releasedIdOf(masterId), 'deleted'),
+          ),
 
-      // Five masters that exist only on the branch.
-      for (let index = 0; index < 5; index++) {
-        const masterId = crypto.randomUUID()
-        const row = takeFirst(
-          await testDb.db
-            .insert(items)
-            .values({
-              masterId,
-              itemNumber: `${uniquePrefix}-OVNEW-${index}`,
-              revision: '-',
-              itemType: 'Part',
-              name: `Branch-only item ${index}`,
-              state: 'In Work',
-              isCurrent: false,
-              createdBy: user.id,
-              modifiedBy: user.id,
-              designId,
-            })
-            .returning(),
-        )
-        await testDb.db.insert(branchItems).values({
-          branchId: ecoBranchId,
-          itemMasterId: masterId,
-          currentItemId: row.id,
-          changeType: 'added',
-        })
-      }
+        // 15–19 tracked with no version yet: main's version still stands.
+        ...masterIds
+          .slice(15, 20)
+          .map((masterId) => tracked(masterId, null, 'modified')),
 
-      // 23–27 exist only in branch_items, never in item_versions — the shape
-      // left behind by pre-release data added straight to a branch.
-      for (let index = 23; index < 28; index++) {
-        const masterId = crypto.randomUUID()
-        const row = takeFirst(
-          await testDb.db
-            .insert(items)
-            .values({
-              masterId,
-              itemNumber: `${uniquePrefix}-OVUNV-${index}`,
-              revision: '-',
-              itemType: 'Part',
-              name: `Unversioned item ${index}`,
-              state: 'In Work',
-              isCurrent: false,
-              createdBy: user.id,
-              modifiedBy: user.id,
-              designId,
-            })
-            .returning(),
-        )
-        await testDb.db.insert(branchItems).values({
-          branchId: ecoBranchId,
-          itemMasterId: masterId,
-          currentItemId: row.id,
-          changeType: 'modified',
-        })
-      }
+        // 20–22 point at a working copy that has since been soft-deleted. The
+        // item is not on the branch, and main's version must not resurface.
+        ...masterIds
+          .slice(20, 23)
+          .map((masterId) =>
+            tracked(masterId, workingIdOf(masterId), 'modified'),
+          ),
 
-      // 28–29 checked out but not yet edited: a plain checkout records no
-      // change type at all. These masters are invisible to commit resolution
-      // too, so they can only reach the branch view through the added arm —
-      // where a `<> 'deleted'` test is NULL rather than true against a NULL
-      // and silently drops them, while the in-memory merge keeps them.
-      for (let index = 28; index < 30; index++) {
-        const masterId = crypto.randomUUID()
-        const row = takeFirst(
-          await testDb.db
-            .insert(items)
-            .values({
-              masterId,
-              itemNumber: `${uniquePrefix}-OVCHK-${index}`,
-              revision: 'A',
-              itemType: 'Part',
-              name: `Checked out unchanged item ${index}`,
-              state: 'Released',
-              isCurrent: true,
-              createdBy: user.id,
-              modifiedBy: user.id,
-              designId,
-            })
-            .returning(),
-        )
-        checkedOutUnchangedIds.push(row.id)
-        await testDb.db.insert(branchItems).values({
-          branchId: ecoBranchId,
-          itemMasterId: masterId,
-          currentItemId: row.id,
-          changeType: null,
+        // Five masters that exist only on the branch.
+        ...branchOnlyMasters.map((masterId) =>
+          tracked(masterId, newIdOf(masterId), 'added'),
+        ),
+
+        // 23–27 exist only in branch_items, never in item_versions — the shape
+        // left behind by pre-release data added straight to a branch.
+        ...unversionedMasters.map((masterId) =>
+          tracked(masterId, newIdOf(masterId), 'modified'),
+        ),
+
+        // 28–29 checked out but not yet edited: a plain checkout records no
+        // change type at all. These masters are invisible to commit resolution
+        // too, so they can only reach the branch view through the added arm —
+        // where a `<> 'deleted'` test is NULL rather than true against a NULL
+        // and silently drops them, while the in-memory merge keeps them.
+        ...checkedOutMasters.map((masterId) => ({
+          ...tracked(masterId, newIdOf(masterId), null),
           checkedOutBy: user.id,
           checkedOutAt: new Date(),
-        })
-      }
+        })),
+      ])
     })
 
     it('returns the same items as the in-memory merge', async () => {
-      const sqlPath = await VersionResolver.getBranchItems(ecoBranchId)
-      const oracle = await mergeInMemory(ecoBranchId)
+      const sqlPath = await VersionResolver.getBranchItems(changeOrderBranchId)
+      const oracle = await mergeInMemory(changeOrderBranchId)
 
+      expect(keysOf(sqlPath)).toEqual(keysOf(oracle))
       expect(sqlPath.total).toBe(oracle.total)
-      expect(idsOf(sqlPath)).toEqual(idsOf(oracle))
 
       // The fixture is only meaningful if every arm actually contributed:
       // 60 released, minus 5 deleted on the branch, minus 3 whose working copy
@@ -2327,21 +2443,21 @@ describe('VersionResolver', () => {
     })
 
     it('keeps a checked-out-but-unchanged master, as the in-memory merge does', async () => {
-      const sqlPath = await VersionResolver.getBranchItems(ecoBranchId)
-      const oracle = await mergeInMemory(ecoBranchId)
+      const sqlPath = await VersionResolver.getBranchItems(changeOrderBranchId)
+      const oracle = await mergeInMemory(changeOrderBranchId)
 
+      expect(keysOf(sqlPath)).toEqual(keysOf(oracle))
       expect(sqlPath.total).toBe(oracle.total)
-      expect(idsOf(sqlPath)).toEqual(idsOf(oracle))
 
       // Named separately from the set comparison above: an arm that vanished
       // from both paths would still make them agree, and this is the one the
       // NULL change type reaches.
-      expect(checkedOutUnchangedIds.length).toBe(2)
-      expect(idsOf(oracle)).toEqual(
-        expect.arrayContaining(checkedOutUnchangedIds),
+      expect(checkedOutUnchangedKeys.length).toBe(2)
+      expect(keysOf(oracle)).toEqual(
+        expect.arrayContaining(checkedOutUnchangedKeys),
       )
-      expect(idsOf(sqlPath)).toEqual(
-        expect.arrayContaining(checkedOutUnchangedIds),
+      expect(keysOf(sqlPath)).toEqual(
+        expect.arrayContaining(checkedOutUnchangedKeys),
       )
     })
 
@@ -2359,32 +2475,35 @@ describe('VersionResolver', () => {
       for (const filters of filterSets) {
         const label = JSON.stringify(filters)
         const sqlPath = await VersionResolver.getBranchItems(
-          ecoBranchId,
+          changeOrderBranchId,
           filters,
         )
-        const oracle = await mergeInMemory(ecoBranchId, filters)
+        const oracle = await mergeInMemory(changeOrderBranchId, filters)
 
+        // Membership before the count. A divergence then reports the items
+        // the two paths disagree on, and so which overlay arm broke, where a
+        // count mismatch on its own reports two integers.
+        expect(keysOf(sqlPath), `items for ${label}`).toEqual(keysOf(oracle))
         expect(sqlPath.total, `total for ${label}`).toBe(oracle.total)
-        expect(idsOf(sqlPath), `items for ${label}`).toEqual(idsOf(oracle))
       }
     })
 
     it('paginates the branch view over a stable order', async () => {
-      const all = await VersionResolver.getBranchItems(ecoBranchId)
+      const all = await VersionResolver.getBranchItems(changeOrderBranchId)
       const walked: Array<string> = []
 
       for (let offset = 0; offset < all.total; offset += 20) {
-        const page = await VersionResolver.getBranchItems(ecoBranchId, {
+        const page = await VersionResolver.getBranchItems(changeOrderBranchId, {
           limit: 20,
           offset,
         })
         expect(page.total).toBe(all.total)
-        walked.push(...page.items.map((item) => item.id))
+        walked.push(...page.items.map(keyOf))
       }
 
       expect(walked.length).toBe(all.total)
       expect(new Set(walked).size).toBe(walked.length)
-      expect(walked.sort()).toEqual(idsOf(all))
+      expect(walked.sort()).toEqual(keysOf(all))
     })
 
     it('falls back to the in-memory merge when main has no commit history', async () => {
@@ -2429,9 +2548,9 @@ describe('VersionResolver', () => {
       const result = await VersionResolver.getBranchItems(mainBranchId)
       const oracle = await mergeInMemory(mainBranchId)
 
+      expect(keysOf(result)).toEqual(keysOf(oracle))
       expect(result.total).toBe(oracle.total)
-      expect(idsOf(result)).toEqual(idsOf(oracle))
-      expect(result.items.map((item) => item.id)).toContain(row.id)
+      expect(keysOf(result)).toContain(keyOf(row))
     })
   })
 })

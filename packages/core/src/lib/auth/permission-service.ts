@@ -4,7 +4,7 @@
 import { eq } from 'drizzle-orm'
 import { db } from '../db'
 import { roles, userRoles } from '../db/schema/users'
-import { hasPermission } from './permissions'
+import { canonicalResource, hasPermission } from './permissions'
 import type { PermissionAction, ResourceType } from './permissions'
 import { authLogger } from '@/lib/logging/logger'
 
@@ -129,7 +129,9 @@ export class PermissionService {
       const rolePermissions = record.role.permissions
 
       if (rolePermissions) {
-        for (const [resource, actions] of Object.entries(rolePermissions)) {
+        for (const [stored, actions] of Object.entries(rolePermissions)) {
+          // A row that still says `workflows` counts as `lifecycles` (CM-27)
+          const resource = canonicalResource(stored)
           let resourceActions = allPermissions[resource]
           if (!resourceActions) {
             resourceActions = new Set()

@@ -104,20 +104,8 @@ export const ITEM_TYPE_OPTIONS: Array<{ label: string; value: string }> =
     value: def.name,
   }))
 
-/**
- * Filter-dropdown options for lifecycle state: the union of every state id
- * across all item types, in first-seen definition order.
- */
-export const ITEM_STATE_OPTIONS: Array<{ label: string; value: string }> =
-  (() => {
-    const seen = new Set<string>()
-    const options: Array<{ label: string; value: string }> = []
-    for (const def of Object.values(ITEM_TYPE_DEFINITIONS)) {
-      for (const state of def.states) {
-        if (seen.has(state.id)) continue
-        seen.add(state.id)
-        options.push({ label: state.name, value: state.id })
-      }
-    }
-    return options
-  })()
+// Lifecycle-state filter options are not built here. They come from the
+// lifecycle definitions (`useItemStateOptions` in `@/lib/hooks`), not from
+// the code-defined state lists on the item types, which are configuration's
+// stale shadow: they offered states no item could hold and missed the ones
+// it could.

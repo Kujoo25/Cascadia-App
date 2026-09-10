@@ -13,6 +13,7 @@ import {
   Folder,
   FolderOpen,
   GitCommitHorizontal,
+  Lock,
   Pencil,
   Trash2,
   Undo2,
@@ -63,6 +64,14 @@ interface SourceViewerProps {
   canImport?: boolean
   /** Enable in-app editing (server still enforces checkout/lock rules) */
   canEdit?: boolean
+  /**
+   * Why writing is unavailable, when the caller knows. Rendered where the
+   * edit controls would be: without it a read-only tree looks identical to
+   * one nobody has touched, and the reason (protected main, a locked ECO
+   * branch, someone else's checkout) is exactly what tells the user what to
+   * do next.
+   */
+  readOnlyReason?: string
   /** Called after a successful import/commit so the parent can refresh */
   onImported?: () => void
 }
@@ -325,6 +334,7 @@ export function SourceViewer({
   itemId,
   canImport = true,
   canEdit = false,
+  readOnlyReason,
   onImported,
 }: SourceViewerProps) {
   const { handleError, showSuccess } = useErrorHandler()
@@ -709,6 +719,13 @@ export function SourceViewer({
     </>
   )
 
+  const readOnlyNotice = !canEdit && readOnlyReason && (
+    <p className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
+      <Lock className="h-3.5 w-3.5 shrink-0" />
+      {readOnlyReason}
+    </p>
+  )
+
   const editButtons = canEdit && (
     <>
       <Button
@@ -786,13 +803,15 @@ export function SourceViewer({
       <Card>
         <CardContent className="flex flex-col items-center gap-4 py-12">
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            No source tree yet. Import a zip archive or individual files to get
-            started.
+            {canImport
+              ? 'No source tree yet. Import a zip archive or individual files to get started.'
+              : 'No source tree yet.'}
           </p>
           <div className="flex gap-2">
             {importButtons}
             {editButtons}
           </div>
+          {readOnlyNotice}
         </CardContent>
       </Card>
     )
@@ -812,7 +831,8 @@ export function SourceViewer({
             </Badge>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {readOnlyNotice}
           <Button
             variant="outline"
             size="sm"

@@ -130,7 +130,7 @@ const scopedIssueDesigns = alias(issueDesigns, 'issue_design_scope')
  * second list over change orders, and it has to draw this boundary in this
  * expression rather than in a second copy of the rule that can drift from it.
  */
-export function ecoAccessScopeCondition(
+export function changeOrderAccessScopeCondition(
   accessDesignIds: Array<string>,
 ): SQL<unknown> {
   return sql`EXISTS (
@@ -211,7 +211,7 @@ export function physicalPartAccessScopeCondition(
  *    create-time derivation, by the type handler whenever the chosen designs
  *    resolve to exactly one program.
  *  - `issue_designs`, the designs the create form collects by hand — reachable
- *    if *any* of them is reachable, the rule `ecoAccessScopeCondition` applies
+ *    if *any* of them is reachable, the rule `changeOrderAccessScopeCondition` applies
  *    to an ECO's links and for the same reason: the designs are equal, and
  *    business with one is business with the issue.
  *
@@ -261,7 +261,7 @@ function issueAccessScopeCondition(
  * `AccessControlService.canAccessDesign` decides about a program-less design.
  * Four types do carry an axis of their own and are scoped on it instead:
  *
- *  - ChangeOrder, through `change_order_designs` (`ecoAccessScopeCondition`)
+ *  - ChangeOrder, through `change_order_designs` (`changeOrderAccessScopeCondition`)
  *  - WorkOrder, through `work_orders.program_id`
  *  - PhysicalPart, through its part's lineage
  *  - Issue, through whichever of its three axes it carries
@@ -362,7 +362,10 @@ export function accessScopeCondition(
       inArray(items.designId, designIds),
     ),
     designLess,
-    and(eq(items.itemType, 'ChangeOrder'), ecoAccessScopeCondition(designIds)),
+    and(
+      eq(items.itemType, 'ChangeOrder'),
+      changeOrderAccessScopeCondition(designIds),
+    ),
     workOrderScoped,
     physicalPartScoped,
     issueScoped,

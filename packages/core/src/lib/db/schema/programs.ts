@@ -26,7 +26,8 @@ export type JsonValue =
   | { [key: string]: JsonValue }
 export interface ProgramSettings {
   approvalWorkflow?: Array<string> // ['Engineering', 'Manufacturing', 'Quality']
-  ecoNumberFormat?: string // 'ECO-{YYYY}-{NNN}'
+  // Renamed from `ecoNumberFormat`; migration 0004 moves the stored key
+  changeOrderNumberFormat?: string // 'ECO-{YYYY}-{NNN}'
   [key: string]: JsonValue | undefined
 }
 

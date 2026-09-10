@@ -206,7 +206,7 @@ describe('CheckoutService.checkout — concurrent acquisition', () => {
       },
       user.id,
     )
-    const eco = await ChangeOrderService.create(
+    const changeOrder = await ChangeOrderService.create(
       { revision: 'A', changeType: 'ECO', name: 'Race ECO' },
       [designId],
       user.id,
@@ -217,13 +217,13 @@ describe('CheckoutService.checkout — concurrent acquisition', () => {
       .from(changeOrderDesigns)
       .where(
         and(
-          eq(changeOrderDesigns.changeOrderId, eco.id!),
+          eq(changeOrderDesigns.changeOrderId, changeOrder.id!),
           eq(changeOrderDesigns.designId, designId),
         ),
       )
       .limit(1)
-    const ecoBranchId = link.at(0)?.branchId
-    if (!ecoBranchId) throw new Error('ECO branch missing')
+    const changeOrderBranchId = link.at(0)?.branchId
+    if (!changeOrderBranchId) throw new Error('ECO branch missing')
 
     const contenders: Array<TestUser> = [user]
     for (let i = 1; i < CONTENDERS; i++) {
@@ -238,7 +238,7 @@ describe('CheckoutService.checkout — concurrent acquisition', () => {
     await Promise.allSettled(
       contenders.map((u) =>
         CheckoutService.checkout(
-          { branchId: ecoBranchId, itemMasterId: part.masterId! },
+          { branchId: changeOrderBranchId, itemMasterId: part.masterId! },
           u.id,
         ),
       ),
@@ -249,7 +249,7 @@ describe('CheckoutService.checkout — concurrent acquisition', () => {
       .from(changeOrderAffectedItems)
       .where(
         and(
-          eq(changeOrderAffectedItems.changeOrderId, eco.id!),
+          eq(changeOrderAffectedItems.changeOrderId, changeOrder.id!),
           eq(changeOrderAffectedItems.affectedItemMasterId, part.masterId!),
         ),
       )
@@ -346,7 +346,7 @@ describe('CheckoutService.deleteOnBranch — concurrent deletes', () => {
   })
 
   /** An ECO branch, a released master it does not track yet, and N users. */
-  async function untrackedOnEco(label: string) {
+  async function untrackedOnChangeOrder(label: string) {
     const { user, designId } = await concurrent.seedScope(label)
 
     const part = await ItemService.create<Part>(
@@ -361,7 +361,7 @@ describe('CheckoutService.deleteOnBranch — concurrent deletes', () => {
       user.id,
     )
 
-    const eco = await ChangeOrderService.create(
+    const changeOrder = await ChangeOrderService.create(
       { revision: 'A', changeType: 'ECO', name: 'Delete race ECO' },
       [designId],
       user.id,
@@ -371,7 +371,7 @@ describe('CheckoutService.deleteOnBranch — concurrent deletes', () => {
       .from(changeOrderDesigns)
       .where(
         and(
-          eq(changeOrderDesigns.changeOrderId, eco.id!),
+          eq(changeOrderDesigns.changeOrderId, changeOrder.id!),
           eq(changeOrderDesigns.designId, designId),
         ),
       )
@@ -391,7 +391,7 @@ describe('CheckoutService.deleteOnBranch — concurrent deletes', () => {
 
     return {
       branchId,
-      changeOrderId: eco.id!,
+      changeOrderId: changeOrder.id!,
       itemMasterId: part.masterId!,
       contenders,
     }
@@ -423,7 +423,7 @@ describe('CheckoutService.deleteOnBranch — concurrent deletes', () => {
 
   it('mints exactly one deleted row when eight callers delete at once', async () => {
     const { branchId, changeOrderId, itemMasterId, contenders } =
-      await untrackedOnEco('delete-race')
+      await untrackedOnChangeOrder('delete-race')
     const only = contenders[0]!
 
     const outcomes = await Promise.allSettled(
@@ -462,7 +462,7 @@ describe('CheckoutService.deleteOnBranch — concurrent deletes', () => {
 
   it('never lets a delete and a checkout both win the same master', async () => {
     const { branchId, itemMasterId, contenders } =
-      await untrackedOnEco('delete-vs-checkout')
+      await untrackedOnChangeOrder('delete-vs-checkout')
     const [holder, deleter] = contenders
 
     const [checkoutOutcome, deleteOutcome] = await Promise.allSettled([
@@ -500,7 +500,7 @@ describe('CheckoutService.deleteOnBranch — concurrent deletes', () => {
  * Same data-integrity gate, one table over. Three writers put a master into a
  * change order's scope — `addAffectedItem` from the Add dialog,
  * `registerBranchChange` from every path that reaches an ECO branch directly,
- * and `checkoutItemToEco` from the checkout-to-ECO route — and all three did
+ * and `checkoutItem` from the checkout-to-ECO route — and all three did
  * it by selecting, finding nothing, and inserting. Two of them interleaving
  * left the same item listed twice, with two different actions ('revise' and
  * 'obsolete' both validate on their own), and the merge then processed them in
@@ -527,7 +527,7 @@ describe('ChangeOrderService — concurrent affected-item registration', () => {
   })
 
   /** An ECO with a branch, an item in its design, and nothing in scope yet. */
-  async function unscopedOnEco(label: string) {
+  async function unscopedOnChangeOrder(label: string) {
     const { user, designId } = await concurrent.seedScope(label)
 
     const part = await ItemService.create<Part>(
@@ -542,7 +542,7 @@ describe('ChangeOrderService — concurrent affected-item registration', () => {
       user.id,
     )
 
-    const eco = await ChangeOrderService.create(
+    const changeOrder = await ChangeOrderService.create(
       { revision: 'A', changeType: 'ECO', name: 'Scope race ECO' },
       [designId],
       user.id,
@@ -552,7 +552,7 @@ describe('ChangeOrderService — concurrent affected-item registration', () => {
       .from(changeOrderDesigns)
       .where(
         and(
-          eq(changeOrderDesigns.changeOrderId, eco.id!),
+          eq(changeOrderDesigns.changeOrderId, changeOrder.id!),
           eq(changeOrderDesigns.designId, designId),
         ),
       )
@@ -565,7 +565,7 @@ describe('ChangeOrderService — concurrent affected-item registration', () => {
 
     return {
       branchId,
-      changeOrderId: eco.id!,
+      changeOrderId: changeOrder.id!,
       itemId: part.id!,
       itemMasterId: part.masterId!,
       adder: user,
@@ -598,7 +598,7 @@ describe('ChangeOrderService — concurrent affected-item registration', () => {
 
   it('keeps one scope row when the Add dialog races a checkout-to-ECO', async () => {
     const { changeOrderId, itemId, itemMasterId, adder, rival } =
-      await unscopedOnEco('scope-add-vs-eco-checkout')
+      await unscopedOnChangeOrder('scope-add-vs-eco-checkout')
 
     const outcomes = await Promise.allSettled([
       ChangeOrderService.addAffectedItem(
@@ -606,7 +606,7 @@ describe('ChangeOrderService — concurrent affected-item registration', () => {
         { affectedItemId: itemId, changeAction: 'release' },
         adder.id,
       ),
-      ChangeOrderService.checkoutItemToEco(changeOrderId, itemId, rival.id),
+      ChangeOrderService.checkoutItem(changeOrderId, itemId, rival.id),
     ])
 
     const rows = await scopeRowsFor(changeOrderId, itemMasterId)
@@ -624,7 +624,7 @@ describe('ChangeOrderService — concurrent affected-item registration', () => {
 
   it('keeps one scope row when the Add dialog races a branch checkout', async () => {
     const { branchId, changeOrderId, itemId, itemMasterId, adder, rival } =
-      await unscopedOnEco('scope-add-vs-branch-checkout')
+      await unscopedOnChangeOrder('scope-add-vs-branch-checkout')
 
     const outcomes = await Promise.allSettled([
       ChangeOrderService.addAffectedItem(
@@ -660,7 +660,7 @@ describe('ChangeOrderService — concurrent affected-item registration', () => {
     // matches on: rename the index and leave that string behind, and a
     // duplicate goes back to being a 500 naming a database index.
     const { changeOrderId, itemId, itemMasterId, adder } =
-      await unscopedOnEco('scope-lost-insert')
+      await unscopedOnChangeOrder('scope-lost-insert')
 
     await ChangeOrderService.addAffectedItem(
       changeOrderId,

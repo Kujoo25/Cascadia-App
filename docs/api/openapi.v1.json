@@ -10757,6 +10757,11 @@
                           "minimum": -9007199254740991,
                           "type": "integer"
                         },
+                        "option": {
+                          "description": "Product variants: `color=black; display=yes,no`",
+                          "maxLength": 500,
+                          "type": "string"
+                        },
                         "parentItemNumber": {
                           "type": "string"
                         },
@@ -11343,6 +11348,48 @@
                         "minimum": 0,
                         "type": "integer"
                       },
+                      "makes": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "properties": {
+                                "active": {
+                                  "default": true,
+                                  "type": "boolean"
+                                },
+                                "code": {
+                                  "maxLength": 50,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "default": "",
+                                  "maxLength": 200,
+                                  "type": "string"
+                                },
+                                "selections": {
+                                  "additionalProperties": {
+                                    "maxLength": 50,
+                                    "minLength": 1,
+                                    "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                    "type": "string"
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "selections"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
                       "material": {
                         "maxLength": 100,
                         "type": "string"
@@ -11350,6 +11397,162 @@
                       "name": {
                         "maxLength": 500,
                         "type": "string"
+                      },
+                      "optionModel": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "constraints": {
+                                "items": {
+                                  "properties": {
+                                    "message": {
+                                      "default": "",
+                                      "maxLength": 500,
+                                      "type": "string"
+                                    },
+                                    "require": {
+                                      "properties": {
+                                        "all": {
+                                          "items": {
+                                            "properties": {
+                                              "family": {
+                                                "maxLength": 50,
+                                                "minLength": 1,
+                                                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                "type": "string"
+                                              },
+                                              "values": {
+                                                "items": {
+                                                  "maxLength": 50,
+                                                  "minLength": 1,
+                                                  "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                  "type": "string"
+                                                },
+                                                "minItems": 1,
+                                                "type": "array"
+                                              }
+                                            },
+                                            "required": [
+                                              "family",
+                                              "values"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          "minItems": 1,
+                                          "type": "array"
+                                        }
+                                      },
+                                      "required": [
+                                        "all"
+                                      ],
+                                      "type": "object"
+                                    },
+                                    "when": {
+                                      "properties": {
+                                        "all": {
+                                          "items": {
+                                            "properties": {
+                                              "family": {
+                                                "maxLength": 50,
+                                                "minLength": 1,
+                                                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                "type": "string"
+                                              },
+                                              "values": {
+                                                "items": {
+                                                  "maxLength": 50,
+                                                  "minLength": 1,
+                                                  "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                  "type": "string"
+                                                },
+                                                "minItems": 1,
+                                                "type": "array"
+                                              }
+                                            },
+                                            "required": [
+                                              "family",
+                                              "values"
+                                            ],
+                                            "type": "object"
+                                          },
+                                          "minItems": 1,
+                                          "type": "array"
+                                        }
+                                      },
+                                      "required": [
+                                        "all"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  },
+                                  "required": [
+                                    "when",
+                                    "require"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "families": {
+                                "default": [],
+                                "items": {
+                                  "properties": {
+                                    "code": {
+                                      "maxLength": 50,
+                                      "minLength": 1,
+                                      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "maxLength": 200,
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "required": {
+                                      "default": true,
+                                      "type": "boolean"
+                                    },
+                                    "values": {
+                                      "items": {
+                                        "properties": {
+                                          "code": {
+                                            "maxLength": 50,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                            "type": "string"
+                                          },
+                                          "label": {
+                                            "maxLength": 200,
+                                            "minLength": 1,
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "code",
+                                          "label"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "code",
+                                    "name",
+                                    "values"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
                       },
                       "partType": {
                         "enum": [
@@ -14171,6 +14374,51 @@
                   "findNumber": {
                     "type": "number"
                   },
+                  "option": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "all": {
+                            "items": {
+                              "properties": {
+                                "family": {
+                                  "maxLength": 50,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                  "type": "string"
+                                },
+                                "values": {
+                                  "items": {
+                                    "maxLength": 50,
+                                    "minLength": 1,
+                                    "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                    "type": "string"
+                                  },
+                                  "minItems": 1,
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "family",
+                                "values"
+                              ],
+                              "type": "object"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "all"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Product variants: the option selections that admit this BOM line. Omit or null for a fixed line."
+                  },
                   "quantity": {
                     "anyOf": [
                       {
@@ -15658,6 +15906,11 @@
                             },
                             {
                               "properties": {
+                                "startAt": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
                                 "type": {
                                   "const": "numeric",
                                   "type": "string"
@@ -15673,6 +15926,11 @@
                                 "prefix": {
                                   "maxLength": 20,
                                   "type": "string"
+                                },
+                                "startAt": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
                                 },
                                 "type": {
                                   "const": "prefixed-numeric",
@@ -15729,6 +15987,11 @@
                       },
                       {
                         "properties": {
+                          "startAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "type": {
                             "const": "numeric",
                             "type": "string"
@@ -15744,6 +16007,11 @@
                           "prefix": {
                             "maxLength": 20,
                             "type": "string"
+                          },
+                          "startAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
                           },
                           "type": {
                             "const": "prefixed-numeric",
@@ -16519,6 +16787,11 @@
                             },
                             {
                               "properties": {
+                                "startAt": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
                                 "type": {
                                   "const": "numeric",
                                   "type": "string"
@@ -16534,6 +16807,11 @@
                                 "prefix": {
                                   "maxLength": 20,
                                   "type": "string"
+                                },
+                                "startAt": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
                                 },
                                 "type": {
                                   "const": "prefixed-numeric",
@@ -16590,6 +16868,11 @@
                       },
                       {
                         "properties": {
+                          "startAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "type": {
                             "const": "numeric",
                             "type": "string"
@@ -16605,6 +16888,11 @@
                           "prefix": {
                             "maxLength": 20,
                             "type": "string"
+                          },
+                          "startAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
                           },
                           "type": {
                             "const": "prefixed-numeric",
@@ -18066,6 +18354,28 @@
                     "pattern": "^[A-Z0-9-]+$",
                     "type": "string"
                   },
+                  "configuration": {
+                    "properties": {
+                      "makeCode": {
+                        "type": "string"
+                      },
+                      "rootItemId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "selections": {
+                        "additionalProperties": {
+                          "type": "string"
+                        },
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "rootItemId"
+                    ],
+                    "type": "object"
+                  },
                   "copyBomStructure": {
                     "default": true,
                     "type": "boolean"
@@ -18549,6 +18859,48 @@
                       }
                     ]
                   },
+                  "makes": {
+                    "anyOf": [
+                      {
+                        "items": {
+                          "properties": {
+                            "active": {
+                              "default": true,
+                              "type": "boolean"
+                            },
+                            "code": {
+                              "maxLength": 50,
+                              "minLength": 1,
+                              "type": "string"
+                            },
+                            "name": {
+                              "default": "",
+                              "maxLength": 200,
+                              "type": "string"
+                            },
+                            "selections": {
+                              "additionalProperties": {
+                                "maxLength": 50,
+                                "minLength": 1,
+                                "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                "type": "string"
+                              },
+                              "type": "object"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "selections"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "material": {
                     "anyOf": [
                       {
@@ -18565,6 +18917,162 @@
                       {
                         "maxLength": 500,
                         "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "optionModel": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "constraints": {
+                            "items": {
+                              "properties": {
+                                "message": {
+                                  "default": "",
+                                  "maxLength": 500,
+                                  "type": "string"
+                                },
+                                "require": {
+                                  "properties": {
+                                    "all": {
+                                      "items": {
+                                        "properties": {
+                                          "family": {
+                                            "maxLength": 50,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                            "type": "string"
+                                          },
+                                          "values": {
+                                            "items": {
+                                              "maxLength": 50,
+                                              "minLength": 1,
+                                              "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                              "type": "string"
+                                            },
+                                            "minItems": 1,
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": [
+                                          "family",
+                                          "values"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "all"
+                                  ],
+                                  "type": "object"
+                                },
+                                "when": {
+                                  "properties": {
+                                    "all": {
+                                      "items": {
+                                        "properties": {
+                                          "family": {
+                                            "maxLength": 50,
+                                            "minLength": 1,
+                                            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                            "type": "string"
+                                          },
+                                          "values": {
+                                            "items": {
+                                              "maxLength": 50,
+                                              "minLength": 1,
+                                              "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                              "type": "string"
+                                            },
+                                            "minItems": 1,
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": [
+                                          "family",
+                                          "values"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "minItems": 1,
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "all"
+                                  ],
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "when",
+                                "require"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "families": {
+                            "default": [],
+                            "items": {
+                              "properties": {
+                                "code": {
+                                  "maxLength": 50,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "maxLength": 200,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "required": {
+                                  "default": true,
+                                  "type": "boolean"
+                                },
+                                "values": {
+                                  "items": {
+                                    "properties": {
+                                      "code": {
+                                        "maxLength": 50,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                        "type": "string"
+                                      },
+                                      "label": {
+                                        "maxLength": 200,
+                                        "minLength": 1,
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "code",
+                                      "label"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "minItems": 1,
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "name",
+                                "values"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          }
+                        },
+                        "type": "object"
                       },
                       {
                         "type": "null"
@@ -18868,6 +19376,476 @@
         },
         "tags": [
           "Parts"
+        ]
+      }
+    },
+    "/api/v1/parts/{id}/variants/lint": {
+      "get": {
+        "operationId": "getApiV1PartsByIdVariantsLint",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branchId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "findings": {
+                          "items": {
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "family": {
+                                "type": "string"
+                              },
+                              "makeCode": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "relationshipId": {
+                                "type": "string"
+                              },
+                              "severity": {
+                                "enum": [
+                                  "error",
+                                  "warning"
+                                ],
+                                "type": "string"
+                              },
+                              "value": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "severity",
+                              "message"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "findings"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Check a part's variant data for inconsistencies",
+        "tags": [
+          "Variants"
+        ]
+      }
+    },
+    "/api/v1/parts/{id}/variants/resolve": {
+      "post": {
+        "description": "Keeps the fixed lines and the lines whose option condition the selections satisfy, recursively. Pass `makeCode` to use a named make's selections.",
+        "operationId": "postApiV1PartsByIdVariantsResolve",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "branchId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "makeCode": {
+                    "description": "A named make on the part",
+                    "type": "string"
+                  },
+                  "selections": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "children": {
+                          "items": {},
+                          "type": "array"
+                        },
+                        "droppedLines": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "findings": {
+                          "items": {
+                            "properties": {
+                              "itemNumber": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "itemNumber",
+                              "message"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "root": {
+                          "properties": {
+                            "itemId": {
+                              "type": "string"
+                            },
+                            "itemNumber": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "revision": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "itemId",
+                            "itemNumber",
+                            "name",
+                            "revision"
+                          ],
+                          "type": "object"
+                        },
+                        "selections": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "type": "object"
+                        },
+                        "validation": {
+                          "properties": {
+                            "errors": {
+                              "items": {
+                                "properties": {
+                                  "family": {
+                                    "type": "string"
+                                  },
+                                  "message": {
+                                    "type": "string"
+                                  },
+                                  "severity": {
+                                    "enum": [
+                                      "error",
+                                      "warning"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "severity",
+                                  "message"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "valid": {
+                              "type": "boolean"
+                            },
+                            "warnings": {
+                              "items": {
+                                "properties": {
+                                  "family": {
+                                    "type": "string"
+                                  },
+                                  "message": {
+                                    "type": "string"
+                                  },
+                                  "severity": {
+                                    "enum": [
+                                      "error",
+                                      "warning"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "severity",
+                                  "message"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "required": [
+                            "valid",
+                            "errors",
+                            "warnings"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "root",
+                        "selections",
+                        "validation",
+                        "children",
+                        "droppedLines",
+                        "findings"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Resolve a configuration to a 100 % BOM",
+        "tags": [
+          "Variants"
+        ]
+      }
+    },
+    "/api/v1/parts/{id}/variants/validate": {
+      "post": {
+        "operationId": "postApiV1PartsByIdVariantsValidate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "selections": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "Option family code → value code",
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "selections"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "errors": {
+                          "items": {
+                            "properties": {
+                              "family": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "severity": {
+                                "enum": [
+                                  "error",
+                                  "warning"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "severity",
+                              "message"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "valid": {
+                          "type": "boolean"
+                        },
+                        "warnings": {
+                          "items": {
+                            "properties": {
+                              "family": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "severity": {
+                                "enum": [
+                                  "error",
+                                  "warning"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "severity",
+                              "message"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "valid",
+                        "errors",
+                        "warnings"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Validate option selections against a configurable part",
+        "tags": [
+          "Variants"
         ]
       }
     },
@@ -20156,6 +21134,50 @@
                           "additionalProperties": {},
                           "type": "object"
                         },
+                        "option": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "all": {
+                                  "items": {
+                                    "properties": {
+                                      "family": {
+                                        "maxLength": 50,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                        "type": "string"
+                                      },
+                                      "values": {
+                                        "items": {
+                                          "maxLength": 50,
+                                          "minLength": 1,
+                                          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                          "type": "string"
+                                        },
+                                        "minItems": 1,
+                                        "type": "array"
+                                      }
+                                    },
+                                    "required": [
+                                      "family",
+                                      "values"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "minItems": 1,
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "all"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "quantity": {
                           "anyOf": [
                             {
@@ -20239,6 +21261,50 @@
                                       "type": "string"
                                     },
                                     "type": "object"
+                                  },
+                                  "option": {
+                                    "anyOf": [
+                                      {
+                                        "properties": {
+                                          "all": {
+                                            "items": {
+                                              "properties": {
+                                                "family": {
+                                                  "maxLength": 50,
+                                                  "minLength": 1,
+                                                  "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                  "type": "string"
+                                                },
+                                                "values": {
+                                                  "items": {
+                                                    "maxLength": 50,
+                                                    "minLength": 1,
+                                                    "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "minItems": 1,
+                                                  "type": "array"
+                                                }
+                                              },
+                                              "required": [
+                                                "family",
+                                                "values"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            "minItems": 1,
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": [
+                                          "all"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
                                   },
                                   "quantity": {
                                     "anyOf": [
@@ -20336,6 +21402,50 @@
                                       "type": "string"
                                     },
                                     "type": "object"
+                                  },
+                                  "option": {
+                                    "anyOf": [
+                                      {
+                                        "properties": {
+                                          "all": {
+                                            "items": {
+                                              "properties": {
+                                                "family": {
+                                                  "maxLength": 50,
+                                                  "minLength": 1,
+                                                  "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                  "type": "string"
+                                                },
+                                                "values": {
+                                                  "items": {
+                                                    "maxLength": 50,
+                                                    "minLength": 1,
+                                                    "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "minItems": 1,
+                                                  "type": "array"
+                                                }
+                                              },
+                                              "required": [
+                                                "family",
+                                                "values"
+                                              ],
+                                              "type": "object"
+                                            },
+                                            "minItems": 1,
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": [
+                                          "all"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
                                   },
                                   "quantity": {
                                     "anyOf": [
@@ -20488,6 +21598,51 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "option": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "all": {
+                            "items": {
+                              "properties": {
+                                "family": {
+                                  "maxLength": 50,
+                                  "minLength": 1,
+                                  "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                  "type": "string"
+                                },
+                                "values": {
+                                  "items": {
+                                    "maxLength": 50,
+                                    "minLength": 1,
+                                    "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                    "type": "string"
+                                  },
+                                  "minItems": 1,
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "family",
+                                "values"
+                              ],
+                              "type": "object"
+                            },
+                            "minItems": 1,
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "all"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "description": "Product variants: null makes the line fixed again."
                   },
                   "quantity": {
                     "anyOf": [
@@ -28961,6 +30116,11 @@
                             },
                             {
                               "properties": {
+                                "startAt": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
                                 "type": {
                                   "const": "numeric",
                                   "type": "string"
@@ -28976,6 +30136,11 @@
                                 "prefix": {
                                   "maxLength": 20,
                                   "type": "string"
+                                },
+                                "startAt": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
                                 },
                                 "type": {
                                   "const": "prefixed-numeric",
@@ -29032,6 +30197,11 @@
                       },
                       {
                         "properties": {
+                          "startAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "type": {
                             "const": "numeric",
                             "type": "string"
@@ -29047,6 +30217,11 @@
                           "prefix": {
                             "maxLength": 20,
                             "type": "string"
+                          },
+                          "startAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
                           },
                           "type": {
                             "const": "prefixed-numeric",
@@ -29790,6 +30965,11 @@
                             },
                             {
                               "properties": {
+                                "startAt": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
+                                },
                                 "type": {
                                   "const": "numeric",
                                   "type": "string"
@@ -29805,6 +30985,11 @@
                                 "prefix": {
                                   "maxLength": 20,
                                   "type": "string"
+                                },
+                                "startAt": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": 0,
+                                  "type": "integer"
                                 },
                                 "type": {
                                   "const": "prefixed-numeric",
@@ -29861,6 +31046,11 @@
                       },
                       {
                         "properties": {
+                          "startAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
                           "type": {
                             "const": "numeric",
                             "type": "string"
@@ -29876,6 +31066,11 @@
                           "prefix": {
                             "maxLength": 20,
                             "type": "string"
+                          },
+                          "startAt": {
+                            "maximum": 9007199254740991,
+                            "minimum": 0,
+                            "type": "integer"
                           },
                           "type": {
                             "const": "prefixed-numeric",

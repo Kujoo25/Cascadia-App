@@ -7,6 +7,8 @@ import { z } from 'zod'
 import { tagged } from '../adapter'
 import type { ScopeGraphEdge, ScopeGraphNode } from '@/lib/api/scope-graph'
 import type { BOMTreeNode, OrphanItem } from '@/lib/types/bom'
+import type { OptionCondition } from '@/lib/types/variants'
+import { optionConditionKey } from '@/lib/types/variants'
 import {
   DesignService,
   designCreateSchema,
@@ -2265,6 +2267,7 @@ app.get(
           relationshipId: string
           quantity?: number
           findNumber?: number
+          option?: OptionCondition | null
         }>
       >()
       const hasParent = new Set<string>()
@@ -2317,7 +2320,7 @@ app.get(
           const resolvedTargetId = resolveItemId(rel.targetId)
 
           // Deduplicate by resolved source-target pair
-          const relKey = `${resolvedSourceId}:${resolvedTargetId}`
+          const relKey = `${resolvedSourceId}:${resolvedTargetId}:${optionConditionKey(rel.option)}`
           if (addedRelationships.has(relKey)) continue
           addedRelationships.add(relKey)
 
@@ -2329,6 +2332,7 @@ app.get(
             relationshipId: rel.id,
             quantity: rel.quantity ? Number(rel.quantity) : undefined,
             findNumber: rel.findNumber ?? undefined,
+            option: rel.option ?? null,
           })
           hasParent.add(resolvedTargetId)
         }
@@ -2383,6 +2387,7 @@ app.get(
               node.quantity = c.quantity
               node.findNumber = c.findNumber
               node.relationshipId = c.relationshipId
+              node.option = c.option ?? null
             }
             return node
           })
@@ -2506,7 +2511,7 @@ app.get(
 
           // Add relationships
           for (const rel of childRels) {
-            const relKey = `${rel.sourceId}:${rel.targetId}`
+            const relKey = `${rel.sourceId}:${rel.targetId}:${optionConditionKey(rel.option)}`
             if (!addedRelationships.has(relKey)) {
               addedRelationships.add(relKey)
               if (!childrenMap.has(rel.sourceId)) {
@@ -2517,6 +2522,7 @@ app.get(
                 relationshipId: rel.id,
                 quantity: rel.quantity ? Number(rel.quantity) : undefined,
                 findNumber: rel.findNumber ?? undefined,
+                option: rel.option ?? null,
               })
               hasParent.add(rel.targetId)
             }

@@ -694,6 +694,7 @@ export class UsageService {
           referenceDesignator: rel.referenceDesignator,
           metadata: rel.metadata,
           option: rel.option,
+          targetMakeCode: rel.targetMakeCode,
           isComposite: rel.isComposite,
           isDirected: rel.isDirected,
           multiplicityLower: rel.multiplicityLower,

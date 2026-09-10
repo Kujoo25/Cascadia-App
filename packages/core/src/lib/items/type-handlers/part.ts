@@ -27,6 +27,8 @@ registerTypeHandler('Part', {
           : null,
       optionModel: data.optionModel ?? null,
       makes: data.makes ?? null,
+      productFamilyCode: data.productFamilyCode ?? null,
+      variantCode: data.variantCode ?? null,
     })
   },
 
@@ -64,6 +66,10 @@ registerTypeHandler('Part', {
     if (data.optionModel !== undefined)
       updateData.optionModel = data.optionModel ?? null
     if (data.makes !== undefined) updateData.makes = data.makes ?? null
+    if (data.productFamilyCode !== undefined)
+      updateData.productFamilyCode = data.productFamilyCode ?? null
+    if (data.variantCode !== undefined)
+      updateData.variantCode = data.variantCode ?? null
 
     if (Object.keys(updateData).length > 0) {
       await run.update(parts).set(updateData).where(eq(parts.itemId, itemId))

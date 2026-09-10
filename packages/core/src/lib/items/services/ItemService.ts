@@ -558,6 +558,33 @@ export class ItemService {
     // version being edited, whose lines are the ones the model governs.
     if (oldItem.itemType === 'Part') {
       const record = data as Record<string, unknown>
+      if (
+        record.productFamilyCode !== undefined ||
+        record.variantCode !== undefined
+      ) {
+        const current = oldItem as unknown as Part
+        const nextFamily =
+          record.productFamilyCode === undefined
+            ? current.productFamilyCode
+            : record.productFamilyCode
+        const nextVariant =
+          record.variantCode === undefined
+            ? current.variantCode
+            : record.variantCode
+        if (Boolean(nextFamily) !== Boolean(nextVariant)) {
+          throw new ValidationError(
+            'Product family code and variant code must be provided together',
+            [
+              {
+                field: nextFamily ? 'variantCode' : 'productFamilyCode',
+                message:
+                  'Product family code and variant code must be provided together',
+                code: 'PRODUCT_FAMILY_PAIR_REQUIRED',
+              },
+            ],
+          )
+        }
+      }
       if (record.optionModel !== undefined || record.makes !== undefined) {
         const { VariantService } = await import('@/lib/services/VariantService')
         const normalized = await VariantService.assertPartVariantWrite(
@@ -1322,6 +1349,7 @@ export class ItemService {
       referenceDesignator?: string
       findNumber?: number
       option?: OptionCondition | null
+      targetMakeCode?: string | null
     },
     options?: { bypassEditGuard?: boolean },
   ): Promise<typeof itemRelationships.$inferSelect> {
@@ -1363,6 +1391,7 @@ export class ItemService {
       referenceDesignator?: string | null
       findNumber?: number | null
       option?: OptionCondition | null
+      targetMakeCode?: string | null
     },
     options?: { bypassEditGuard?: boolean },
   ): Promise<typeof itemRelationships.$inferSelect> {

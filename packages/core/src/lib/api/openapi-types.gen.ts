@@ -2596,7 +2596,7 @@ export interface paths {
         put?: never;
         /**
          * Add a relationship from this item
-         * @description The path item is the edge source. `(sourceId, targetId, relationshipType)` is unique, so re-adding an existing edge fails rather than duplicating it.
+         * @description The path item is the edge source. Source, target, relationship type, option condition and target execution identify the edge, so re-adding that same edge fails rather than duplicating it.
          */
         post: operations["postApiV1ItemsByIdRelationships"];
         delete?: never;
@@ -3511,7 +3511,7 @@ export interface paths {
         put?: never;
         /**
          * Create relationships in bulk
-         * @description Up to 500 edges in one request — this is how a BOM is loaded. A line naming the same `(sourceId, targetId, relationshipType)` twice rejects the whole request with 400: the caller has to merge those lines and sum their quantities. Otherwise nothing is written until the batch is known to be insertable, and the status reports the outcome: 201 when every line was created, 207 when some lines were created and others rejected, 400 when none were.
+         * @description Up to 500 edges in one request — this is how a BOM is loaded. A line naming the same source, target, relationship type, option condition and target execution twice rejects the whole request with 400: the caller has to merge those lines and sum their quantities. Otherwise nothing is written until the batch is known to be insertable, and the status reports the outcome: 201 when every line was created, 207 when some lines were created and others rejected, 400 when none were.
          */
         post: operations["postApiV1RelationshipsBatchCreate"];
         delete?: never;
@@ -9590,6 +9590,8 @@ export interface operations {
                         /** @default 1 */
                         quantity?: number;
                         referenceDesignator?: string;
+                        /** @description Execution of the target Part revision, e.g. `MK2` */
+                        targetMakeCode?: string;
                     }[];
                     /** Format: uuid */
                     branchId?: string;
@@ -9841,12 +9843,14 @@ export interface operations {
                     } | null;
                     /** @enum {string} */
                     partType?: "Manufacture" | "Purchase" | "Software" | "Phantom";
+                    productFamilyCode?: string | null;
                     revision?: string;
                     state?: string;
                     /** @enum {string} */
                     trackingMode?: "none" | "lot" | "serial";
                     /** Format: uuid */
                     usageOf?: string;
+                    variantCode?: string | null;
                     weight?: string;
                     /** @default kg */
                     weightUnit?: string;
@@ -10894,6 +10898,8 @@ export interface operations {
                     relationshipType: string;
                     /** Format: uuid */
                     targetId: string;
+                    /** @description Active execution of the target Part revision, e.g. `MK2`. */
+                    targetMakeCode?: string | null;
                 };
             };
         };
@@ -12269,6 +12275,8 @@ export interface operations {
                     /** @default true */
                     renumberItems?: boolean;
                     /** Format: uuid */
+                    rootItemId?: string;
+                    /** Format: uuid */
                     sourceDesignId: string;
                     /** Format: uuid */
                     sourceTagId?: string;
@@ -12464,9 +12472,11 @@ export interface operations {
                         }[];
                     } | null;
                     partType?: ("Manufacture" | "Purchase" | "Software" | "Phantom") | null;
+                    productFamilyCode?: string | null;
                     state?: string;
                     /** @enum {string} */
                     trackingMode?: "none" | "lot" | "serial";
+                    variantCode?: string | null;
                     weight?: string | null;
                     weightUnit?: string | null;
                 };
@@ -12665,7 +12675,7 @@ export interface operations {
                 "application/json": {
                     /** Format: uuid */
                     branchId?: string;
-                    /** @description A named make on the part */
+                    /** @description A named execution on the part */
                     makeCode?: string;
                     selections?: {
                         [key: string]: string;
@@ -12689,8 +12699,10 @@ export interface operations {
                                 message: string;
                             }[];
                             root: {
+                                designation: string;
                                 itemId: string;
                                 itemNumber: string;
+                                makeCode: string | null;
                                 name: string | null;
                                 revision: string;
                             };
@@ -13349,6 +13361,8 @@ export interface operations {
                         sourceId: string;
                         /** Format: uuid */
                         targetId: string;
+                        /** @description Active execution of the target Part revision, e.g. `MK2`. */
+                        targetMakeCode?: string | null;
                     }[];
                     /** @description Clear the existing edges of every source that has a line in this batch before inserting. Without it, an edge already stored is counted in `skipped` and left alone. */
                     replaceExisting?: boolean;
@@ -13368,24 +13382,7 @@ export interface operations {
                             errors: {
                                 error: string;
                                 relationship: {
-                                    findNumber?: number;
-                                    metadata?: {
-                                        [key: string]: unknown;
-                                    };
-                                    option?: {
-                                        all: {
-                                            family: string;
-                                            values: string[];
-                                        }[];
-                                    } | null;
-                                    quantity?: number | string;
-                                    referenceDesignator?: string;
-                                    /** @description e.g. `BOM`, `Document`, `Satisfies`, `Consumes` */
-                                    relationshipType: string;
-                                    /** Format: uuid */
-                                    sourceId: string;
-                                    /** Format: uuid */
-                                    targetId: string;
+                                    [key: string]: unknown;
                                 };
                             }[];
                             skipped: number;
@@ -13405,24 +13402,7 @@ export interface operations {
                             errors: {
                                 error: string;
                                 relationship: {
-                                    findNumber?: number;
-                                    metadata?: {
-                                        [key: string]: unknown;
-                                    };
-                                    option?: {
-                                        all: {
-                                            family: string;
-                                            values: string[];
-                                        }[];
-                                    } | null;
-                                    quantity?: number | string;
-                                    referenceDesignator?: string;
-                                    /** @description e.g. `BOM`, `Document`, `Satisfies`, `Consumes` */
-                                    relationshipType: string;
-                                    /** Format: uuid */
-                                    sourceId: string;
-                                    /** Format: uuid */
-                                    targetId: string;
+                                    [key: string]: unknown;
                                 };
                             }[];
                             skipped: number;
@@ -13459,6 +13439,8 @@ export interface operations {
                     } | null;
                     quantity?: (number | string) | null;
                     referenceDesignator?: string | null;
+                    /** @description Active execution of the target Part revision; null clears it. */
+                    targetMakeCode?: string | null;
                 };
             };
         };

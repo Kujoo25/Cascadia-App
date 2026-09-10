@@ -1,5 +1,5 @@
 {
-  "id": "d0482936-8032-4b10-ac28-ff492151bc1b",
+  "id": "f96c5d92-8a0e-4365-8a39-dfb9480abf96",
   "prevId": "9aa68c09-3a77-4472-a2a0-9c7ebf2d732a",
   "version": "7",
   "dialect": "postgresql",
@@ -3751,6 +3751,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "target_make_code": {
+          "name": "target_make_code",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -3871,7 +3877,41 @@
             }
           ],
           "isUnique": true,
-          "where": "\"item_relationships\".\"option\" IS NULL",
+          "where": "\"item_relationships\".\"option\" IS NULL AND \"item_relationships\".\"target_make_code\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "item_relationships_fixed_make_edge_unique": {
+          "name": "item_relationships_fixed_make_edge_unique",
+          "columns": [
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "relationship_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_make_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"item_relationships\".\"option\" IS NULL AND \"item_relationships\".\"target_make_code\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -3905,7 +3945,47 @@
             }
           ],
           "isUnique": true,
-          "where": "\"item_relationships\".\"option\" IS NOT NULL",
+          "where": "\"item_relationships\".\"option\" IS NOT NULL AND \"item_relationships\".\"target_make_code\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "item_relationships_option_make_edge_unique": {
+          "name": "item_relationships_option_make_edge_unique",
+          "columns": [
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "relationship_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "option",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_make_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"item_relationships\".\"option\" IS NOT NULL AND \"item_relationships\".\"target_make_code\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -4509,6 +4589,18 @@
         "makes": {
           "name": "makes",
           "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "product_family_code": {
+          "name": "product_family_code",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "variant_code": {
+          "name": "variant_code",
+          "type": "varchar(50)",
           "primaryKey": false,
           "notNull": false
         }

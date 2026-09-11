@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/Select'
 import { Badge, Checkbox, FormField } from '@/components/ui'
 import {
+  authSessionQuery,
   designBranchesQuery,
   designListQuery,
   designStatusQuery,
@@ -73,6 +74,8 @@ export function ContextSelectStep({
   const [importAsReleased, setImportAsReleased] = useState(false)
 
   // The three cascading lists, each enabled by the one above it.
+  const { data: session } = useQuery(authSessionQuery())
+  const isSystemAdmin = session?.setupStatus?.isAdmin ?? false
   const { data: programs = [], isPending: loadingPrograms } =
     useQuery(programListQuery())
   const { data: designs = [], isFetching: loadingDesigns } = useQuery(
@@ -265,7 +268,7 @@ export function ContextSelectStep({
       )}
 
       {/* A migration/import exception, not an alternative revision editor. */}
-      {requiresDesign && selectedDesignId && (
+      {requiresDesign && selectedDesignId && isSystemAdmin && (
         <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800 dark:bg-blue-950/30">
           <div className="flex items-start gap-3">
             <Checkbox
@@ -284,9 +287,9 @@ export function ContextSelectStep({
                 Import as existing formal releases
               </label>
               <p className="text-xs text-blue-700 dark:text-blue-300">
-                Administrator only. Each row must provide a revision matching
-                the lifecycle (for example R4). Items are recorded as released
-                directly on main; no placeholder ECOs are created.
+                Each row must provide a revision matching the lifecycle (for
+                example R4). Items are recorded as released directly on main; no
+                placeholder ECOs are created.
               </p>
             </div>
           </div>

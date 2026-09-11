@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Cascadia PLM LLC
 
 import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Search } from 'lucide-react'
+import type { Part } from '@/lib/items/types/part'
 import {
   Dialog,
   DialogContent,
@@ -15,9 +17,16 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Label } from '@/components/ui/Label'
 import { Badge } from '@/components/ui/Badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/Select'
 import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
 import { apiFetch } from '@/lib/api/client'
-import { useResourceMutation } from '@/lib/query'
+import { entityQuery, useResourceMutation } from '@/lib/query'
 import { cn } from '@/lib/utils'
 import { StateBadge } from '@/components/items/StateBadge'
 
@@ -62,7 +71,20 @@ export function AddPartToStructureDialog({
   const [selectedItem, setSelectedItem] = useState<EnrichedItem | null>(null)
   const [quantity, setQuantity] = useState('1')
   const [findNumber, setFindNumber] = useState('')
+  const [targetMakeCode, setTargetMakeCode] = useState('__none__')
   const [searching, setSearching] = useState(false)
+  const { data: selectedPart } = useQuery(
+    entityQuery<Part>(
+      'parts',
+      selectedItem?.id ?? '',
+      'part',
+      Boolean(selectedItem?.id),
+    ),
+  )
+
+  useEffect(() => {
+    setTargetMakeCode('__none__')
+  }, [selectedItem?.id])
 
   // Search for parts based on scope and query
   const handleSearch = async () => {
@@ -119,6 +141,7 @@ export function AddPartToStructureDialog({
       setSelectedItem(null)
       setQuantity('1')
       setFindNumber('')
+      setTargetMakeCode('__none__')
     }
   }, [open])
 
@@ -131,6 +154,8 @@ export function AddPartToStructureDialog({
           relationshipType: 'BOM',
           quantity: quantity || '1',
           findNumber: findNumber ? parseInt(findNumber) : undefined,
+          targetMakeCode:
+            targetMakeCode === '__none__' ? undefined : targetMakeCode,
         }),
       }),
     invalidates: ['relationships'],
@@ -301,6 +326,32 @@ export function AddPartToStructureDialog({
                   placeholder="Optional"
                 />
               </div>
+            </div>
+          )}
+
+          {selectedItem && (selectedPart?.makes?.length ?? 0) > 0 && (
+            <div>
+              <Label>Target execution (optional)</Label>
+              <Select value={targetMakeCode} onValueChange={setTargetMakeCode}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Unspecified</SelectItem>
+                  {selectedPart?.makes
+                    ?.filter((make) => make.active)
+                    .map((make) => (
+                      <SelectItem key={make.code} value={make.code}>
+                        {make.code}
+                        {make.name ? ` — ${make.name}` : ''}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                Pins this BOM line to an execution of the selected Part
+                revision.
+              </p>
             </div>
           )}
         </div>

@@ -20,6 +20,7 @@ import { BranchService } from '@/lib/services/BranchService'
 import { CommitService } from '@/lib/services/CommitService'
 import { UsageService } from '@/lib/services/UsageService'
 import { VersionResolver } from '@/lib/services/VersionResolver'
+import { optionConditionKey } from '@/lib/types/variants'
 
 const BATCH_SIZE = 50
 
@@ -376,7 +377,13 @@ export const cloneDesignHandler: JobHandler<
         }
 
         // Check if we've already copied this relationship (from a different version)
-        const relKey = `${sourceMasterId}:${targetMasterId || rel.targetId}:${rel.relationshipType}`
+        const relKey = [
+          sourceMasterId,
+          targetMasterId || rel.targetId,
+          rel.relationshipType,
+          optionConditionKey(rel.option),
+          rel.targetMakeCode ?? '',
+        ].join('\u0000')
         if (copiedRelationships.has(relKey)) {
           skippedDuplicate++
           continue
@@ -411,6 +418,8 @@ export const cloneDesignHandler: JobHandler<
             findNumber: rel.findNumber,
             referenceDesignator: rel.referenceDesignator,
             metadata: rel.metadata,
+            option: rel.option,
+            targetMakeCode: rel.targetMakeCode,
             isComposite: rel.isComposite,
             isDirected: rel.isDirected,
             multiplicityLower: rel.multiplicityLower,
@@ -431,6 +440,8 @@ export const cloneDesignHandler: JobHandler<
             findNumber: rel.findNumber,
             referenceDesignator: rel.referenceDesignator,
             metadata: rel.metadata,
+            option: rel.option,
+            targetMakeCode: rel.targetMakeCode,
             isComposite: rel.isComposite,
             isDirected: rel.isDirected,
             multiplicityLower: rel.multiplicityLower,

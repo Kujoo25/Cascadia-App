@@ -45,6 +45,7 @@ import {
   computeInitialFieldValues,
 } from '../../services/CheckoutService'
 import { BranchService } from '../../services/BranchService'
+import { parseBaselineReleaseRevision } from '../../import/baseline-revision'
 // Imported directly rather than through lib/auth/access.ts, whose static
 // FileService import would recreate the ItemService <-> FileService cycle that
 // the dynamic import further down this file exists to break.
@@ -56,6 +57,8 @@ import { ItemVersioningFacade } from './ItemVersioningFacade'
 import { ItemEditPolicy } from './ItemEditPolicy'
 import { ItemSearchService } from './ItemSearchService'
 import { ItemRelationshipService } from './ItemRelationshipService'
+import type { OptionCondition } from '@/lib/types/variants'
+import type { Part } from '../types/part'
 import type { AccessScope } from '../../db/filters'
 import type { TypeHandlerContext } from '../type-handlers'
 import type { SQL } from 'drizzle-orm'
@@ -200,7 +203,15 @@ export class ItemService {
     type: string,
     data: T,
     userId: string,
-    options?: { bypassBranchProtection?: boolean },
+    options?: {
+      bypassBranchProtection?: boolean
+      /**
+       * Import a source system's existing formal release directly onto main.
+       * HTTP callers reach this only through the Administrator-gated import
+       * routes; normal create and ECO flows must never set it.
+       */
+      importAsReleased?: boolean
+    },
   ): Promise<T> {
     const typeConfig = ItemTypeRegistry.getType(type)
     if (!typeConfig) {
@@ -282,14 +293,43 @@ export class ItemService {
       }
     }
 
-    // The revision is the lifecycle's to assign, not the caller's. A client
-    // that names one is honoured (imports carry the revision the source system
-    // recorded); one that omits it gets the value its lifecycle implies. Bound
-    // as a const as well as written back, because the insert below runs inside
-    // a closure where the narrowing on a mutable field does not survive.
-    const revision =
-      validatedData.revision ?? (await this.resolveInitialRevision(type))
-    validatedData.revision = revision
+    // A baseline import is the one controlled exception to assigning formal
+    // revisions through an ECO: the release happened in the source system and
+    // Cascadia is recording that existing fact. Resolve both fields from the
+    // lifecycle so R4 cannot be stored as a Draft-shaped row.
+    let revision: string
+    let initialState: string
+    if (options?.importAsReleased) {
+      const { LifecycleService } =
+        await import('../../services/LifecycleService')
+      const lifecycle = await LifecycleService.getLifecycleForItemType(type)
+      const releaseState = await LifecycleService.getTargetState(
+        type,
+        'release',
+      )
+      if (!lifecycle || !releaseState) {
+        throw new ValidationError(
+          `${type} does not define a formal release action and cannot be imported as a released baseline`,
+          undefined,
+          { operation: 'importBaselineRelease', resource: type },
+        )
+      }
+      revision = parseBaselineReleaseRevision(
+        validatedData.revision,
+        LifecycleService.getRevisionSchemeForState(lifecycle, releaseState),
+      )
+      initialState = releaseState
+      validatedData.revision = revision
+      validatedData.state = releaseState
+    } else {
+      // The revision is the lifecycle's to assign, not the caller's. A client
+      // that names one is honoured (imports may carry source metadata); one
+      // that omits it gets the value its lifecycle implies.
+      revision =
+        validatedData.revision ?? (await this.resolveInitialRevision(type))
+      validatedData.revision = revision
+      initialState = await this.resolveInitialStateId(type)
+    }
 
     // Check branch protection if item is associated with a design
     // Skip this check if:
@@ -324,8 +364,6 @@ export class ItemService {
         await import('../../services/LifecycleService')
       await LifecycleService.validateStateForType(type, validatedData.state)
     }
-    const initialState = await this.resolveInitialStateId(type)
-
     // Auto-assign sysmlType based on whether this is a usage or definition
     // If usageOf is set, this is a usage; otherwise it's a definition
     const isUsage = !!(validatedData as unknown as { usageOf?: string }).usageOf
@@ -388,7 +426,9 @@ export class ItemService {
               const commit = await CommitService.create(
                 {
                   branchId: targetBranchId,
-                  message: `${type} ${validatedData.itemNumber || 'item'} created`,
+                  message: options?.importAsReleased
+                    ? `${type} ${validatedData.itemNumber || 'item'} imported as released revision ${revision}`
+                    : `${type} ${validatedData.itemNumber || 'item'} created`,
                   itemChanges: [
                     {
                       itemId: item.id,
@@ -606,6 +646,50 @@ export class ItemService {
       }
       data = { ...data }
       delete (data as Record<string, unknown>).designId
+    }
+
+    // Product variants: an option model or make change must leave every
+    // conditioned BOM line and every make resolvable. Checked against the
+    // version being edited, whose lines are the ones the model governs.
+    if (oldItem.itemType === 'Part') {
+      const record = data as Record<string, unknown>
+      if (
+        record.productFamilyCode !== undefined ||
+        record.variantCode !== undefined
+      ) {
+        const current = oldItem as unknown as Part
+        const nextFamily =
+          record.productFamilyCode === undefined
+            ? current.productFamilyCode
+            : record.productFamilyCode
+        const nextVariant =
+          record.variantCode === undefined
+            ? current.variantCode
+            : record.variantCode
+        if (Boolean(nextFamily) !== Boolean(nextVariant)) {
+          throw new ValidationError(
+            'Product family code and variant code must be provided together',
+            [
+              {
+                field: nextFamily ? 'variantCode' : 'productFamilyCode',
+                message:
+                  'Product family code and variant code must be provided together',
+                code: 'PRODUCT_FAMILY_PAIR_REQUIRED',
+              },
+            ],
+          )
+        }
+      }
+      if (record.optionModel !== undefined || record.makes !== undefined) {
+        const { VariantService } = await import('@/lib/services/VariantService')
+        const normalized = await VariantService.assertPartVariantWrite(
+          id,
+          oldItem as unknown as Pick<Part, 'optionModel' | 'makes'>,
+          record,
+          options?.tx,
+        )
+        data = { ...data, ...normalized }
+      }
     }
 
     // Enforce branch protection and the edit-lock (checkout) policy.
@@ -1439,6 +1523,8 @@ export class ItemService {
       quantity?: string
       referenceDesignator?: string
       findNumber?: number
+      option?: OptionCondition | null
+      targetMakeCode?: string | null
     },
     options?: { bypassEditGuard?: boolean },
   ): Promise<typeof itemRelationships.$inferSelect> {
@@ -1479,6 +1565,8 @@ export class ItemService {
       quantity?: string | null
       referenceDesignator?: string | null
       findNumber?: number | null
+      option?: OptionCondition | null
+      targetMakeCode?: string | null
     },
     options?: { bypassEditGuard?: boolean },
   ): Promise<typeof itemRelationships.$inferSelect> {

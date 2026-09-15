@@ -9,6 +9,7 @@ import type {
   ImportResult,
   ItemFieldConfig,
 } from '@/lib/import'
+import { optionConditionKey, parseOptionText } from '@/lib/types/variants'
 import { ItemService } from '@/lib/items/services/ItemService'
 import { DesignService } from '@/lib/services/DesignService'
 import { AccessControlService } from '@/lib/auth/AccessControlService'
@@ -81,7 +82,19 @@ app.post(
         const userId = user.id
 
         // Parse and validate request body
-        const { designId, branchId, rows, bypassBranchProtection } = body
+        const {
+          designId,
+          branchId,
+          rows,
+          bypassBranchProtection,
+          importAsReleased,
+        } = body
+
+        if (importAsReleased && branchId) {
+          throw new ValidationError(
+            'Existing formal releases must be imported directly to main; do not provide a branch ID',
+          )
+        }
 
         // Verify design access
         await requireDesignAccess(user.id, designId)
@@ -92,7 +105,7 @@ app.post(
         }
 
         // Bypass branch protection requires Administrator role
-        if (bypassBranchProtection) {
+        if (bypassBranchProtection || importAsReleased) {
           await requireRole(request, 'Administrator')
         }
 
@@ -108,7 +121,12 @@ app.post(
         const isPostRelease = designStatus.phase === 'post-release'
 
         // If post-release and no bypass, require branchId
-        if (isPostRelease && !bypassBranchProtection && !branchId) {
+        if (
+          isPostRelease &&
+          !bypassBranchProtection &&
+          !importAsReleased &&
+          !branchId
+        ) {
           throw new ValidationError(
             'Branch ID is required for post-release designs',
           )
@@ -145,7 +163,7 @@ app.post(
 
             let createdItem: BaseItem
 
-            if (branchId && !bypassBranchProtection) {
+            if (branchId && !bypassBranchProtection && !importAsReleased) {
               // Create on branch (post-release)
               const branchResult = await ItemService.createOnBranch(
                 'Document',
@@ -161,7 +179,11 @@ app.post(
                 'Document',
                 documentData,
                 userId,
-                { bypassBranchProtection: bypassBranchProtection || false },
+                {
+                  bypassBranchProtection:
+                    bypassBranchProtection || importAsReleased,
+                  importAsReleased,
+                },
               )
             }
 
@@ -326,8 +348,15 @@ app.post(
           branchId,
           rows,
           bypassBranchProtection,
+          importAsReleased,
           bomRelationships,
         } = body
+
+        if (importAsReleased && branchId) {
+          throw new ValidationError(
+            'Existing formal releases must be imported directly to main; do not provide a branch ID',
+          )
+        }
 
         // Verify design access
         await requireDesignAccess(user.id, designId)
@@ -338,7 +367,7 @@ app.post(
         }
 
         // Bypass branch protection requires Administrator role
-        if (bypassBranchProtection) {
+        if (bypassBranchProtection || importAsReleased) {
           await requireRole(request, 'Administrator')
         }
 
@@ -354,7 +383,12 @@ app.post(
         const isPostRelease = designStatus.phase === 'post-release'
 
         // If post-release and no bypass, require branchId
-        if (isPostRelease && !bypassBranchProtection && !branchId) {
+        if (
+          isPostRelease &&
+          !bypassBranchProtection &&
+          !importAsReleased &&
+          !branchId
+        ) {
           throw new ValidationError(
             'Branch ID is required for post-release designs',
           )
@@ -398,7 +432,7 @@ app.post(
 
             let createdItem: BaseItem
 
-            if (branchId && !bypassBranchProtection) {
+            if (branchId && !bypassBranchProtection && !importAsReleased) {
               // Create on branch (post-release)
               const branchResult = await ItemService.createOnBranch(
                 'Part',
@@ -411,7 +445,9 @@ app.post(
             } else {
               // Create directly (pre-release or bypass)
               createdItem = await ItemService.create('Part', partData, userId, {
-                bypassBranchProtection: bypassBranchProtection || false,
+                bypassBranchProtection:
+                  bypassBranchProtection || importAsReleased,
+                importAsReleased,
               })
             }
 
@@ -473,29 +509,13 @@ app.post(
             }
           }
 
-          // A parent lists a child once: `item_relationships` is unique on
-          // (source, target, type), so a file naming the same child on two
-          // lines has one edge to give. Caught here rather than at the insert,
-          // where the collision is reported in item ids the caller never saw
-          // and the second line's quantity is simply lost.
+          // Keep this identity aligned with ItemRelationshipService.edgeKey
+          // and the partial unique indexes: one child may occur more than
+          // once when its option condition or selected execution differs.
           const seenEdges = new Set<string>()
 
           // Process each relationship
           for (const rel of bomRelationships) {
-            const edgeKey = `${rel.parentItemNumber.toLowerCase()}\u0000${rel.childItemNumber.toLowerCase()}`
-            if (seenEdges.has(edgeKey)) {
-              result.relationshipsFailed++
-              result.failedRelationships.push({
-                parentItemNumber: rel.parentItemNumber,
-                childItemNumber: rel.childItemNumber,
-                error:
-                  `${rel.parentItemNumber} already lists ${rel.childItemNumber} ` +
-                  'on an earlier line; combine the lines and sum their quantities',
-              })
-              continue
-            }
-            seenEdges.add(edgeKey)
-
             const parentId = itemNumberToId.get(
               rel.parentItemNumber.toLowerCase(),
             )
@@ -524,6 +544,26 @@ app.post(
             }
 
             try {
+              const option = rel.option ? parseOptionText(rel.option) : null
+              const edgeKey = [
+                rel.parentItemNumber.toLowerCase(),
+                rel.childItemNumber.toLowerCase(),
+                optionConditionKey(option),
+                rel.targetMakeCode?.trim().toUpperCase() ?? '',
+              ].join('\u0000')
+              if (seenEdges.has(edgeKey)) {
+                result.relationshipsFailed++
+                result.failedRelationships.push({
+                  parentItemNumber: rel.parentItemNumber,
+                  childItemNumber: rel.childItemNumber,
+                  error:
+                    `${rel.parentItemNumber} already lists ${rel.childItemNumber} ` +
+                    'with the same option condition and target execution on an earlier line; combine the lines and sum their quantities',
+                })
+                continue
+              }
+              seenEdges.add(edgeKey)
+
               // Bulk import wires up items it just created — a system flow,
               // exempt from the per-user edit lock.
               await ItemService.addRelationship(
@@ -535,6 +575,8 @@ app.post(
                   quantity: String(rel.quantity),
                   findNumber: rel.findNumber,
                   referenceDesignator: rel.referenceDesignator,
+                  option,
+                  targetMakeCode: rel.targetMakeCode,
                 },
                 { bypassEditGuard: true },
               )

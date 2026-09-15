@@ -54,6 +54,8 @@ import {
 } from '@/lib/api/scope-graph'
 import { serviceLogger } from '@/lib/logging/logger'
 import { db } from '@/lib/db'
+import { RELATIONSHIP_ADDED, RELATIONSHIP_REMOVED } from '@/lib/events'
+import { publishStructureEdges } from '@/lib/items/structure-events'
 import { paginatedOrderBy } from '@/lib/db/paginated-order'
 import {
   changeOrderAffectedItems,
@@ -1031,6 +1033,7 @@ app.post(
           }
 
           let relationshipsCreated = 0
+          const copiedEdges: Array<typeof itemRelationships.$inferSelect> = []
           const chainItemIdSet = new Set(chainItemIds)
 
           // Find all BOM relationships between chain items (handles any topology: linear, star, etc.)
@@ -1049,22 +1052,26 @@ app.post(
             const parentUsageId = usageCopyMap.get(rel.sourceId)
             const childUsageId = usageCopyMap.get(rel.targetId)
             if (parentUsageId && childUsageId) {
-              await tx.insert(itemRelationships).values({
-                sourceId: parentUsageId,
-                targetId: childUsageId,
-                relationshipType: rel.relationshipType,
-                quantity: rel.quantity,
-                findNumber: rel.findNumber,
-                referenceDesignator: rel.referenceDesignator,
-                metadata: rel.metadata,
-                isComposite: rel.isComposite,
-                isDirected: rel.isDirected,
-                multiplicityLower: rel.multiplicityLower,
-                multiplicityUpper: rel.multiplicityUpper,
-                usageAttributes: rel.usageAttributes,
-                createdBy: user.id,
-                modifiedBy: user.id,
-              })
+              const copied = await tx
+                .insert(itemRelationships)
+                .values({
+                  sourceId: parentUsageId,
+                  targetId: childUsageId,
+                  relationshipType: rel.relationshipType,
+                  quantity: rel.quantity,
+                  findNumber: rel.findNumber,
+                  referenceDesignator: rel.referenceDesignator,
+                  metadata: rel.metadata,
+                  isComposite: rel.isComposite,
+                  isDirected: rel.isDirected,
+                  multiplicityLower: rel.multiplicityLower,
+                  multiplicityUpper: rel.multiplicityUpper,
+                  usageAttributes: rel.usageAttributes,
+                  createdBy: user.id,
+                  modifiedBy: user.id,
+                })
+                .returning()
+              copiedEdges.push(...copied)
               relationshipsCreated++
             }
           }
@@ -1088,22 +1095,26 @@ app.post(
               // Skip children that are part of the chain (already handled above)
               if (chainItemIdSet.has(rel.targetId)) continue
 
-              await tx.insert(itemRelationships).values({
-                sourceId: usageId,
-                targetId: rel.targetId,
-                relationshipType: rel.relationshipType,
-                quantity: rel.quantity,
-                findNumber: rel.findNumber,
-                referenceDesignator: rel.referenceDesignator,
-                metadata: rel.metadata,
-                isComposite: rel.isComposite,
-                isDirected: rel.isDirected,
-                multiplicityLower: rel.multiplicityLower,
-                multiplicityUpper: rel.multiplicityUpper,
-                usageAttributes: rel.usageAttributes,
-                createdBy: user.id,
-                modifiedBy: user.id,
-              })
+              const copied = await tx
+                .insert(itemRelationships)
+                .values({
+                  sourceId: usageId,
+                  targetId: rel.targetId,
+                  relationshipType: rel.relationshipType,
+                  quantity: rel.quantity,
+                  findNumber: rel.findNumber,
+                  referenceDesignator: rel.referenceDesignator,
+                  metadata: rel.metadata,
+                  isComposite: rel.isComposite,
+                  isDirected: rel.isDirected,
+                  multiplicityLower: rel.multiplicityLower,
+                  multiplicityUpper: rel.multiplicityUpper,
+                  usageAttributes: rel.usageAttributes,
+                  createdBy: user.id,
+                  modifiedBy: user.id,
+                })
+                .returning()
+              copiedEdges.push(...copied)
               relationshipsCreated++
             }
           }
@@ -1114,16 +1125,40 @@ app.post(
             // Safe: chainItemIds is non-empty (validated above)
             const topmostUsageId = usageCopyMap.get(chainItemIds[0]!)
             if (topmostUsageId) {
-              await tx
+              const [before] = await tx
+                .select()
+                .from(itemRelationships)
+                .where(eq(itemRelationships.id, parentBomRelationshipId))
+              const [repointed] = await tx
                 .update(itemRelationships)
                 .set({
                   targetId: topmostUsageId,
                   modifiedBy: user.id,
                 })
                 .where(eq(itemRelationships.id, parentBomRelationshipId))
+                .returning()
+              // The parent's line now points at a different master, which to
+              // a structure consumer is a line removed and a line added; its
+              // own properties did not change, so `relationship.updated`
+              // would say the wrong thing. Same relationship id on both.
+              if (before && repointed) {
+                await publishStructureEdges(tx, RELATIONSHIP_REMOVED, [
+                  { edge: before, actorId: user.id },
+                ])
+                copiedEdges.push(repointed)
+              }
               relationshipsCreated++
             }
           }
+
+          // Every line this pull-in wrote, recorded as a person's structure
+          // edits: it brings structure into this design the way adding each
+          // line by hand would.
+          await publishStructureEdges(
+            tx,
+            RELATIONSHIP_ADDED,
+            copiedEdges.map((edge) => ({ edge, actorId: user.id })),
+          )
 
           return { items: createdUsages, relationshipsCreated }
         })
@@ -1955,9 +1990,10 @@ app.get(
             masterId: items.masterId,
           }
 
-          // Main's view of the design is the *union* of two sources keyed by
-          // masterId — branch_items overlaid on the design's current items —
-          // not whichever one happens to be non-empty first.
+          // Main's view of the design is the *union* of three sources keyed by
+          // masterId — main's head commit and its branch_items, overlaid on
+          // the design's current items — not whichever one happens to be
+          // non-empty first.
           //
           // Items created directly on main never get a branch_items row, so
           // "branch_items, else fall back to isCurrent" showed all of them
@@ -1982,6 +2018,36 @@ app.get(
               ),
             )
 
+          // Main's head commit, resolved the way every other surface resolves
+          // it. The baseline above cannot see an item whose revision is the
+          // unreleased marker, and one kind of item carries that marker
+          // permanently: an MBOM usage written by Release to Manufacturing is
+          // created at '-' and no merge ever assigns it a letter. Such a
+          // design has no branch_items rows either — MbomService records its
+          // contents as item_versions on an initial commit — so both sources
+          // above came back empty and a freshly created MBOM showed an empty
+          // structure while its items tab, which goes through
+          // VersionResolver, listed every part.
+          //
+          // Resolving against main's head is safe in the way the baseline's
+          // exclusion is trying to be: a change order's drafts enter main's
+          // history only when it merges, at which point they are main's
+          // contents. `notDeleted()` is reapplied because this resolution
+          // answers from the commit graph rather than from the row's flag.
+          let commitResolvedItems: typeof baselineItems = []
+          const mainHeadCommitId = mainBranch?.headCommitId
+          if (mainHeadCommitId) {
+            const resolved =
+              await VersionResolver.getItemsAtCommit(mainHeadCommitId)
+            const resolvedIds = resolved.items.map((item) => item.id)
+            if (resolvedIds.length > 0) {
+              commitResolvedItems = await db
+                .select(itemColumns)
+                .from(items)
+                .where(and(inArray(items.id, resolvedIds), notDeleted()))
+            }
+          }
+
           const mainTracked = await db
             .select({
               currentItemId: branchItems.currentItemId,
@@ -2001,9 +2067,16 @@ app.get(
               : []
 
           // branch_items wins per masterId — it is the explicit record of
-          // what main points at, where isCurrent is only a global flag.
+          // what main points at, where isCurrent is only a global flag. The
+          // commit resolution sits between the two: it is a record of main's
+          // state rather than a global flag, so it outranks the baseline, and
+          // it is a snapshot rather than a pointer, so branch_items outranks
+          // it. For a master all three agree on, the order changes nothing.
           const resolvedByMaster = new Map<string, (typeof baselineItems)[0]>()
           for (const item of baselineItems) {
+            resolvedByMaster.set(item.masterId, item)
+          }
+          for (const item of commitResolvedItems) {
             resolvedByMaster.set(item.masterId, item)
           }
           for (const item of mainTrackedItems) {

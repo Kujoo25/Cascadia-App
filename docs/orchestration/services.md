@@ -77,7 +77,7 @@ GET /api/v1/health
 ## File Vault (embedded in Core App)
 
 File storage is part of the Core App process. The vault library
-(`packages/core/src/lib/vault/`) handles upload/download, check-out/check-in,
+(`packages/cascadia-api/src/lib/vault/`) handles upload/download, check-out/check-in,
 version management, and storage abstraction — there is no separate vault
 container to build or deploy.
 
@@ -189,7 +189,7 @@ The central data store for all Cascadia services.
 
 ```yaml
 postgres:
-  image: postgres:18-alpine
+  image: docker.io/library/postgres:18-alpine
   environment:
     POSTGRES_DB: cascadia
     POSTGRES_USER: postgres
@@ -245,7 +245,7 @@ Required when Jobs Server runs separately from Core App.
 
 ```yaml
 rabbitmq:
-  image: rabbitmq:3-management-alpine
+  image: docker.io/library/rabbitmq:3-management-alpine
   environment:
     RABBITMQ_DEFAULT_USER: cascadia
     RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}

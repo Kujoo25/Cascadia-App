@@ -19,13 +19,15 @@ COPY package.json package-lock.json ./
 # quietly installs only the root's dependencies. Listed one per line rather than
 # globbed because `COPY packages/*/…` flattens the paths. A new workspace
 # belongs here too.
-COPY packages/core/package.json ./packages/core/
+COPY packages/cascadia-commons/package.json ./packages/cascadia-commons/
+COPY packages/cascadia-api/package.json ./packages/cascadia-api/
+COPY packages/cascadia-web/package.json ./packages/cascadia-web/
 COPY apps/cascadia/package.json ./apps/cascadia/
 
 # =============================================================================
 # Stage 2: Dependencies
 # =============================================================================
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS deps
+FROM docker.io/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS deps
 
 WORKDIR /app
 
@@ -40,7 +42,7 @@ RUN npm ci
 # =============================================================================
 # Stage 3: Builder
 # =============================================================================
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
+FROM docker.io/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS builder
 
 WORKDIR /app
 
@@ -64,7 +66,7 @@ RUN npm run build:app -- "$APP"
 # that copy is what used to drag a ten-minute Vite build in front of any
 # attempt to exercise the install below. CI's Docker Build Smoke job builds
 # this target for exactly that reason.
-FROM node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime-deps
+FROM docker.io/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS runtime-deps
 
 WORKDIR /app
 
@@ -113,15 +115,23 @@ RUN npm ci --omit=dev --ignore-scripts && \
 #
 # A separate prefix has neither failure mode. It is 43MB, it resolves in its
 # own tree where nothing can perturb the app's, and it is reproducible.
-# drizzle-kit declares no peerDependencies and bundles its own esbuild, so it
-# needs nothing from /app/node_modules; the schema's `drizzle-orm` import
-# resolves from the schema file, which lives in the app tree. Both entry points
-# find these through PATH without knowing where they are: `npm run` keeps the
-# inherited PATH, and scripts/drizzle.mjs shells out via `npx`, which falls
-# through to PATH when a binary is not in a local node_modules.
+# drizzle-kit declares no peerDependencies, but its CLI still dynamically
+# imports drizzle-orm and the selected database driver from its own module
+# tree. Link the production copies already installed in /app rather than
+# downloading second, potentially mismatched versions into /opt/admin. The
+# import check runs from that prefix and makes the runtime-deps CI target fail
+# if either package becomes invisible there again.
+#
+# Container entry points invoke `tsx` directly, and scripts/drizzle.mjs invokes
+# `drizzle-kit` directly; both find the tools through PATH without knowing
+# where they are. Do not wrap either command in `npx`: npm exec does not search
+# PATH for these packages and downloads another copy into its cache instead.
 RUN mkdir -p /opt/admin && cd /opt/admin && \
     npm init -y > /dev/null && \
     npm install --ignore-scripts tsx@^4 drizzle-kit@^0.31 && \
+    ln -s /app/node_modules/drizzle-orm node_modules/drizzle-orm && \
+    ln -s /app/node_modules/postgres node_modules/postgres && \
+    node -e "Promise.all([import('drizzle-orm/version'), import('postgres')])" && \
     npm cache clean --force
 ENV PATH="/opt/admin/node_modules/.bin:${PATH}"
 
@@ -137,7 +147,7 @@ COPY --from=builder /app/public ./public
 
 # Admin scripts (seed, migrate, reset) run via tsx and import from the
 # workspace packages. The server itself reads none of this at runtime — only
-# `scripts/*.ts` do. The catalog seed JSON under packages/core/test-data comes
+# `scripts/*.ts` do. The catalog seed JSON under packages/cascadia-api/test-data comes
 # along with them: the bundled server inlines it, but tsx-run scripts read it
 # from disk.
 COPY --from=builder /app/tsconfig.base.json ./

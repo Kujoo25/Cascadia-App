@@ -2,7 +2,7 @@
 # install and again on every upgrade.
 #
 # Nothing else on Kubernetes applies migrations. The compose templates start
-# the app with `sh -c "npx tsx scripts/boot-migrate.ts && npm run serve"`, so a
+# the app with `sh -c "tsx scripts/boot-migrate.ts && npm run serve"`, so a
 # single-container install migrates as it boots; the Deployment here overrides
 # no command, so its pods run the image's bare `CMD node .output/…/index.mjs`
 # and touch the schema not at all. This Job is the piece that closes that gap,
@@ -64,12 +64,12 @@ spec:
           # under dumb-init. boot-migrate.ts applies the committed migrations
           # under apps/*/drizzle and refuses rather than guessing when the
           # database predates the journal.
-          command: ['npx', 'tsx', 'scripts/boot-migrate.ts']
+          command: ['tsx', 'scripts/boot-migrate.ts']
 
           env:
             # Not decoration: with no `?sslmode=` in the URL, NODE_ENV is what
             # decides whether the connection requires TLS (see resolveSslOption
-            # in packages/core/src/lib/db/index.ts). Omit it here and the Job
+            # in packages/cascadia-api/src/lib/db/index.ts). Omit it here and the Job
             # would connect in cleartext while the app pods, which read the
             # same key from this ConfigMap, require TLS — so against a managed
             # database the migration fails where the app works.

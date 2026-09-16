@@ -31,7 +31,7 @@ import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { getTableName, is, sql } from 'drizzle-orm'
 import { PgTable } from 'drizzle-orm/pg-core'
-import { db, describeConnection } from '../packages/core/src/lib/db/index.ts'
+import { db, describeConnection } from '@cascadia/api/lib/db'
 import { classifyMigrationState } from './boot-migrate-state.ts'
 import { resolveApp } from './edition.mjs'
 
@@ -100,7 +100,7 @@ async function main(): Promise<never> {
         '',
         'Stamp the baseline as already applied, once, then restart:',
         '',
-        '  docker exec cascadia-app npx tsx scripts/db-baseline.ts',
+        '  docker exec cascadia-app npm run db:baseline',
         '',
         'db-baseline verifies the live schema matches the baseline before stamping,',
         'and refuses if it does not. Nothing has been changed in your database.',

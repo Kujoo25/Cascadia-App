@@ -3184,9 +3184,59 @@
         ]
       }
     },
+    "/api/v1/auth/callback/google": {
+      "get": {
+        "operationId": "getApiV1AuthCallbackGoogle",
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
     "/api/v1/auth/github": {
       "get": {
         "operationId": "getApiV1AuthGithub",
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/google": {
+      "get": {
+        "operationId": "getApiV1AuthGoogle",
         "responses": {
           "400": {
             "$ref": "#/components/responses/ValidationError"
@@ -3356,6 +3406,63 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "tags": [
+          "Auth"
+        ]
+      }
+    },
+    "/api/v1/auth/providers": {
+      "get": {
+        "description": "Drives which sign-in buttons the login page offers. Fixed at process start from the environment.",
+        "operationId": "getApiV1AuthProviders",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "github": {
+                          "type": "boolean"
+                        },
+                        "google": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "github",
+                        "google"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Which OAuth providers are configured",
         "tags": [
           "Auth"
         ]
@@ -4411,6 +4518,76 @@
           }
         },
         "summary": "Preview the change actions available for items",
+        "tags": [
+          "Change Orders"
+        ]
+      }
+    },
+    "/api/v1/change-orders/{id}/affected-items/{affectedItemId}/initial-revision": {
+      "patch": {
+        "operationId": "patchApiV1ChangeOrdersByIdAffectedItemsByAffectedItemIdInitialRevision",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "affectedItemId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "revision": {
+                    "anyOf": [
+                      {
+                        "maxLength": 10,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "revision"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Set an imported baseline revision for an affected item",
         "tags": [
           "Change Orders"
         ]

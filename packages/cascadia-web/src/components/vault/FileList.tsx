@@ -26,9 +26,24 @@ import {
   isFileCategory,
 } from '@cascadia/commons/lib/vault/file-categories'
 import { isPreviewable } from '@cascadia/commons/lib/vault/preview'
+import { applicabilityMatches } from '@cascadia/commons/lib/types/variants'
+import type {
+  Make,
+  OptionApplicability,
+  OptionModel,
+} from '@cascadia/commons/lib/types/variants'
 import type { DataGridColumn, Row } from '@/components/ui'
 import type { FileCategory } from '@cascadia/commons/lib/vault/file-categories'
-import { Badge, Button, DataGrid } from '@/components/ui'
+import {
+  Badge,
+  Button,
+  DataGrid,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui'
 import { cn } from '@/lib/utils'
 import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
 import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
@@ -37,6 +52,8 @@ import { useInvalidateResources } from '@/lib/query'
 import { itemFilesQuery } from '@/lib/query/options/item-files'
 import { FileCategoryMenu } from '@/components/vault/FileCategoryMenu'
 import { FilePreviewDialog } from '@/components/vault/FilePreviewDialog'
+import { FileApplicabilityPicker } from '@/components/vault/FileApplicabilityPicker'
+import { OptionConditionChips } from '@/components/variants/OptionConditionChips'
 import { Slot } from '@/lib/ui/slot-registry'
 
 export interface FileRecord {
@@ -53,6 +70,7 @@ export interface FileRecord {
   uploadedBy: string
   uploadedAt: string
   metadata?: any
+  applicability?: OptionApplicability | null
   fileCategory?: string
   categorySource?: string
   isPrimaryModel?: boolean
@@ -75,6 +93,9 @@ interface FileListProps {
   /** Called after the item's thumbnail is set or cleared */
   onThumbnailChanged?: () => void
   className?: string
+  /** Enables execution filtering and applicability editing for Parts. */
+  optionModel?: OptionModel | null
+  makes?: Array<Make> | null
 }
 
 export function FileList({
@@ -88,6 +109,8 @@ export function FileList({
   onPreviewFile,
   onThumbnailChanged,
   className,
+  optionModel,
+  makes,
 }: FileListProps) {
   const { confirm } = useAlertDialog()
   const { handleError } = useErrorHandler()
@@ -98,6 +121,7 @@ export function FileList({
   // passed, so the control had never rendered anywhere in the app.
   const { canManage } = useSystemAccess()
   const [previewFile, setPreviewFile] = useState<FileRecord | null>(null)
+  const [selectedMakeCode, setSelectedMakeCode] = useState('all')
 
   const {
     data: files = [],
@@ -106,6 +130,15 @@ export function FileList({
   } = useQuery(itemFilesQuery<FileRecord>(itemId, { branchId, mainBranchId }))
 
   const error = queryError ? queryError.message : null
+  const activeMakes = (makes ?? []).filter((make) => make.active)
+  const selectedMake = activeMakes.find(
+    (make) => make.code === selectedMakeCode,
+  )
+  const effectiveFiles = selectedMake
+    ? files.filter((file) =>
+        applicabilityMatches(file.applicability, selectedMake.selections),
+      )
+    : files
 
   const loadFiles = () => invalidate('files')
 
@@ -275,6 +308,32 @@ export function FileList({
     }
   }
 
+  const handleSetApplicability = async (
+    file: FileRecord,
+    applicability: OptionApplicability | null,
+  ) => {
+    try {
+      const response = await fetch(`/api/v1/files/${file.id}/applicability`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ applicability }),
+      })
+
+      if (!response.ok) {
+        const errData = await response.json()
+        throw new Error(
+          errData.details ||
+            errData.error ||
+            'Failed to update file applicability',
+        )
+      }
+
+      await invalidate('files')
+    } catch (err) {
+      handleError(err, { title: 'Failed to update file applicability' })
+    }
+  }
+
   // Same rule the server applies when the designation is saved
   const canBeThumbnail = (file: FileRecord): boolean =>
     isDisplayableImage(file.originalFileName, file.mimeType)
@@ -427,6 +486,50 @@ export function FileList({
         )
       },
     },
+    ...(optionModel
+      ? [
+          {
+            id: 'applicability',
+            header: 'Applicability',
+            accessorFn: (file: FileRecord) =>
+              file.applicability ? 'conditional' : 'all',
+            enableFiltering: true,
+            filterType: 'select' as const,
+            filterOptions: [
+              { label: 'All executions', value: 'all' },
+              { label: 'Conditional', value: 'conditional' },
+            ],
+            cell: ({ row }: { row: Row<FileRecord> }) => {
+              const applicability = row.original.applicability
+              if (!applicability) {
+                return (
+                  <span className="text-xs text-slate-500">All executions</span>
+                )
+              }
+              return (
+                <div className="space-y-1">
+                  {applicability.any.map((condition, index) => (
+                    <div
+                      key={`${JSON.stringify(condition)}-${index}`}
+                      className="flex items-center gap-1"
+                    >
+                      {index > 0 && (
+                        <span className="text-[10px] font-medium text-slate-400">
+                          OR
+                        </span>
+                      )}
+                      <OptionConditionChips
+                        condition={condition}
+                        model={optionModel}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )
+            },
+          },
+        ]
+      : []),
     {
       id: 'fileVersion',
       header: 'Version',
@@ -535,7 +638,16 @@ export function FileList({
           categorySource={file.categorySource}
           onChange={(category) => handleSetCategory(file, category)}
         />
-        {canBeThumbnail(file) && (
+        {optionModel && (
+          <FileApplicabilityPicker
+            model={optionModel}
+            makes={makes ?? []}
+            value={file.applicability}
+            onChange={(next) => void handleSetApplicability(file, next)}
+            compact
+          />
+        )}
+        {canBeThumbnail(file) && !file.applicability && (
           <Button
             variant="ghost"
             size="icon"
@@ -607,9 +719,30 @@ export function FileList({
   }
 
   return (
-    <div className={cn('', className)}>
+    <div className={cn('space-y-3', className)}>
+      {optionModel && activeMakes.length > 0 && (
+        <div className="flex items-center justify-end gap-2">
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            Show files for
+          </span>
+          <Select value={selectedMakeCode} onValueChange={setSelectedMakeCode}>
+            <SelectTrigger className="h-8 w-56 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All files</SelectItem>
+              {activeMakes.map((make) => (
+                <SelectItem key={make.code} value={make.code}>
+                  {make.code}
+                  {make.name ? ` — ${make.name}` : ''}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
       <DataGrid
-        data={files}
+        data={effectiveFiles}
         columns={columns}
         getRowId={(row) => row.id}
         enableRowActions={true}

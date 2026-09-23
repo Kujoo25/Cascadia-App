@@ -60,7 +60,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./docker/app.Dockerfile
+          file: ./cascadia-app/Dockerfile
           target: production
           push: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/docker-image-latest' || github.ref == 'refs/heads/docker-image-test') }}
           tags: |

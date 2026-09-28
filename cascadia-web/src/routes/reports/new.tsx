@@ -4,11 +4,12 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
-import type { ReportCreateInput } from '@cascadia/commons/lib/reports/types'
+import type { ReportCreateInput } from '@cascadia/commons/reports/types'
 import { PageContainer } from '@/components/layout'
 import { ReportBuilder } from '@/components/reports/ReportBuilder'
 import { Button } from '@/components/ui'
-import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
+import { useErrorHandler } from '@/hooks/useErrorHandler'
+import { apiErrorFromResponse } from '@/api/client'
 
 export const Route = createFileRoute('/reports/new')({
   component: NewReportPage,
@@ -29,8 +30,7 @@ function NewReportPage() {
       })
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.details || 'Failed to create report')
+        throw await apiErrorFromResponse(response, 'Failed to create report')
       }
 
       const { report } = await response.json()

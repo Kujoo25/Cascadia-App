@@ -16,7 +16,7 @@ Two endpoints sit deliberately outside it: `GET /openapi.json` (the live spec) a
 
 ## The `apiHandler()` Wrapper
 
-Every API route handler is wrapped with `apiHandler()` from `@/lib/api/handler`. This wrapper provides:
+Every API route handler is wrapped with `apiHandler()` from `@/api/handler`. This wrapper provides:
 
 - **Authentication and authorization** (configurable per endpoint)
 - **CSRF protection** via Origin/Referer validation on state-changing requests
@@ -51,8 +51,8 @@ interface HandlerContext<TParams> {
 // cascadia-api/src/server/routes/parts.ts
 import { Hono } from 'hono'
 import { tagged } from '../adapter'
-import { apiHandler } from '@/lib/api/handler'
-import { NotFoundError } from '@/lib/errors'
+import { apiHandler } from '@/api/handler'
+import { NotFoundError } from '@/errors'
 
 // Shadow `adapt` with a tagged variant so every handler in this file is
 // grouped under "Parts" in the generated OpenAPI spec.
@@ -131,7 +131,7 @@ return { part }
 For non-standard responses (201 Created, streaming, file downloads), return a `Response` directly:
 
 ```typescript
-import { created, jsonResponse } from '@/lib/api/handler'
+import { created, jsonResponse } from '@/api/handler'
 
 // 201 Created
 return created({ item })
@@ -156,7 +156,7 @@ Collection endpoints typically include pagination metadata:
 Use the `createCollectionResponse()` helper for richer pagination:
 
 ```typescript
-import { createCollectionResponse } from '@/lib/api/response'
+import { createCollectionResponse } from '@/api/response'
 
 return createCollectionResponse(
   items,
@@ -173,8 +173,8 @@ return createCollectionResponse(
 Use `parseQuery()` to validate and type query parameters with Zod:
 
 ```typescript
-import { parseQuery } from '@/lib/api/handler'
-import { paginationSchema } from '@/lib/api/schemas'
+import { parseQuery } from '@/api/handler'
+import { paginationSchema } from '@/api/schemas'
 
 GET: apiHandler({}, async ({ request }) => {
   const query = parseQuery(request, paginationSchema)
@@ -196,7 +196,7 @@ GET: apiHandler({}, async ({ request }) => {
 For design and branch access checks beyond RBAC permissions:
 
 ```typescript
-import { requireDesignAccess, requireBranchAccess } from '@/lib/auth/access'
+import { requireDesignAccess, requireBranchAccess } from '@/auth/access'
 
 // Throws PermissionDeniedError if user cannot access this design
 await requireDesignAccess(user.id, designId)
@@ -209,7 +209,7 @@ These helpers check organizational access (program membership) and handle the cr
 
 ## Error Handling
 
-Handlers throw typed errors from `@/lib/errors`. The `apiHandler` wrapper catches all thrown errors and serializes them into a standard error response.
+Handlers throw typed errors from `@/errors`. The `apiHandler` wrapper catches all thrown errors and serializes them into a standard error response.
 
 ### Error Response Format
 
@@ -365,12 +365,18 @@ Allowed CORS headers: `Content-Type`, `Authorization`
 Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`
 Max age: 86400 seconds (24 hours)
 
+### Behind a reverse proxy
+
+Same-origin means the origin the browser addressed. A reverse proxy that terminates TLS talks plain HTTP to the app, so unless the app is told otherwise it takes its own origin to be `http://…` and treats the browser's `https://…` as foreign. Reads and sign-in still work, but every cookie-authenticated write is rejected with 403 `PERMISSION_DENIED`, "Cross-origin request rejected".
+
+Set `TRUSTED_PROXY_COUNT` to the number of proxies in front of the app — `1` for a single nginx, Caddy or Traefik — and the app takes the scheme from the proxy's `X-Forwarded-Proto` header. It is ignored while `TRUSTED_PROXY_COUNT` is `0`, the default, because any client can send it. Your own public origin does not need to be listed in `CORS_ALLOWED_ORIGINS`. See [Reverse Proxy Trust](../orchestration/configuration.md#reverse-proxy-trust) for what the proxy must send.
+
 ## Client-Side Utilities
 
-The `@/lib/api/client` module provides typed fetch wrappers with automatic retry:
+The `@/api/client` module provides typed fetch wrappers with automatic retry:
 
 ```typescript
-import { apiGet, apiPost, apiPut, apiDelete, ApiError } from '@/lib/api/client'
+import { apiGet, apiPost, apiPut, apiDelete, ApiError } from '@/api/client'
 
 // GET with automatic retry on transient failures
 const { data } = await apiGet<{ data: { part: Part } }>('/api/v1/parts/123')

@@ -3,47 +3,47 @@
 
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { changeActionSchema } from '@cascadia/commons/lib/items/types/change-order'
-import { markConflictReviewedRequestSchema } from '@cascadia/commons/lib/services/types/conflict-review'
+import { changeActionSchema } from '@cascadia/commons/items/types/change-order'
+import { markConflictReviewedRequestSchema } from '@cascadia/commons/services/types/conflict-review'
 import { tagged } from '../adapter'
-import type { ChangeOrder } from '@cascadia/commons/lib/items/types/change-order'
-import type { SessionUser } from '@/lib/auth/session'
-import { requireRole } from '@/lib/auth/server'
-import { ApprovalRegistry } from '@/lib/lifecycles/approval-registry'
-import { ItemService } from '@/lib/items/services/ItemService'
-import { LifecycleService } from '@/lib/services/LifecycleService'
-import { ChangeOrderService } from '@/lib/items/services/ChangeOrderService'
-import { ChangeOrderMergeService } from '@/lib/services/ChangeOrderMergeService'
-import { ImpactAssessmentService } from '@/lib/items/services/ImpactAssessmentService'
-import { ConflictDetectionService } from '@/lib/services/ConflictDetectionService'
-import { ConflictReviewService } from '@/lib/services/ConflictReviewService'
-import { ChangeOrderBranchHistoryService } from '@/lib/services/ChangeOrderBranchHistoryService'
-import { ChangeOrderStructureService } from '@/lib/services/ChangeOrderStructureService'
-import { LifecycleDefinitionService } from '@/lib/lifecycles/LifecycleDefinitionService'
-import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
-import { ApprovalService } from '@/lib/lifecycles/ApprovalService'
-import { apiHandler, created, jsonResponse } from '@/lib/api/handler'
+import type { ChangeOrder } from '@cascadia/commons/items/types/change-order'
+import type { SessionUser } from '@/auth/session'
+import { requireRole } from '@/auth/server'
+import { ApprovalRegistry } from '@/lifecycles/approval-registry'
+import { ItemService } from '@/items/services/ItemService'
+import { LifecycleService } from '@/services/LifecycleService'
+import { ChangeOrderService } from '@/items/services/ChangeOrderService'
+import { ChangeOrderMergeService } from '@/services/ChangeOrderMergeService'
+import { ImpactAssessmentService } from '@/items/services/ImpactAssessmentService'
+import { ConflictDetectionService } from '@/services/ConflictDetectionService'
+import { ConflictReviewService } from '@/services/ConflictReviewService'
+import { ChangeOrderBranchHistoryService } from '@/services/ChangeOrderBranchHistoryService'
+import { ChangeOrderStructureService } from '@/services/ChangeOrderStructureService'
+import { LifecycleDefinitionService } from '@/lifecycles/LifecycleDefinitionService'
+import { LifecycleInstanceService } from '@/lifecycles/LifecycleInstanceService'
+import { ApprovalService } from '@/lifecycles/ApprovalService'
+import { apiHandler, created, jsonResponse } from '@/api/handler'
 import {
   AlreadyExistsError,
   NotFoundError,
   PermissionDeniedError,
   ValidationError,
-} from '@/lib/errors'
-import { AccessControlService } from '@/lib/auth/AccessControlService'
-import { ProgramService } from '@/lib/services/ProgramService'
-import { DesignService } from '@/lib/services/DesignService'
+} from '@/errors'
+import { AccessControlService } from '@/auth/AccessControlService'
+import { ProgramService } from '@/services/ProgramService'
+import { DesignService } from '@/services/DesignService'
 import {
   requireChangeOrderAccess,
   requireDesignAccess,
   resolveChangeOrderDesignScope,
-} from '@/lib/auth/access'
+} from '@/auth/access'
 import {
   changeOrderUpdateSchema,
   stateApproverInputSchema,
   workflowStateSchema,
   workflowTransitionSchema,
-} from '@/lib/api/schemas'
-import '@/lib/items/registerItemTypes.server'
+} from '@/api/schemas'
+import '@/items/registerItemTypes.server'
 
 const adapt = tagged('Change Orders')
 
@@ -1179,15 +1179,29 @@ app.get(
     apiHandler<{ id: string; designId: string }>(
       { permission: ['change_orders', 'read'] },
       async ({ request, params, user }) => {
-        // The design comes straight off the URL, so this is the whole gate:
-        // without it a caller who reaches one of the ECO's designs could ask
-        // for any other design's structure and get its full BOM tree back.
+        // Both ids come straight off the URL, so both are charged. The change
+        // order first, as on every other read under /:id: the design gate
+        // alone let any change-order id through, so naming a design of your
+        // own was enough to read a change order reaching none of your designs.
+        const { linked } = await requireChangeOrderAccess(user.id, params.id)
+        // Then the design, whose full BOM tree this answers with.
         await requireDesignAccess(user.id, params.designId)
+        // Only then whether it is one of this change order's designs — never
+        // before both. For a design the caller cannot read, a 404 here beside
+        // a linked design's 403 would say which of an unreadable program's
+        // designs the change order touches.
+        if (!linked.includes(params.designId)) {
+          throw new NotFoundError(
+            'Design on this change order',
+            params.designId,
+          )
+        }
 
         const url = new URL(request.url, 'http://localhost')
         return ChangeOrderStructureService.getDesignStructure(
           params.id,
           params.designId,
+          await AccessControlService.getAccessibleDesignIds(user.id),
           {
             expandExternal: url.searchParams.get('expandExternal') !== 'false',
           },

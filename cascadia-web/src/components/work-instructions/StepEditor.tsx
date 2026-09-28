@@ -21,7 +21,7 @@ import type {
   StepContentBlock,
   WorkInstructionOperation,
   WorkInstructionStep,
-} from '@cascadia/commons/lib/items/types/work-instruction'
+} from '@cascadia/commons/items/types/work-instruction'
 import {
   Button,
   Card,
@@ -30,7 +30,8 @@ import {
   Input,
   Textarea,
 } from '@/components/ui'
-import { cn } from '@/lib/utils'
+import { cn } from '@/utils'
+import { apiErrorFromResponse } from '@/api/client'
 
 interface StepEditorProps {
   steps: Array<WorkInstructionStep>
@@ -93,8 +94,7 @@ function StepBlockEditor({
       )
 
       if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.details || error.error || 'Upload failed')
+        throw await apiErrorFromResponse(response, 'Upload failed')
       }
 
       const result = await response.json()

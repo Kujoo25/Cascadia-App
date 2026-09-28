@@ -27,7 +27,7 @@ import { languageFor } from './language'
 import { SourceDiffDialog } from './SourceDiffDialog'
 import type { Extension } from '@codemirror/state'
 import type { SourceDiffTarget } from './SourceDiffDialog'
-import type { SoftwareManifestEntry, SoftwareVersion } from '@/lib/query'
+import type { SoftwareManifestEntry, SoftwareVersion } from '@/query'
 import {
   Badge,
   Button,
@@ -41,9 +41,9 @@ import {
   Input,
   Textarea,
 } from '@/components/ui'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
-import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
-import { apiFetch } from '@/lib/api/client'
+import { useAlertDialog } from '@/hooks/useAlertDialog'
+import { useErrorHandler } from '@/hooks/useErrorHandler'
+import { apiErrorFromResponse, apiFetch } from '@/api/client'
 import {
   softwareDiffQuery,
   softwareFileQuery,
@@ -51,8 +51,8 @@ import {
   softwareVersionsQuery,
   useInvalidateResources,
   useResourceMutation,
-} from '@/lib/query'
-import { cn } from '@/lib/utils'
+} from '@/query'
+import { cn } from '@/utils'
 
 // ============================================================================
 // Types
@@ -624,12 +624,7 @@ export function SourceViewer({
           body: formData,
         })
         if (!response.ok) {
-          const body = (await response.json().catch(() => null)) as {
-            error?: { message?: string }
-          } | null
-          throw new Error(
-            body?.error?.message ?? `Import failed (${response.status})`,
-          )
+          throw await apiErrorFromResponse(response, 'Import failed')
         }
         showSuccess('Source imported', successMessage)
         setSelectedPath(null)

@@ -161,13 +161,17 @@ FROM runtime-deps AS production
 # Copy bundled server + SPA build
 COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/public ./public
 
 # Admin scripts (seed, migrate, reset) run via tsx and import from the
 # workspace packages. The server itself reads none of this at runtime — only
 # `scripts/*.ts` do. The catalog seed JSON under cascadia-api/test-data comes
 # along with them: the bundled server inlines it, but tsx-run scripts read it
 # from disk.
+#
+# Every workspace stage 1 lists is copied here whole. Its manifest alone
+# already leaves a directory behind, and `scripts/edition.mjs` resolves the
+# edition by probing for directories — so a workspace that is installed but
+# not copied is one the admin scripts pick and then find empty.
 COPY --from=builder /app/tsconfig.base.json ./
 COPY --from=builder /app/tsconfig.json ./
 COPY --from=builder /app/cascadia-commons ./cascadia-commons

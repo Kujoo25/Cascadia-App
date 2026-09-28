@@ -22,7 +22,7 @@ Key principles of Cascadia's BOM approach:
 
 BOM relationships use the general-purpose `item_relationships` table. A BOM relationship connects a **source** (parent assembly) to a **target** (child component).
 
-**Schema** (`cascadia-api/src/lib/db/schema/items.ts`):
+**Schema** (`cascadia-api/src/db/schema/items.ts`):
 
 ```
 item_relationships
@@ -206,6 +206,7 @@ The BOM tree is built server-side in the `GET /api/v1/designs/:id/structure` end
 5. **Recursively build tree nodes** with cycle detection (visited set)
 6. **Add cross-design references** as additional root nodes
 7. **Identify orphan items** -- non-Part items, and Parts that are neither a root nor a child of one
+8. **Withhold what the viewer cannot read** -- an item in a design outside the viewer's programs, reached through a cross-design reference or a BOM line, is removed together with everything beneath it, and the response's `hasRestricted` flag is set (see [What a Viewer Cannot Read](./programs-and-designs.md#what-a-viewer-cannot-read))
 
 ### Features
 
@@ -216,7 +217,7 @@ The BOM tree is built server-side in the `GET /api/v1/designs/:id/structure` end
 - **Context menus**: Right-click for actions (add child, remove, open detail page, etc.)
 - **Add Part**: Opens on a choice. _Create New_ makes a part in this design, on the branch the page is viewing, and it appears as a top-level part of the structure; _Use Existing_ copies or references a part from the standard library or another design
 - **Add Child** (context menu): Opens on the same choice. _Create New_ makes the part and places it under the node with the quantity and find number given; _Use Existing_ adds a part from this design or the standard library
-- **CSV export**: Export the full indented BOM to a CSV file
+- **CSV export**: Export the indented BOM to a CSV file. Like the tree, it leaves out anything the viewer cannot read
 - **External badges**: Items from other designs show an amber badge with the source design code
 
 ---
@@ -227,7 +228,7 @@ A where-used query answers the question: "What assemblies use this part?" It tra
 
 ### Implementation
 
-Where-used queries are implemented as a recursive CTE (Common Table Expression) in PostgreSQL, found in `ImpactAssessmentService.findWhereUsed()` (`cascadia-api/src/lib/items/services/ImpactAssessmentService.ts`):
+Where-used queries are implemented as a recursive CTE (Common Table Expression) in PostgreSQL, found in `ImpactAssessmentService.findWhereUsed()` (`cascadia-api/src/items/services/ImpactAssessmentService.ts`):
 
 ```sql
 WITH RECURSIVE where_used AS (
@@ -342,7 +343,7 @@ Cross-design references allow a design to link to items managed in other designs
 
 ### Data Model
 
-Cross-design references use a dedicated table (`cascadia-api/src/lib/db/schema/crossReferences.ts`):
+Cross-design references use a dedicated table (`cascadia-api/src/db/schema/crossReferences.ts`):
 
 ```
 design_cross_references
@@ -380,10 +381,11 @@ In the BOM tree:
 - They show an amber badge with the source design code (e.g., "STD-LIB")
 - Their subtree is expanded recursively (children from the source design are shown read-only)
 - The `crossReferenceId` field links back to the `design_cross_references` row for management operations
+- A reference into a design the viewer cannot read is left out, with its subtree, and the response's `hasRestricted` flag is set instead (see [What a Viewer Cannot Read](./programs-and-designs.md#what-a-viewer-cannot-read))
 
 ### Service
 
-`CrossDesignReferenceService` (`cascadia-api/src/lib/services/CrossDesignReferenceService.ts`) handles:
+`CrossDesignReferenceService` (`cascadia-api/src/services/CrossDesignReferenceService.ts`) handles:
 
 - Creating references (validates item exists, is in a different design)
 - Querying references for a design (with branch awareness)
@@ -496,7 +498,7 @@ WA-1201     | Motor           | Purchase
 
 ### Auto-Detection
 
-The import system automatically detects the BOM format based on which columns are mapped (`cascadia-commons/src/lib/import/bom-parser.ts`):
+The import system automatically detects the BOM format based on which columns are mapped (`cascadia-commons/src/import/bom-parser.ts`):
 
 | Mapped Columns                      | Detected Format         | Confidence |
 | ----------------------------------- | ----------------------- | ---------- |
@@ -562,7 +564,7 @@ designs table:
 
 ### Creation Process
 
-`MbomService.createFromEbom()` (`cascadia-api/src/lib/services/MbomService.ts`) handles MBOM creation:
+`MbomService.createFromEbom()` (`cascadia-api/src/services/MbomService.ts`) handles MBOM creation:
 
 1. Validates the source is an Engineering design
 2. Creates a new Manufacturing design with source tracking
@@ -642,15 +644,15 @@ The `upstreamChanges` table tracks when the source EBOM changes, allowing the MB
 
 | File                                                               | Purpose                                          |
 | ------------------------------------------------------------------ | ------------------------------------------------ |
-| `cascadia-api/src/lib/db/schema/items.ts`                          | `itemRelationships` table definition             |
-| `cascadia-api/src/lib/db/schema/crossReferences.ts`                | `designCrossReferences` table definition         |
-| `cascadia-api/src/lib/items/services/ItemRelationshipService.ts`   | Relationship CRUD with branch merging            |
-| `cascadia-api/src/lib/items/services/ImpactAssessmentService.ts`   | Where-used traversal and impact analysis         |
-| `cascadia-api/src/lib/services/CrossDesignReferenceService.ts`     | Cross-design reference management                |
-| `cascadia-api/src/lib/services/MbomService.ts`                     | MBOM creation and upstream change tracking       |
-| `cascadia-api/src/lib/services/ChangeOrderMergeService.ts`         | BOM relationship copying during ECO release      |
-| `cascadia-commons/src/lib/import/bom-parser.ts`                    | BOM format detection and relationship extraction |
-| `cascadia-commons/src/lib/import/types.ts`                         | BOM import type definitions                      |
+| `cascadia-api/src/db/schema/items.ts`                              | `itemRelationships` table definition             |
+| `cascadia-api/src/db/schema/crossReferences.ts`                    | `designCrossReferences` table definition         |
+| `cascadia-api/src/items/services/ItemRelationshipService.ts`       | Relationship CRUD with branch merging            |
+| `cascadia-api/src/items/services/ImpactAssessmentService.ts`       | Where-used traversal and impact analysis         |
+| `cascadia-api/src/services/CrossDesignReferenceService.ts`         | Cross-design reference management                |
+| `cascadia-api/src/services/MbomService.ts`                         | MBOM creation and upstream change tracking       |
+| `cascadia-api/src/services/ChangeOrderMergeService.ts`             | BOM relationship copying during ECO release      |
+| `cascadia-commons/src/import/bom-parser.ts`                        | BOM format detection and relationship extraction |
+| `cascadia-commons/src/import/types.ts`                             | BOM import type definitions                      |
 | `cascadia-web/src/components/bom/BomTreeView.tsx`                  | Core tree-table UI component                     |
 | `cascadia-web/src/components/bom/types.ts`                         | Shared `BOMTreeNode` interface                   |
 | `cascadia-web/src/components/bom/exportBomTree.ts`                 | CSV export of BOM trees                          |

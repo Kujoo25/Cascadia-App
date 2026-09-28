@@ -3,12 +3,13 @@
 
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { Download, Loader2 } from 'lucide-react'
-import { previewKindFor } from '@cascadia/commons/lib/vault/preview'
-import type { PreviewKind } from '@cascadia/commons/lib/vault/preview'
+import { previewKindFor } from '@cascadia/commons/vault/preview'
+import type { PreviewKind } from '@cascadia/commons/vault/preview'
 import type { PdfMarkupBinding } from '@/components/vault/PdfViewer'
 import { Button } from '@/components/ui'
-import { cn } from '@/lib/utils'
+import { cn } from '@/utils'
 import { SvgViewer } from '@/components/vault/SvgViewer'
+import { apiErrorFromResponse } from '@/api/client'
 
 // pdf.js and its worker are around a megabyte; most sessions never open a PDF,
 // so the viewer is split out and fetched on first use.
@@ -86,16 +87,7 @@ export function FilePreview({ file, markup, className }: FilePreviewProps) {
         const response = await fetch(`/api/v1/files/${file.id}/content`)
 
         if (!response.ok) {
-          // `{ error: { code, message, details } }` — the envelope every API
-          // error uses. Reading `error` as a string instead put a literal
-          // "[object Object]" under "Preview unavailable". `details` is
-          // deliberately not shown: on a storage miss it is the vault path.
-          const body = (await response.json().catch(() => null)) as {
-            error?: { code?: string; message?: string }
-          } | null
-          throw new Error(
-            body?.error?.message ?? `Preview failed (${response.status})`,
-          )
+          throw await apiErrorFromResponse(response, 'Preview failed')
         }
 
         if (TEXTUAL_KINDS.has(kind)) {

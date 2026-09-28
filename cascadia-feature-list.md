@@ -210,7 +210,8 @@ Enterprise authentication with flexible identity options.
 | Email/password login | ✅     | Oslo.js crypto for password hashing        |
 | Session management   | ✅     | Secure session tokens, SameSite=Strict     |
 | Session expiration   | ✅     | Configurable timeouts                      |
-| GitHub OAuth login   | ✅     | Arctic; only implemented provider          |
+| GitHub OAuth login   | ✅     | Arctic                                     |
+| Google OAuth login   | ✅     | Arctic; optional Workspace domain limit    |
 | Account lockout      | ✅     | Brute-force protection after failed logins |
 
 ### Security Hardening ✅
@@ -593,13 +594,13 @@ LLM-powered chatbot for navigating and querying PLM data.
 
 ### MCP Servers ✅
 
-| Feature                     | Status | Notes                                                                                       |
-| --------------------------- | ------ | ------------------------------------------------------------------------------------------- |
-| PLM server (`cascadia-plm`) | ✅     | Chatbot tool registry over Streamable HTTP at `/api/mcp`                                    |
-| API-key auth + scoping      | ✅     | Bearer `csc_` keys; key scope intersects role permissions                                   |
-| Dev server (`cascadia-dev`) | ✅     | Stdio server for self-hosters: status, docs, db push/seed/reset                             |
-| Shared tool registry        | ✅     | One tool stack for the in-app chatbot and MCP (`cascadia-api/src/lib/ai/tools/registry.ts`) |
-| API key management UI       | ✅     | Self-service (profile) and admin issuance: scope editor, activity log, policy               |
+| Feature                     | Status | Notes                                                                                   |
+| --------------------------- | ------ | --------------------------------------------------------------------------------------- |
+| PLM server (`cascadia-plm`) | ✅     | Chatbot tool registry over Streamable HTTP at `/api/mcp`                                |
+| API-key auth + scoping      | ✅     | Bearer `csc_` keys; key scope intersects role permissions                               |
+| Dev server (`cascadia-dev`) | ✅     | Stdio server for self-hosters: status, docs, db push/seed/reset                         |
+| Shared tool registry        | ✅     | One tool stack for the in-app chatbot and MCP (`cascadia-api/src/ai/tools/registry.ts`) |
+| API key management UI       | ✅     | Self-service (profile) and admin issuance: scope editor, activity log, policy           |
 
 ---
 
@@ -897,7 +898,6 @@ subscriptions are rows. See
 | Mobile app               | Low      | iOS/Android               |
 | ITAR compliance tools    | Low      | Defense customer features |
 | Azure AD SSO             | Low      | Enterprise identity       |
-| Google OAuth             | Low      | Consumer identity         |
 
 ---
 

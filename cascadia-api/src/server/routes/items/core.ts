@@ -14,40 +14,37 @@ import {
   sql,
 } from 'drizzle-orm'
 import { z } from 'zod'
-import { MAX_ENRICHMENT_IMAGES } from '@cascadia/commons/lib/items/enrichment/limits'
+import { MAX_ENRICHMENT_IMAGES } from '@cascadia/commons/items/enrichment/limits'
 import { tagged } from '../../adapter'
 import { readableItemTypes } from './shared'
-import { requirePermission } from '@/lib/auth/server'
-import { likeContains } from '@/lib/db/like-pattern'
-import {
-  NotFoundError,
-  PermissionDeniedError,
-  ValidationError,
-} from '@/lib/errors'
+import { requirePermission } from '@/auth/server'
+import { likeContains } from '@/db/like-pattern'
+import { NotFoundError, PermissionDeniedError, ValidationError } from '@/errors'
 import {
   ITEM_TYPE_RESOURCES,
   getResourceType,
-} from '@/lib/items/item-type-resources'
-import { ItemService } from '@/lib/items/services/ItemService'
-import { itemCreateRequestSchema } from '@/lib/items/item-create-request'
+} from '@/items/item-type-resources'
+import { ItemService } from '@/items/services/ItemService'
+import { itemCreateRequestSchema } from '@/items/item-create-request'
 import {
   enrichItem,
   enrichmentImageSchema,
-} from '@/lib/items/enrichment/enrich-item'
-import { BranchService } from '@/lib/services/BranchService'
-import { DesignService } from '@/lib/services/DesignService'
-import { ProgramService } from '@/lib/services/ProgramService'
-import { VersionResolver } from '@/lib/services/VersionResolver'
-import { CheckoutService } from '@/lib/services/CheckoutService'
-import { apiHandler, created, parseQuery } from '@/lib/api/handler'
-import { itemUpdateSchemaFor } from '@/lib/api/schemas'
-import { requireDesignAccess, requireItemAccess } from '@/lib/auth/access'
-import { AccessControlService } from '@/lib/auth/AccessControlService'
-import { db } from '@/lib/db'
-import { accessScopeCondition, notDeleted } from '@/lib/db/filters'
-import { items, vaultFiles } from '@/lib/db/schema'
-import { designs } from '@/lib/db/schema/designs'
-import { LifecycleInstanceService } from '@/lib/lifecycles/LifecycleInstanceService'
+} from '@/items/enrichment/enrich-item'
+import { BranchService } from '@/services/BranchService'
+import { CommitService } from '@/services/CommitService'
+import { DesignService } from '@/services/DesignService'
+import { ProgramService } from '@/services/ProgramService'
+import { VersionResolver } from '@/services/VersionResolver'
+import { CheckoutService } from '@/services/CheckoutService'
+import { apiHandler, created, parseQuery } from '@/api/handler'
+import { itemUpdateSchemaFor } from '@/api/schemas'
+import { requireDesignAccess, requireItemAccess } from '@/auth/access'
+import { AccessControlService } from '@/auth/AccessControlService'
+import { db } from '@/db'
+import { accessScopeCondition, notDeleted } from '@/db/filters'
+import { items, vaultFiles } from '@/db/schema'
+import { designs } from '@/db/schema/designs'
+import { LifecycleInstanceService } from '@/lifecycles/LifecycleInstanceService'
 
 const adapt = tagged('Items')
 
@@ -523,6 +520,25 @@ app.get(
         const design = await DesignService.getById(designId)
         if (!design) throw new NotFoundError('Design', designId)
         await requireDesignAccess(user.id, designId)
+
+        // `commit` and `tag` are ids, and each resolves at whichever design it
+        // belongs to, while only `designId` was checked above: another
+        // design's served that design's items, with its commit message or tag
+        // name as the context. Answered as one that does not exist, as the
+        // design routes answer it. `branch` is a name looked up within the
+        // design, so it cannot name another design's.
+        if (commitId) {
+          const commit = await CommitService.getById(commitId)
+          if (commit?.designId !== designId) {
+            throw new NotFoundError('Commit', commitId)
+          }
+        }
+        if (tagId) {
+          const tag = await DesignService.getTag(tagId)
+          if (tag?.designId !== designId) {
+            throw new NotFoundError('Tag', tagId)
+          }
+        }
 
         let context = VersionResolver.parseContext({
           designId,

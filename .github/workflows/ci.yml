@@ -184,7 +184,7 @@ jobs:
 
       - name: Commit the refreshed snapshot to main
         run: |
-          FILES="docs/api/openapi.v1.json cascadia-web/src/lib/api/openapi-types.gen.ts"
+          FILES="docs/api/openapi.v1.json cascadia-web/src/api/openapi-types.gen.ts"
           if git diff --quiet -- $FILES; then
             echo "OpenAPI snapshot is up to date."
             exit 0
@@ -633,8 +633,9 @@ jobs:
       # Stopping there is the deliberate trade. `builder` runs a full Vite
       # build of the edition — ten-plus minutes on top of what `Build` already
       # spends, failing for reasons `Build` reports first and faster. What
-      # stays uncovered is the production stage's copies out of the builder;
-      # those name build outputs rather than workspaces, and both files are
+      # that leaves unbuilt is the production stage's copies out of the
+      # builder, which name workspaces as well as build outputs: the app image
+      # copies each workspace's sources for its admin scripts. Both files are
       # checked statically when this tree is assembled for publication.
       #
       # No buildx, no cache action: every workflow here uses first-party

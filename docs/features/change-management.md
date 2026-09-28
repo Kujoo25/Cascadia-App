@@ -49,13 +49,13 @@ This gives you concurrent engineering by default. Two change orders can modify d
 | `branches`                    | change-order branches (`branchType = 'eco'`) forked from main                |
 | `branch_items`                | Per-branch item overrides (working copies, change tracking)                  |
 
-Schema definitions: `cascadia-api/src/lib/db/schema/items.ts` (lines 118-275).
+Schema definitions: `cascadia-api/src/db/schema/items.ts` (lines 118-275).
 
 ---
 
 ## Change Order Types
 
-Cascadia supports four change order types, defined in `cascadia-commons/src/lib/items/types/change-order.ts`:
+Cascadia supports four change order types, defined in `cascadia-commons/src/items/types/change-order.ts`:
 
 | Type        | Name                       | Purpose                                                                                                |
 | ----------- | -------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -67,7 +67,7 @@ Cascadia supports four change order types, defined in `cascadia-commons/src/lib/
 All four types use the same `ChangeOrderService`, `ChangeOrderMergeService`, and branch infrastructure. The difference is in lifecycle routing: `ChangeOrderService.autoStartWorkflow()` looks up the lifecycle definition configured for each `changeType` in the ChangeOrder's `RuntimeItemTypeConfig`.
 
 ```typescript
-// cascadia-api/src/lib/items/services/ChangeOrderService.ts
+// cascadia-api/src/items/services/ChangeOrderService.ts
 static async autoStartWorkflow(
   changeOrderId: string,
   changeType: 'ECO' | 'ECN' | 'Deviation' | 'MCO',
@@ -170,7 +170,7 @@ for the full three-tier rule.
 
 ## Change Actions
 
-Change actions describe what the change order intends to do to each affected item. They are defined in `cascadia-commons/src/lib/items/types/change-order.ts` and their state mappings live in lifecycle definitions (`cascadia-commons/src/lib/types/lifecycle.ts`).
+Change actions describe what the change order intends to do to each affected item. They are defined in `cascadia-commons/src/items/types/change-order.ts` and their state mappings live in lifecycle definitions (`cascadia-commons/src/types/lifecycle.ts`).
 
 ### `release`
 
@@ -228,7 +228,7 @@ they always were rather than failing the release.
 ### Lifecycle Configuration Example
 
 ```typescript
-// From cascadia-commons/src/lib/types/lifecycle.ts
+// From cascadia-commons/src/types/lifecycle.ts
 const partLifecycle: ChangeActionMappings = {
   release: {
     fromState: 'Draft',
@@ -476,7 +476,7 @@ constraint violation.
 
 ## Impact Analysis
 
-Impact analysis discovers the ripple effects of changing items within and across designs. It is performed by `ImpactAssessmentService.analyzeImpact()` in `cascadia-api/src/lib/items/services/ImpactAssessmentService.ts`.
+Impact analysis discovers the ripple effects of changing items within and across designs. It is performed by `ImpactAssessmentService.analyzeImpact()` in `cascadia-api/src/items/services/ImpactAssessmentService.ts`.
 
 ### Where-Used Traversal
 
@@ -715,7 +715,7 @@ The revision scheme is configurable per lifecycle and per phase:
 
 ## Conflict Detection
 
-`ConflictDetectionService` in `cascadia-api/src/lib/services/ConflictDetectionService.ts` detects conflicts before a change order can be approved.
+`ConflictDetectionService` in `cascadia-api/src/services/ConflictDetectionService.ts` detects conflicts before a change order can be approved.
 
 ### Conflict Types
 
@@ -767,7 +767,7 @@ For each field (excluding metadata fields like `id`, `masterId`, `revision`, tim
 
 Both operations use `REPEATABLE READ` transaction isolation to prevent phantom reads during conflict resolution.
 
-**From the release-conflicts dialog** (`POST /api/v1/change-orders/:id/resolve-conflicts`, `ChangeOrderService.resolveConflicts()`): the three choices map onto those operations rather than onto raw branch writes. **Keep ours** and **Keep theirs** are the rebase, with every conflicting field resolved to the branch's value or main's respectively and a per-field choice overriding the item-level one; changes made on one side only survive either way, and the item stays in scope and is released with main's changes underneath its own. **Skip item** removes the item from the change order — its scope row and its branch content — through `removeAffectedItem()`, so it is refused once the scope is locked like any other scope change; after submit, return the change order to its initial state first. Each item reports its own outcome (`207 Multi-Status` when some failed).
+**From the release-conflicts dialog** (`POST /api/v1/change-orders/:id/resolve-conflicts`, `ChangeOrderService.resolveConflicts()`): the three choices map onto those operations rather than onto raw branch writes. **Keep ours** and **Keep theirs** are the rebase, with every conflicting field resolved to the branch's value or main's respectively and a per-field choice overriding the item-level one; changes made on one side only survive either way, and the item stays in scope and is released with main's changes underneath its own. **Skip item** removes the item from the change order — its scope row and its branch content — through `removeAffectedItem()`, so it is refused once the scope is locked like any other scope change; after submit, return the change order to its initial state first. Branch content the affected items do not list is skipped by dropping it from the branch directly, which is refused once the change order's workflow has completed. The rebase and that drop act only on the change order's live branches, the ones detection walks, so neither writes to an archived branch. Each item reports its own outcome (`207 Multi-Status` when some failed).
 
 ---
 
@@ -782,7 +782,7 @@ Change-order cancellation is a lifecycle transition like any other. When a chang
    semantics come from `finalKind`, never from the state's name.
 
 2. **Branch archival**: `BranchService.archiveBranch()` sets `isArchived = true` and `archivedAt` on each associated branch. Archived branches:
-   - Cannot accept new commits
+   - Accept no further writes. A checkout, a save, creating or deleting an item, a revision working copy, a commit, a rebase or pull from main, and a usage or cross-design reference pulled in on the branch are all refused with a validation error (`BranchService.assertNotArchived`), and so is an edit, a relationship change or a hard delete addressed to a working copy the branch left behind. Releasing a lock still on the branch — check-in or cancel checkout — stays allowed: it writes no content, and a lock can outlive its branch (see [Archiving a Branch by Hand](#archiving-a-branch-by-hand)).
    - Do not appear in branch selectors
    - Remain in the database for audit trail
 
@@ -791,6 +791,18 @@ Change-order cancellation is a lifecycle transition like any other. When a chang
 4. **No revision consumption**: Because revisions are only assigned at merge time, cancelling a change order wastes no revision letters.
 
 5. **Checkout locks released**: Cancelling releases every checkout lock still held on the change order's branches, in the transaction that archives them, and records each release as `item.checkout_cancelled`. A release does the same inside each design's merge transaction, recording `item.checked_in`.
+
+### Deleting a Change Order
+
+A change order can also be deleted outright, but only while it is still in its initial state; past that it is cancelled instead (see [Deleting an Item, and What Survives](./versioning.md#deleting-an-item-and-what-survives)). Deleting retires the change order's branches exactly as cancelling does, in the transaction that removes it: every checkout lock still held on them is released and recorded as `item.checkout_cancelled`, and each branch is archived and recorded as `branch.archived`. The working copies stay behind on the archived branches, inert.
+
+`ItemService.delete` finds the branches by `branches.change_order_item_id`, the column the delete clears — it is `SET NULL` so that a draft change order can be deleted at all. Before the delete retired them, that left each branch live with no owner: still offered in the version picker of every item it touched, still holding its locks, with no change order left to cancel.
+
+### Archiving a Branch by Hand
+
+`PUT /api/v1/branches/:id` with `{ isArchived: true }` archives one branch on its own, through `BranchService.retireBranch()`. It releases every checkout lock still held on the branch in the transaction that archives it, and records each release as `item.checkout_cancelled`, as cancelling and deleting do. It used to archive the branch and nothing else, and every lock on it stayed held.
+
+It refuses a branch an open change order owns: one whose workflow has not completed, whether the change order is in its initial state, in review, partway through a release, or has no workflow instance at all. Archiving one of those left the change order open on a branch that takes no more work, while its affected items still listed the content there and its release would still merge it. Cancel the change order instead, which archives every branch it owns. A workspace, a branch whose change order has completed, and a branch no change order owns any more can still be archived by hand. A branch that is already archived keeps its `archivedAt`, and only the locks left on it are released.
 
 ---
 
@@ -839,20 +851,20 @@ Change-order cancellation is a lifecycle transition like any other. When a chang
 
 ## Key Files
 
-| File                                                             | Purpose                                                                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `cascadia-api/src/lib/items/services/ChangeOrderService.ts`      | Core change-order operations: creation, affected items, working copies, scope gates, transitions, close |
-| `cascadia-api/src/lib/services/ChangeOrderMergeService.ts`       | Branch merge and release: merge to main, revision assignment, BOM remapping                             |
-| `cascadia-api/src/lib/services/CheckoutService.ts`               | Item checkout, save changes, checkin, create/delete on branch                                           |
-| `cascadia-api/src/lib/services/ConflictDetectionService.ts`      | Three-way conflict detection, cross-change-order conflicts, rebase                                      |
-| `cascadia-api/src/lib/items/services/ImpactAssessmentService.ts` | Where-used traversal, cross-design impact, risk identification                                          |
-| `cascadia-api/src/lib/services/BranchService.ts`                 | Branch CRUD, change-order branch creation, lock, archive                                                |
-| `cascadia-api/src/lib/services/CommitService.ts`                 | Commit creation, merge commits, field change tracking                                                   |
-| `cascadia-api/src/lib/services/VersionResolver.ts`               | Resolve items per-branch context                                                                        |
-| `cascadia-api/src/lib/services/LifecycleService.ts`              | Change action validation, state transitions, revision schemes                                           |
-| `cascadia-api/src/lib/services/RevisionService.ts`               | Revision letter calculation (A->B, Z->AA, numeric, prefixed)                                            |
-| `cascadia-commons/src/lib/items/types/change-order.ts`           | Type definitions: ChangeAction, ChangeOrderType, schemas                                                |
-| `cascadia-commons/src/lib/types/lifecycle.ts`                    | Lifecycle types: ChangeActionMappings, RevisionScheme, phase config                                     |
-| `cascadia-api/src/lib/db/schema/items.ts`                        | Schema: change_orders, change_order_affected_items, change_order_designs                                |
-| `cascadia-api/src/lib/db/schema/versioning.ts`                   | Schema: branches, branch_items, commits                                                                 |
-| `cascadia-api/src/server/routes/change-orders.ts`                | Canonical transition endpoint                                                                           |
+| File                                                         | Purpose                                                                                                 |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `cascadia-api/src/items/services/ChangeOrderService.ts`      | Core change-order operations: creation, affected items, working copies, scope gates, transitions, close |
+| `cascadia-api/src/services/ChangeOrderMergeService.ts`       | Branch merge and release: merge to main, revision assignment, BOM remapping                             |
+| `cascadia-api/src/services/CheckoutService.ts`               | Item checkout, save changes, checkin, create/delete on branch                                           |
+| `cascadia-api/src/services/ConflictDetectionService.ts`      | Three-way conflict detection, cross-change-order conflicts, rebase                                      |
+| `cascadia-api/src/items/services/ImpactAssessmentService.ts` | Where-used traversal, cross-design impact, risk identification                                          |
+| `cascadia-api/src/services/BranchService.ts`                 | Branch CRUD, change-order branch creation, lock, archive                                                |
+| `cascadia-api/src/services/CommitService.ts`                 | Commit creation, merge commits, field change tracking                                                   |
+| `cascadia-api/src/services/VersionResolver.ts`               | Resolve items per-branch context                                                                        |
+| `cascadia-api/src/services/LifecycleService.ts`              | Change action validation, state transitions, revision schemes                                           |
+| `cascadia-api/src/services/RevisionService.ts`               | Revision letter calculation (A->B, Z->AA, numeric, prefixed)                                            |
+| `cascadia-commons/src/items/types/change-order.ts`           | Type definitions: ChangeAction, ChangeOrderType, schemas                                                |
+| `cascadia-commons/src/types/lifecycle.ts`                    | Lifecycle types: ChangeActionMappings, RevisionScheme, phase config                                     |
+| `cascadia-api/src/db/schema/items.ts`                        | Schema: change_orders, change_order_affected_items, change_order_designs                                |
+| `cascadia-api/src/db/schema/versioning.ts`                   | Schema: branches, branch_items, commits                                                                 |
+| `cascadia-api/src/server/routes/change-orders.ts`            | Canonical transition endpoint                                                                           |

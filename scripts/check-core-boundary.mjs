@@ -167,11 +167,18 @@ function resolveSpecifier(specifier, fromFile) {
   let base
   if (specifier.startsWith('@/')) {
     // `@/` is the importing file's own package. Inside an application package
-    // that is exactly one root; inside a module package the tsconfigs search
-    // the module's own root (a module has no `@/` reach into the application
-    // packages — it names them).
+    // that is exactly one root.
+    //
+    // A module package is the exception, and this mirrors the module
+    // tsconfigs: the application packages first, then the module roots. A
+    // specifier resolves against the application when it has it and against a
+    // module otherwise, which is what let module code keep its `@/` imports
+    // across both the workspace split and the api/web/commons one. Reading it
+    // as module-roots-only resolves `@/db` in one module to another module's
+    // `db` and reports a cross-module edge nothing has. The
+    // published tree composes no modules, so this branch never runs there.
     const own = appPackageOf(fromFile)
-    const roots = own ? [APP_PACKAGES[own]] : MODULE_SRC
+    const roots = own ? [APP_PACKAGES[own]] : [...APP_SRC, ...MODULE_SRC]
     for (const root of roots) {
       const hit = tryExtensions(join(root, specifier.slice(2)))
       if (hit) return hit
@@ -275,16 +282,16 @@ for (const file of allFiles) {
 //
 // The `@/` alias in an app's Vite build resolves the web package first, then
 // the module packages, and modules deliberately contribute files in
-// application-owned namespaces (server/routes, lib/jobs/definitions, ...).
+// application-owned namespaces (server/routes, jobs/definitions, ...).
 // That ordering means an application file later created at the same
 // relative path silently SHADOWS the module file everywhere it is imported —
 // no error, the module's contribution just stops loading. So the same
 // relative path may exist under at most one alias root. The three application
 // packages count as roots too: they preserve core's layout, and a module file
-// at `lib/x.ts` collides with any of them.
+// at `x.ts` collides with any of them.
 //
 // Comparison is extension- and index-stripped, because both resolvers try
-// the extension candidates: core lib/x.ts shadows module lib/x.tsx too.
+// the extension candidates: core x.ts shadows module x.tsx too.
 //
 // The composition-root filenames are the one structural exception: every
 // module package has them by convention, and they are only ever imported

@@ -4,8 +4,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Download, Package, Trash2, Upload } from 'lucide-react'
-import type { Software } from '@cascadia/commons/lib/items/types/software'
-import type { FileMetadata } from '@/lib/query'
+import type { Software } from '@cascadia/commons/items/types/software'
+import type { FileMetadata } from '@/query'
 import {
   Button,
   Card,
@@ -13,10 +13,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui'
-import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
-import { apiFetch } from '@/lib/api/client'
-import { useReleasedFamily } from '@/lib/hooks/useReleasedFamily'
-import { fileMetadataQuery, useInvalidateResources } from '@/lib/query'
+import { useErrorHandler } from '@/hooks/useErrorHandler'
+import { apiErrorFromResponse, apiFetch } from '@/api/client'
+import { useReleasedFamily } from '@/hooks/useReleasedFamily'
+import { fileMetadataQuery, useInvalidateResources } from '@/query'
 
 /**
  * The primary build artifact slot (proposal §5.2): one vault file
@@ -76,12 +76,7 @@ export function BuildArtifactCard({ software }: { software: Software }) {
         { method: 'POST', body: formData },
       )
       if (!response.ok) {
-        const body = (await response.json().catch(() => null)) as {
-          error?: { message?: string }
-        } | null
-        throw new Error(
-          body?.error?.message ?? `Upload failed (${response.status})`,
-        )
+        throw await apiErrorFromResponse(response, 'Upload failed')
       }
       const result = (await response.json()) as {
         data: { files: Array<FileMetadata> }

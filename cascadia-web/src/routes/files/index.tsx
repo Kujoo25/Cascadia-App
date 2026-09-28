@@ -4,10 +4,10 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
-import { fileCategoryLabel } from '@cascadia/commons/lib/vault/file-categories'
+import { fileCategoryLabel } from '@cascadia/commons/vault/file-categories'
 import type { ColumnFiltersState, SortingState } from '@tanstack/react-table'
-import type { FileRecordWithItem } from '@cascadia/commons/lib/vault/types'
-import type { FileCategory } from '@cascadia/commons/lib/vault/file-categories'
+import type { FileRecordWithItem } from '@cascadia/commons/vault/types'
+import type { FileCategory } from '@cascadia/commons/vault/file-categories'
 import { PageContainer } from '@/components/layout'
 import { FileTable } from '@/components/files/FileTable'
 import {
@@ -17,10 +17,10 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui'
-import { useAlertDialog } from '@/lib/hooks/useAlertDialog'
-import { useErrorHandler } from '@/lib/hooks/useErrorHandler'
-import { fileListQuery, useInvalidateResources } from '@/lib/query'
-import { apiFetch } from '@/lib/api/client'
+import { useAlertDialog } from '@/hooks/useAlertDialog'
+import { useErrorHandler } from '@/hooks/useErrorHandler'
+import { fileListQuery, useInvalidateResources } from '@/query'
+import { apiErrorFromResponse, apiFetch } from '@/api/client'
 
 // Search schema for URL validation
 const filesSearchSchema = z.object({
@@ -73,7 +73,7 @@ function FilesListPage() {
       const response = await fetch(`/api/v1/files/${file.id}/download`)
 
       if (!response.ok) {
-        throw new Error('Download failed')
+        throw await apiErrorFromResponse(response, 'Download failed')
       }
 
       // Create a blob from the response

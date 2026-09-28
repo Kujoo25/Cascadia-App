@@ -1,6 +1,6 @@
 # Security Architecture
 
-This document describes Cascadia's security model: authentication, authorization, request protection, and input hardening. All security code lives in `cascadia-api/src/lib/auth/` and `cascadia-api/src/lib/api/handler.ts`.
+This document describes Cascadia's security model: authentication, authorization, request protection, and input hardening. All security code lives in `cascadia-api/src/auth/` and `cascadia-api/src/api/handler.ts`.
 
 ---
 
@@ -31,7 +31,7 @@ This document describes Cascadia's security model: authentication, authorization
                           └─────────────────────────────┘
 ```
 
-Every API route is wrapped by `apiHandler()` from `cascadia-api/src/lib/api/handler.ts`, which enforces security before the route handler executes.
+Every API route is wrapped by `apiHandler()` from `cascadia-api/src/api/handler.ts`, which enforces security before the route handler executes.
 
 ---
 
@@ -39,7 +39,7 @@ Every API route is wrapped by `apiHandler()` from `cascadia-api/src/lib/api/hand
 
 ### Password Hashing
 
-**File**: `cascadia-api/src/lib/auth/password.ts`
+**File**: `cascadia-api/src/auth/password.ts`
 
 Passwords are hashed with **Argon2id** (via `@node-rs/argon2`), the current OWASP-recommended algorithm:
 
@@ -70,7 +70,7 @@ Password verification uses constant-time comparison to prevent timing attacks.
 
 ### Session Management
 
-**File**: `cascadia-api/src/lib/auth/session.ts`
+**File**: `cascadia-api/src/auth/session.ts`
 
 Sessions are database-backed (not JWTs), stored in the `sessions` table.
 
@@ -94,7 +94,7 @@ The session token is generated using `@oslojs/encoding` and cryptographically ra
 
 ### Account Lockout
 
-**File**: `cascadia-api/src/lib/auth/AuthService.ts`
+**File**: `cascadia-api/src/auth/AuthService.ts`
 
 After **10 consecutive failed password attempts**, the account is locked for
 **15 minutes**:
@@ -121,7 +121,7 @@ login endpoint has always carried. The `auth_events` metadata records a
 
 ### Session Cookie Security
 
-**File**: `cascadia-api/src/lib/auth/cookie.ts`
+**File**: `cascadia-api/src/auth/cookie.ts`
 
 ```typescript
 export function buildSessionCookie(token: string): string {
@@ -159,7 +159,7 @@ All authentication events are recorded in the `authEvents` table:
 
 ### Role-Based Access Control (RBAC)
 
-**File**: `cascadia-commons/src/lib/auth/permissions.ts`
+**File**: `cascadia-commons/src/auth/permissions.ts`
 
 Six predefined roles with hierarchical permissions:
 
@@ -197,7 +197,7 @@ type PermissionAction =
 
 ### Permission Checking
 
-**File**: `cascadia-api/src/lib/auth/permission-service.ts`
+**File**: `cascadia-api/src/auth/permission-service.ts`
 
 `PermissionService` is a singleton with a 5-minute in-memory cache. On each check:
 
@@ -209,7 +209,7 @@ The cache is keyed by `userId:resource:action` and invalidated when roles are ch
 
 ### Program-Based Access Control (PBAC)
 
-**File**: `cascadia-api/src/lib/auth/AccessControlService.ts`
+**File**: `cascadia-api/src/auth/AccessControlService.ts`
 
 Programs are the permission boundary. Users can only access designs within their assigned programs, with exceptions:
 
@@ -258,7 +258,7 @@ POST: apiHandler({ permission: ['change_orders', 'create'] }, async (ctx) => { .
 For fine-grained access (design-specific, branch-specific), services call:
 
 ```typescript
-import { requireDesignAccess, requireBranchAccess } from '@/lib/auth/access'
+import { requireDesignAccess, requireBranchAccess } from '@/auth/access'
 
 // Throws PermissionDeniedError if user cannot access this design
 await requireDesignAccess(userId, designId)
@@ -271,7 +271,7 @@ const { branch, designId } = await requireBranchAccess(userId, branchId)
 
 ## CSRF Protection
 
-**File**: `cascadia-api/src/lib/api/handler.ts` (`validateOrigin()`)
+**File**: `cascadia-api/src/api/handler.ts` (`validateOrigin()`)
 
 For state-changing requests (POST, PUT, PATCH, DELETE), the `Origin` or `Referer` header must match:
 
@@ -289,17 +289,32 @@ function validateOrigin(request: Request): boolean {
 
   const origin = request.headers.get('origin')
   const referer = request.headers.get('referer')
-  // ... validate against request origin and allowed origins
+  // ... validate against requestOrigin(request) and allowed origins
 }
 ```
+
+### Behind a TLS-terminating proxy
+
+**File**: `cascadia-api/src/api/cors.ts` (`requestOrigin()`)
+
+The request's own origin is not simply `request.url`. The server rebuilds that URL from the `Host` header and the scheme of the connection it arrived on, and a reverse proxy that terminates TLS connects over plain HTTP — so behind one, the app's view of itself is `http://plm.example.com` while the browser's `Origin` is `https://plm.example.com`. Compared directly, the two differ by scheme alone, and every cookie-authenticated write is rejected with 403 `PERMISSION_DENIED`. Safe methods skip the check and login is a public route that never reaches it, so the failure first shows at the first save, not at sign-in.
+
+`requestOrigin()` takes the scheme from the proxy's `X-Forwarded-Proto` header instead, under the same trust rule as `X-Forwarded-For`:
+
+- The header is read only when `TRUSTED_PROXY_COUNT` is above `0`. Any caller can send it, so a deployment that has not declared a proxy ignores it and keeps its connection's scheme — exactly the behavior before the header was read.
+- The rightmost entry of a comma-separated value is used: the nearest proxy wrote it, and anything to its left came from further out.
+- Only `http` and `https` are accepted. Anything else is ignored rather than spliced into the origin, where a value like `https://evil.example/` would otherwise name a different site.
+- The host still comes from `Host`, which the proxy must pass through unchanged. `X-Forwarded-Host` is not read.
+
+The CORS grant below compares against the same function, so the write check and the grant cannot disagree about which origin is this server's own. Deployment requirements — the proxy depth to set, and what the proxy must send — are in [Reverse Proxy Trust](../orchestration/configuration.md#reverse-proxy-trust).
 
 ---
 
 ## CORS Configuration
 
-**File**: `cascadia-api/src/lib/api/handler.ts` (`getCorsHeaders()`)
+**File**: `cascadia-api/src/api/cors.ts` (`getCorsHeaders()`)
 
-CORS is same-origin only by default. To allow external origins, set:
+CORS is same-origin only by default — the server's own origin, as `requestOrigin()` above computes it, always gets the grant. To allow external origins, set:
 
 ```
 CORS_ALLOWED_ORIGINS=https://admin.example.com,https://monitoring.example.com
@@ -321,7 +336,7 @@ For origins not in the allowlist, CORS headers are omitted entirely -- the brows
 
 ## Security Headers
 
-**File**: `cascadia-api/src/lib/api/handler.ts`
+**File**: `cascadia-api/src/api/cors.ts`
 
 Applied to all API responses via `applySecurityHeaders()`:
 
@@ -345,7 +360,7 @@ CSP (Content-Security-Policy) and HSTS (Strict-Transport-Security) are intention
 Every API route validates input with Zod schemas before passing data to the service layer. Query parameters use `parseQuery()`:
 
 ```typescript
-import { parseQuery } from '@/lib/api/handler'
+import { parseQuery } from '@/api/handler'
 
 const query = parseQuery(
   request,
@@ -366,7 +381,7 @@ Zod errors are caught by `handleApiError()` and converted to structured field-le
 Each item type has a Zod schema that validates both base fields and type-specific fields:
 
 ```typescript
-// cascadia-commons/src/lib/items/types/part.ts
+// cascadia-commons/src/items/types/part.ts
 export const partSchema = baseItemSchema.extend({
   itemType: z.literal('Part'),
   designId: z.string().uuid({ message: 'Design is required' }),
@@ -383,7 +398,7 @@ export const partSchema = baseItemSchema.extend({
 
 ## File Upload Hardening
 
-**Files**: `cascadia-api/src/lib/vault/services/FileService.ts`, `cascadia-api/src/lib/vault/utils/file-utils.ts`
+**Files**: `cascadia-api/src/vault/services/FileService.ts`, `cascadia-api/src/vault/utils/file-utils.ts`
 
 ### Size Limits
 
@@ -453,9 +468,11 @@ Files are stored in an isolated path structure that prevents path traversal:
 
 The system supports OAuth authentication via the **Arctic** library (`arctic` package). The `users` table includes `provider` and `providerId` fields for OAuth-authenticated accounts.
 
-**GitHub is the only implemented provider.** The authorization hop (`GET /api/v1/auth/github`) issues a random state token in an HttpOnly, `SameSite=Lax`, 10-minute cookie; the callback (`GET /api/v1/auth/callback/github`) rejects the exchange unless the returned `state` matches that cookie, then clears it. Accounts are matched on `provider` + `providerId`, or linked to an existing user by verified email -- an account with no verified email is refused rather than admitted without one. The redirect URI is derived from `BASE_URL` and is not separately configurable, so it cannot drift from the route the callback is mounted on.
+**GitHub and Google are the implemented providers.** Each authorization hop (`GET /api/v1/auth/github`, `GET /api/v1/auth/google`) issues a random state token in an HttpOnly, `SameSite=Lax`, 10-minute cookie; the callback (`GET /api/v1/auth/callback/github`, `GET /api/v1/auth/callback/google`) rejects the exchange unless the returned `state` matches that cookie, then clears it. Google's flow also carries a PKCE code verifier in a second cookie of the same kind. Accounts are matched on `provider` + `providerId`, or linked to an existing user by verified email -- an account with no verified email is refused rather than admitted without one. The redirect URI is derived from `BASE_URL` and is not separately configurable, so it cannot drift from the route the callback is mounted on.
 
-Configuration is limited to `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`; the `azure` and `google` provider values are reserved in the schema but have no client or callback route. See [user management](../admin/user-management.md#oauth-providers).
+Google sign-in admits any Google account with a verified email unless `GOOGLE_ALLOWED_DOMAINS` names the Google Workspace domains allowed in. The check reads the `hd` claim Google asserts for the account, not the domain of its email address, so a personal account or a consumer alias at an allowed domain is refused. It runs before the account is created or linked, and each refusal is recorded as a `login_failed` auth event. The ID token is decoded without verifying its signature, which is sound here only because it comes straight back from Google's token endpoint over TLS rather than from the browser.
+
+Configuration is `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`, and `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `GOOGLE_ALLOWED_DOMAINS`; the `azure` provider value is reserved in the schema but has no client or callback route. See [user management](../admin/user-management.md#oauth-providers).
 
 ---
 
@@ -547,18 +564,20 @@ implying a check it did not perform.
 
 ## Key Files
 
-| File                                                | Purpose                                                           |
-| --------------------------------------------------- | ----------------------------------------------------------------- |
-| `cascadia-api/src/lib/auth/AuthService.ts`          | Login/logout with lockout logic                                   |
-| `cascadia-api/src/lib/auth/session.ts`              | SessionManager: create, validate, extend, delete                  |
-| `cascadia-api/src/lib/auth/password.ts`             | Argon2id hashing, PBKDF2 legacy support, session token generation |
-| `cascadia-api/src/lib/auth/cookie.ts`               | Session cookie builders with conditional Secure flag              |
-| `cascadia-api/src/lib/auth/server.ts`               | `requireAuth()`, `requirePermission()`, `requireRole()`           |
-| `cascadia-commons/src/lib/auth/permissions.ts`      | Role definitions and permission checking                          |
-| `cascadia-api/src/lib/auth/permission-service.ts`   | `PermissionService` singleton with caching                        |
-| `cascadia-api/src/lib/auth/AccessControlService.ts` | Program-based access control                                      |
-| `cascadia-api/src/lib/auth/access.ts`               | `requireDesignAccess()`, `requireBranchAccess()`                  |
-| `cascadia-api/src/lib/auth/UserService.ts`          | User CRUD, role assignment, password change                       |
-| `cascadia-api/src/lib/api/handler.ts`               | `apiHandler()` with CSRF, CORS, security headers                  |
-| `cascadia-api/src/lib/vault/utils/file-utils.ts`    | File validation, sanitization, allowlist                          |
-| `cascadia-api/src/lib/packages/guard.ts`            | `requirePackage()` entitlement gate for optional packages         |
+| File                                            | Purpose                                                           |
+| ----------------------------------------------- | ----------------------------------------------------------------- |
+| `cascadia-api/src/auth/AuthService.ts`          | Login/logout with lockout logic                                   |
+| `cascadia-api/src/auth/session.ts`              | SessionManager: create, validate, extend, delete                  |
+| `cascadia-api/src/auth/password.ts`             | Argon2id hashing, PBKDF2 legacy support, session token generation |
+| `cascadia-api/src/auth/cookie.ts`               | Session cookie builders with conditional Secure flag              |
+| `cascadia-api/src/auth/server.ts`               | `requireAuth()`, `requirePermission()`, `requireRole()`           |
+| `cascadia-commons/src/auth/permissions.ts`      | Role definitions and permission checking                          |
+| `cascadia-api/src/auth/permission-service.ts`   | `PermissionService` singleton with caching                        |
+| `cascadia-api/src/auth/AccessControlService.ts` | Program-based access control                                      |
+| `cascadia-api/src/auth/access.ts`               | `requireDesignAccess()`, `requireBranchAccess()`                  |
+| `cascadia-api/src/auth/UserService.ts`          | User CRUD, role assignment, password change                       |
+| `cascadia-api/src/api/handler.ts`               | `apiHandler()` with CSRF, CORS, security headers                  |
+| `cascadia-api/src/api/cors.ts`                  | `requestOrigin()`, the CORS grant and preflight, security headers |
+| `cascadia-api/src/api/client-ip.ts`             | Client address resolution; `TRUSTED_PROXY_COUNT`                  |
+| `cascadia-api/src/vault/utils/file-utils.ts`    | File validation, sanitization, allowlist                          |
+| `cascadia-api/src/packages/guard.ts`            | `requirePackage()` entitlement gate for optional packages         |

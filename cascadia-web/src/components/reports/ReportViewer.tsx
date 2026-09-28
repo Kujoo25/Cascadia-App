@@ -12,7 +12,7 @@ import {
   RefreshCw,
   Rows3,
 } from 'lucide-react'
-import type { Report, ReportColumn } from '@cascadia/commons/lib/reports/types'
+import type { Report, ReportColumn } from '@cascadia/commons/reports/types'
 import {
   Badge,
   Button,
@@ -25,7 +25,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui'
-import { reportExecutionQuery } from '@/lib/query'
+import { reportExecutionQuery } from '@/query'
+import { apiErrorFromResponse } from '@/api/client'
 
 interface ReportViewerProps {
   report: Report
@@ -62,7 +63,7 @@ export function ReportViewer({ report }: ReportViewerProps) {
       })
 
       if (!response.ok) {
-        throw new Error('Failed to export report')
+        throw await apiErrorFromResponse(response, 'Failed to export report')
       }
 
       // Get the filename from the Content-Disposition header
@@ -85,8 +86,12 @@ export function ReportViewer({ report }: ReportViewerProps) {
       a.click()
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
-    } catch {
-      setExportError('Failed to export report')
+    } catch (exportFailure) {
+      setExportError(
+        exportFailure instanceof Error
+          ? exportFailure.message
+          : 'Failed to export report',
+      )
     }
   }
 

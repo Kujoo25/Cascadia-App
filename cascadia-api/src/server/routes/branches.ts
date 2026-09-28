@@ -4,16 +4,16 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { tagged } from '../adapter'
-import { BranchService } from '@/lib/services/BranchService'
-import { CommitService } from '@/lib/services/CommitService'
-import { VersionResolver } from '@/lib/services/VersionResolver'
-import { NotFoundError } from '@/lib/errors'
+import { BranchService } from '@/services/BranchService'
+import { CommitService } from '@/services/CommitService'
+import { VersionResolver } from '@/services/VersionResolver'
+import { NotFoundError } from '@/errors'
 import {
   requireBranchAccess,
   requireDesignManageAuthority,
-} from '@/lib/auth/access'
-import { apiHandler, parseQuery } from '@/lib/api/handler'
-import { itemListSchema } from '@/lib/api/schemas'
+} from '@/auth/access'
+import { apiHandler, parseQuery } from '@/api/handler'
+import { itemListSchema } from '@/api/schemas'
 
 const adapt = tagged('Branches')
 
@@ -67,14 +67,18 @@ app.put(
         const branch = await BranchService.getById(id)
         if (!branch) throw new NotFoundError('Branch', id)
 
+        // Archiving first: it is the flag that can be refused — a branch an
+        // open change order owns — and a refused request should leave the
+        // lock flag as it found it. `retireBranch` also releases the locks
+        // still held on the branch, as every other archive does.
+        if (data.isArchived === true) {
+          await BranchService.retireBranch(id, user.id)
+        }
+
         if (data.isLocked === true) {
           await BranchService.lockBranch(id)
         } else if (data.isLocked === false) {
           await BranchService.unlockBranch(id)
-        }
-
-        if (data.isArchived === true) {
-          await BranchService.archiveBranch(id, undefined, user.id)
         }
 
         const updatedBranch = await BranchService.getById(id)

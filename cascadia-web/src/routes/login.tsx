@@ -8,8 +8,8 @@ import {
 } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { invalidateEverything } from '../lib/query'
-import { authProvidersQuery } from '../lib/query/options/auth'
+import { invalidateEverything } from '../query'
+import { authProvidersQuery } from '../query/options/auth'
 import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { Label } from '../components/ui/Label'
@@ -17,6 +17,7 @@ import { Card } from '../components/ui/Card'
 import { LoadingSpinner } from '../components/ui/LoadingSpinner'
 import { AnimatedGearBackground } from '../components/AnimatedGearBackground'
 import type { AnimatedGearBackgroundRef } from '../components/AnimatedGearBackground'
+import { apiErrorFromResponse } from '@/api/client'
 import cascadiaLogo from '/cascadia-plm-logo-icon.svg'
 
 const OAUTH_ERROR_MESSAGES: Record<string, string> = {
@@ -90,15 +91,8 @@ function LoginPage() {
         body: JSON.stringify({ username, password }),
       })
 
-      const data = await response.json()
-
       if (!response.ok) {
-        // API returns { error: { code, message, ... } }
-        const errorMessage =
-          data.error?.message || data.message || 'Login failed'
-        setError(errorMessage)
-        setIsLoading(false)
-        return
+        throw await apiErrorFromResponse(response, 'Login failed')
       }
 
       // Signing in changes identity, so nothing cached for the signed-out
@@ -117,7 +111,11 @@ function LoginPage() {
         navigate({ to: '/' })
       }, 800)
     } catch (err) {
-      setError('An error occurred. Please try again.')
+      setError(
+        err instanceof Error
+          ? err.message
+          : 'An error occurred. Please try again.',
+      )
       setIsLoading(false)
     }
   }

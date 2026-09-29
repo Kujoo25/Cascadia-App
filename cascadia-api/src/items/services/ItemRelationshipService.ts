@@ -807,7 +807,7 @@ export class ItemRelationshipService {
     targetItemId: string
     userId: string
     tx?: TransactionClient
-  }): Promise<void> {
+  }): Promise<number> {
     const { sourceItemId, targetItemId, userId, tx } = options
     const executor = tx ?? db
 
@@ -815,9 +815,9 @@ export class ItemRelationshipService {
       .select()
       .from(itemRelationships)
       .where(eq(itemRelationships.sourceId, sourceItemId))
-    if (sourceRelationships.length === 0) return
+    if (sourceRelationships.length === 0) return 0
 
-    await executor
+    const copied = await executor
       .insert(itemRelationships)
       .values(
         sourceRelationships.map((rel) => ({
@@ -830,10 +830,25 @@ export class ItemRelationshipService {
           metadata: rel.metadata,
           option: rel.option,
           targetMakeCode: rel.targetMakeCode,
+          isComposite: rel.isComposite,
+          isDirected: rel.isDirected,
+          multiplicityLower: rel.multiplicityLower,
+          multiplicityUpper: rel.multiplicityUpper,
+          usageAttributes: rel.usageAttributes,
+          modifiedBy: userId,
+          sourceDesignId: rel.sourceDesignId,
+          targetDesignId: rel.targetDesignId,
+          sourceDomain: rel.sourceDomain,
+          targetDomain: rel.targetDomain,
+          derivationMethod: rel.derivationMethod,
+          derivationNotes: rel.derivationNotes,
           createdBy: userId,
         })),
       )
       .onConflictDoNothing()
+      .returning({ id: itemRelationships.id })
+
+    return copied.length
   }
 
   /**

@@ -2780,6 +2780,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/items/{id}/clone": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clone an engineering item as a new draft
+         * @description Creates a new independent Part, Document, Requirement, or Software item in the source design. Basic fields are copied; outgoing relationships and Part variant data are opt-in. Identity, lifecycle history, files, source manifests, build artifacts, checkouts, and ECO membership are never copied.
+         */
+        post: operations["postApiV1ItemsByIdClone"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/items/{id}/edit-context": {
         parameters: {
             query?: never;
@@ -11617,6 +11637,63 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1ItemsByIdClone: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    branchId?: string;
+                    /** @default false */
+                    copyRelationships?: boolean;
+                    /** @default false */
+                    copyVariants?: boolean;
+                    itemNumber?: string;
+                    name?: string;
+                    variantCode?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description The newly created draft item. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            item: {
+                                /** Format: uuid */
+                                id: string;
+                                itemNumber: string;
+                                itemType: string;
+                                /** Format: uuid */
+                                masterId: string;
+                                revision: string;
+                                state: string;
+                            } & {
+                                [key: string]: unknown;
+                            };
+                            relationshipsCopied: number;
+                        };
+                    };
+                };
+            };
             400: components["responses"]["ValidationError"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ArrowLeft,
+  Copy,
   Edit,
   GitBranch,
   Loader2,
@@ -32,6 +33,7 @@ import {
 } from '@/components/vault'
 import { CheckoutDialog } from '@/components/items/CheckoutDialog'
 import { resolveItemBranchActions } from '@/components/items/itemBranchActions'
+import { CloneItemDialog } from '@/components/items/CloneItemDialog'
 import { useVersionContext } from '@/hooks/useVersionContext'
 import { useEditLock, useItemEditContext } from '@/hooks/useEditLock'
 import { WorkspaceContextBanner } from '@/components/workspaces/WorkspaceContextBanner'
@@ -169,6 +171,7 @@ export function DocumentDetail({
   )
   const [isEditing, setIsEditing] = useState(isCreateMode)
   const [isCheckoutDialogOpen, setIsCheckoutDialogOpen] = useState(false)
+  const [isCloneDialogOpen, setIsCloneDialogOpen] = useState(false)
   const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>()
 
   const { data: createDesignStatus = null } = useQuery(
@@ -517,6 +520,15 @@ export function DocumentDetail({
               </>
             ) : (
               <>
+                {!isCreateMode && currentDocument.id && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsCloneDialogOpen(true)}
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    Clone
+                  </Button>
+                )}
                 {/* Edit button with tooltip when disabled */}
                 {getEditDisabledReason() ? (
                   <Tooltip>
@@ -902,6 +914,21 @@ export function DocumentDetail({
       </Tabs>
 
       {/* Checkout Dialog */}
+      {!isCreateMode && currentDocument.id && currentDocument.designId && (
+        <CloneItemDialog
+          open={isCloneDialogOpen}
+          onOpenChange={setIsCloneDialogOpen}
+          item={{
+            ...currentDocument,
+            id: currentDocument.id,
+            itemNumber: currentDocument.itemNumber ?? '',
+          }}
+          sourceBranchId={
+            context.type === 'branch' ? context.branchId : undefined
+          }
+        />
+      )}
+
       {!isCreateMode && currentDocument.id && currentDocument.designId && (
         <CheckoutDialog
           open={isCheckoutDialogOpen}

@@ -15366,6 +15366,148 @@
         ]
       }
     },
+    "/api/v1/items/{id}/clone": {
+      "post": {
+        "description": "Creates a new independent Part, Document, Requirement, or Software item in the source design. Basic fields are copied; outgoing relationships and Part variant data are opt-in. Identity, lifecycle history, files, source manifests, build artifacts, checkouts, and ECO membership are never copied.",
+        "operationId": "postApiV1ItemsByIdClone",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "branchId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "copyRelationships": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "copyVariants": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "itemNumber": {
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "variantCode": {
+                    "maxLength": 50,
+                    "minLength": 1,
+                    "pattern": "^[A-Z0-9][A-Z0-9_-]*$",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "item": {
+                          "additionalProperties": {},
+                          "properties": {
+                            "id": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "itemNumber": {
+                              "type": "string"
+                            },
+                            "itemType": {
+                              "type": "string"
+                            },
+                            "masterId": {
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                              "type": "string"
+                            },
+                            "revision": {
+                              "type": "string"
+                            },
+                            "state": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "masterId",
+                            "itemNumber",
+                            "itemType",
+                            "revision",
+                            "state"
+                          ],
+                          "type": "object"
+                        },
+                        "relationshipsCopied": {
+                          "maximum": 9007199254740991,
+                          "minimum": 0,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "item",
+                        "relationshipsCopied"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The newly created draft item."
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Clone an engineering item as a new draft",
+        "tags": [
+          "Items"
+        ]
+      }
+    },
     "/api/v1/items/{id}/edit-context": {
       "get": {
         "operationId": "getApiV1ItemsByIdEditContext",

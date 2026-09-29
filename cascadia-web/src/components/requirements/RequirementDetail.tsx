@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   ArrowLeft,
+  Copy,
   Edit,
   GitBranch,
   Loader2,
@@ -27,6 +28,7 @@ import { RelationshipSection } from '@/components/items/RelationshipSection'
 import { ItemHistoryTab } from '@/components/items/ItemHistoryTab'
 import { CheckoutDialog } from '@/components/items/CheckoutDialog'
 import { resolveItemBranchActions } from '@/components/items/itemBranchActions'
+import { CloneItemDialog } from '@/components/items/CloneItemDialog'
 import { ImpactAnalysisDialog } from '@/components/impact'
 import { useVersionContext } from '@/hooks/useVersionContext'
 import { useEditLock, useItemEditContext } from '@/hooks/useEditLock'
@@ -178,6 +180,7 @@ export function RequirementDetail({
   )
   const [isEditing, setIsEditing] = useState(isCreateMode)
   const [isCheckoutDialogOpen, setIsCheckoutDialogOpen] = useState(false)
+  const [isCloneDialogOpen, setIsCloneDialogOpen] = useState(false)
   const [isImpactDialogOpen, setIsImpactDialogOpen] = useState(false)
   const [selectedBranchId, setSelectedBranchId] = useState<string | undefined>()
 
@@ -487,6 +490,15 @@ export function RequirementDetail({
               </>
             ) : (
               <>
+                {!isCreateMode && currentRequirement.id && (
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsCloneDialogOpen(true)}
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    Clone
+                  </Button>
+                )}
                 {!isCreateMode && currentRequirement.id && (
                   <Button
                     variant="outline"
@@ -872,6 +884,23 @@ export function RequirementDetail({
           </TabsContent>
         )}
       </Tabs>
+
+      {!isCreateMode &&
+        currentRequirement.id &&
+        currentRequirement.designId && (
+          <CloneItemDialog
+            open={isCloneDialogOpen}
+            onOpenChange={setIsCloneDialogOpen}
+            item={{
+              ...currentRequirement,
+              id: currentRequirement.id,
+              itemNumber: currentRequirement.itemNumber ?? '',
+            }}
+            sourceBranchId={
+              context.type === 'branch' ? context.branchId : undefined
+            }
+          />
+        )}
 
       {!isCreateMode &&
         currentRequirement.id &&

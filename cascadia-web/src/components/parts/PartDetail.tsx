@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useEffect, useState } from 'react'
 import {
   ArrowLeft,
+  Copy,
   Edit,
   GitBranch,
   Loader2,
@@ -29,6 +30,7 @@ import { PhaseBadge } from '@/components/items/PhaseBadge'
 import { ImageGallery, useItemImages } from '@/components/vault'
 import { WorkInstructionsForPartPanel } from '@/components/work-instructions'
 import { CheckoutDialog } from '@/components/items/CheckoutDialog'
+import { CloneItemDialog } from '@/components/items/CloneItemDialog'
 import {
   PartCADHiddenPrompt,
   PartCADSection,
@@ -195,6 +197,7 @@ export function PartDetail({
   )
   const [isEditing, setIsEditing] = useState(isCreateMode)
   const [isCheckoutDialogOpen, setIsCheckoutDialogOpen] = useState(false)
+  const [isCloneDialogOpen, setIsCloneDialogOpen] = useState(false)
   const [isImpactDialogOpen, setIsImpactDialogOpen] = useState(false)
   const [attributes, setAttributes] = useState<Record<string, unknown>>(
     initialPart?.attributes ?? {},
@@ -669,6 +672,15 @@ export function PartDetail({
                   {!isCreateMode && currentPart.id && (
                     <Button
                       variant="outline"
+                      onClick={() => setIsCloneDialogOpen(true)}
+                    >
+                      <Copy className="h-4 w-4 mr-2" />
+                      Clone
+                    </Button>
+                  )}
+                  {!isCreateMode && currentPart.id && (
+                    <Button
+                      variant="outline"
                       onClick={() => setIsImpactDialogOpen(true)}
                     >
                       <Search className="h-4 w-4 mr-2" />
@@ -1003,6 +1015,21 @@ export function PartDetail({
         </Tabs>
 
         {/* Checkout Dialog for released items */}
+        {!isCreateMode && currentPart.id && currentPart.designId && (
+          <CloneItemDialog
+            open={isCloneDialogOpen}
+            onOpenChange={setIsCloneDialogOpen}
+            item={{
+              ...currentPart,
+              id: currentPart.id,
+              itemNumber: currentPart.itemNumber ?? '',
+            }}
+            sourceBranchId={
+              context.type === 'branch' ? context.branchId : undefined
+            }
+          />
+        )}
+
         {!isCreateMode && currentPart.id && currentPart.designId && (
           <CheckoutDialog
             open={isCheckoutDialogOpen}

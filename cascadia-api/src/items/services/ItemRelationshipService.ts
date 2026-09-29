@@ -1107,7 +1107,7 @@ export class ItemRelationshipService {
     targetItemId: string
     userId: string
     tx?: TransactionClient
-  }): Promise<void> {
+  }): Promise<number> {
     const { sourceItemId, targetItemId, userId, tx } = options
     const executor = tx ?? db
 
@@ -1115,7 +1115,7 @@ export class ItemRelationshipService {
       .select()
       .from(itemRelationships)
       .where(eq(itemRelationships.sourceId, sourceItemId))
-    if (sourceRelationships.length === 0) return
+    if (sourceRelationships.length === 0) return 0
 
     // A trace claim's affirmation names the row it was made on. Copied off a
     // released row — a checkout — it stays naming that row, so the copy reads
@@ -1163,7 +1163,7 @@ export class ItemRelationshipService {
       })
     }
 
-    await executor
+    const copied = await executor
       .insert(itemRelationships)
       .values(
         sourceRelationships.map((rel) => ({
@@ -1181,10 +1181,13 @@ export class ItemRelationshipService {
         })),
       )
       .onConflictDoNothing()
+      .returning({ id: itemRelationships.id })
 
     // A cached thread of either item's lineage read these edges on the old
     // row; the copy is a new version row the branch now answers with.
     ThreadCacheService.invalidateForItemsSoon([sourceItemId, targetItemId])
+
+    return copied.length
   }
 
   /**

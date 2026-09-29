@@ -15,6 +15,7 @@ import { Hono } from 'hono'
 import core from './core'
 import batch from './batch'
 import checkout from './checkout'
+import clone from './clone'
 import detail from './detail'
 import graph from './graph'
 import files from './files'
@@ -29,6 +30,7 @@ const app = new Hono()
 app.route('/', core)
 app.route('/', batch)
 app.route('/', checkout)
+app.route('/', clone)
 app.route('/', detail)
 app.route('/', graph)
 app.route('/', files)

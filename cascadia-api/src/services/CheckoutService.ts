@@ -24,6 +24,7 @@ import {
 import { branchItems, branches, items, users } from '../db/schema'
 import { takeFirst } from '../db/take-first'
 import { getTypeHandler } from '../items/type-handlers'
+import { copyTypeSpecificData } from '../items/type-handlers/copy'
 import '../items/type-handlers/init'
 import { isBranchProtectionExempt } from '../items/branch-protection'
 import { NotFoundError, ResourceLockedError, ValidationError } from '../errors'
@@ -34,6 +35,7 @@ import { BranchService } from './BranchService'
 import { CommitService } from './CommitService'
 import { LifecycleService } from './LifecycleService'
 import { RevisionService } from './RevisionService'
+import { ThreadCacheService } from './ThreadCacheService'
 import { VersionResolver } from './VersionResolver'
 import { expandSourceFieldChanges } from './software-source-changes'
 import { publishCheckoutEvent } from './checkout-locks'
@@ -1166,7 +1168,7 @@ export class CheckoutService {
     const { ItemRelationshipService } =
       await import('../items/services/ItemRelationshipService')
 
-    return db.transaction(
+    const saved = await db.transaction(
       async (tx) => {
         // 1. Create new item record with changes. Working copies are never
         // the released-current version (the source row keeps its isCurrent);
@@ -1195,16 +1197,16 @@ export class CheckoutService {
           'item',
         )
 
-        // 1b. Carry the extension row onto the new version, applying any
+        // 1b. Carry the extension row onto the new version, then apply any
         // extension-field changes - otherwise the new version silently loses
-        // all type-specific data.
-        if (typeHandler && extData) {
-          const { itemId: _oldItemId, ...extFields } = extData
-          await typeHandler.insert(
-            newItem.id,
-            { ...extFields, ...sanitizedChanges },
-            tx,
-          )
+        // all type-specific data. Copied by row rather than read back through
+        // the handler's insert: that insert takes only what a caller may set,
+        // so a column the service layer owns - a requirement's derived
+        // verification status and its waiver - would start the working copy
+        // over, and the release would then copy the loss onto main.
+        await copyTypeSpecificData(item.itemType, item.id, newItem.id, tx)
+        if (typeHandler && Object.keys(sanitizedChanges).length > 0) {
+          await typeHandler.update(newItem.id, sanitizedChanges, tx)
         }
 
         // 1c. Carry the base version's files onto the working copy. Files hang
@@ -1332,6 +1334,12 @@ export class CheckoutService {
       },
       { isolationLevel: 'repeatable read' },
     )
+
+    // The branch answers for this master with a new row now; a thread cached
+    // at the branch's context resolved the old one.
+    ThreadCacheService.invalidateForItemsSoon([item.id, saved.item.id])
+
+    return saved
   }
 
   /**

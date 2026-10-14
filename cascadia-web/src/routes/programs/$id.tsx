@@ -23,6 +23,7 @@ import { PageContainer } from '@/components/layout'
 import { ProgramHistoryGraphView } from '@/components/programs/ProgramHistoryGraphView'
 import { ProgramModelViewer } from '@/components/programs/ProgramModelViewer'
 import { ProgramTeamCard } from '@/components/programs/ProgramTeamCard'
+import { ProgramRequirementsCard } from '@/components/programs/ProgramRequirementsCard'
 import { ScopeGraphView } from '@/components/graph/ScopeGraphView'
 import {
   Badge,
@@ -375,6 +376,8 @@ function ProgramDetail({
               </Card>
 
               {/* 3D Model — pick a design, then a top-level part of it */}
+              <ProgramRequirementsCard programId={program.id} />
+
               <ProgramModelViewer designs={designs} />
 
               {/* Program Graph */}

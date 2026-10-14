@@ -5,6 +5,7 @@ import { isWorkingRevisionValue } from '../types/lifecycle'
 import { importPartRowSchema } from './types'
 import { importDocumentRowSchema } from './types/document'
 import { importIssueRowSchema } from './types/issue'
+import { importRequirementRowSchema } from './types/requirement'
 import { getFieldByType, getFieldConfig } from './constants'
 import type {
   BomRelationship,
@@ -25,10 +26,17 @@ function getSchemaForType(itemType: ImportItemType): z.ZodTypeAny {
       return importDocumentRowSchema
     case 'Issue':
       return importIssueRowSchema
+    case 'Requirement':
+      return importRequirementRowSchema
     case 'Part':
     default:
       return importPartRowSchema
   }
+}
+
+/** The label the type's own field config gives its number column. */
+function numberLabel(itemType: ImportItemType): string {
+  return getFieldByType(itemType, 'itemNumber')?.label ?? 'Item Number'
 }
 
 /**
@@ -142,12 +150,7 @@ function validateRow(
     const itemNumber = String(coercedData.itemNumber)
     if (!/^[A-Za-z0-9\-_]+$/.test(itemNumber)) {
       warnings.push({
-        field:
-          itemType === 'Part'
-            ? 'Item Number'
-            : itemType === 'Document'
-              ? 'Document Number'
-              : 'Issue Number',
+        field: numberLabel(itemType),
         message: 'Contains special characters that may cause issues',
       })
     }
@@ -207,14 +210,8 @@ export function validateRows(
       const itemNumber = String(coercedData.itemNumber).toLowerCase()
       const existingRow = seenItemNumbers.get(itemNumber)
       if (existingRow) {
-        const fieldLabel =
-          itemType === 'Part'
-            ? 'Item Number'
-            : itemType === 'Document'
-              ? 'Document Number'
-              : 'Issue Number'
         errors.push({
-          field: fieldLabel,
+          field: numberLabel(itemType),
           message: `Duplicate number - also appears in row ${existingRow}`,
         })
       } else {

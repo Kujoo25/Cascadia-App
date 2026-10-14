@@ -5,13 +5,44 @@ import { z } from 'zod'
 import { baseItemSchema } from './base'
 import type { BaseItem } from './base'
 
-// Verification method types for requirements
-export type VerificationMethod =
-  'Analysis' | 'Inspection' | 'Demonstration' | 'Test' | 'Documentation'
+// How a requirement is verified, and how far that verification has got.
+// Schemas rather than bare unions so the API's requirement update schema can
+// validate against these values instead of keeping a copy: its lowercase copy
+// of the method enum rejected every value the column and the detail page use.
+export const verificationMethodSchema = z.enum([
+  'Analysis',
+  'Inspection',
+  'Demonstration',
+  'Test',
+  'Documentation',
+])
+export type VerificationMethod = z.infer<typeof verificationMethodSchema>
 
-// Verification status for requirements
-export type VerificationStatus =
-  'NotStarted' | 'InProgress' | 'Passed' | 'Failed' | 'Waived'
+/**
+ * Derived, never hand-set: the rollup of the latest execution of every test
+ * case that verifies the requirement, or `Waived` while a waiver is recorded.
+ */
+export const verificationStatusSchema = z.enum([
+  'NotStarted',
+  'InProgress',
+  'Passed',
+  'Failed',
+  'Waived',
+])
+export type VerificationStatus = z.infer<typeof verificationStatusSchema>
+
+/**
+ * The manual exception to the derived status: who waived verification, when,
+ * and why. Present exactly while the status reads `Waived`.
+ */
+export const verificationWaiverSchema = z.object({
+  note: z.string().min(1).max(2000),
+  /** Null for a waiver that predates the record. */
+  waivedBy: z.string().uuid().nullable(),
+  /** ISO timestamp. */
+  waivedAt: z.string(),
+})
+export type VerificationWaiver = z.infer<typeof verificationWaiverSchema>
 
 // Requirement classification. Exported as a schema (not just a union) because
 // the AI/MCP `create_item` tool advertises these values to models — deriving
@@ -47,8 +78,9 @@ export interface Requirement extends BaseItem {
   category?: string
   // Phase 2: Verification and traceability fields
   verificationMethod?: VerificationMethod
+  /** Read-only: derived from the verifying tests' executions, or waived. */
   verificationStatus?: VerificationStatus
-  allocatedDesignId?: string
+  verificationWaiver?: VerificationWaiver | null
   parentRequirementId?: string
 }
 
@@ -63,13 +95,10 @@ export const requirementSchema = baseItemSchema.extend({
   source: z.string().max(200).optional(),
   category: z.string().max(100).optional(),
   // Phase 2: Verification and traceability fields
-  verificationMethod: z
-    .enum(['Analysis', 'Inspection', 'Demonstration', 'Test', 'Documentation'])
-    .optional(),
-  verificationStatus: z
-    .enum(['NotStarted', 'InProgress', 'Passed', 'Failed', 'Waived'])
-    .optional(),
-  allocatedDesignId: z.string().uuid().optional(),
+  verificationMethod: verificationMethodSchema.optional(),
+  // `verificationStatus` is deliberately absent: it is derived from the
+  // verifying tests' executions, and a waiver is its own request
+  // (`POST /requirements/:id/waive`), so a hand-set value is stripped.
   parentRequirementId: z.string().uuid().optional(),
 })
 

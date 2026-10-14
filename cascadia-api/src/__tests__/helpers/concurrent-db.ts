@@ -200,9 +200,9 @@ export class ConcurrentTestDatabase {
    * other suite in the run, and a crashed race test that truncated would take
    * them all with it.
    *
-   * The order is not arbitrary. `items.design_id`, both design columns on
-   * `item_relationships`, and `requirements.allocated_design_id` are all
-   * `ON DELETE NO ACTION`, so a design cannot go before the rows naming it —
+   * The order is not arbitrary. `items.design_id` and both design columns on
+   * `item_relationships` are `ON DELETE NO ACTION`, so a design cannot go
+   * before the rows naming it —
    * while branches, commits and every type-extension table cascade, so they
    * need no line here. Users go last: half the schema records who touched a
    * row.

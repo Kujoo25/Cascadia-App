@@ -32,6 +32,16 @@ export interface ToolContext {
   provider?: string
   model?: string
   /**
+   * Which assistant surface is running the tool. Set by the routes that own
+   * a surface: the chat route (`chat` or `search`, matching the mode the
+   * panel sent) and the MCP endpoint (`mcp`). A chat surface together with a
+   * `sessionId` is what lets a tool store a dialog for the panel to open
+   * (`@/ai/dialogs`). Left unset by callers that run these handlers
+   * without a panel — the design engine, which passes a chat `sessionId`
+   * only so its audit rows attribute to the conversation that started it.
+   */
+  surface?: 'chat' | 'search' | 'mcp'
+  /**
    * API key scope when the tool is invoked over MCP with a scoped key.
    * Null/undefined means full user permissions (in-app chat sessions and
    * full-scope keys). Keys can only narrow access, never widen it.

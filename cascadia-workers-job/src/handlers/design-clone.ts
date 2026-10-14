@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { and, eq, inArray, isNull } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull } from 'drizzle-orm'
 import { optionConditionKey } from '@cascadia/commons/types/variants'
 import { db } from '@cascadia/api/db'
 import { takeFirst } from '@cascadia/api/db/take-first'
-import { itemRelationships, items } from '@cascadia/api/db/schema/items'
+import {
+  itemRelationships,
+  items,
+  requirements,
+  testCases,
+} from '@cascadia/api/db/schema/items'
 import { vaultFiles } from '@cascadia/api/db/schema/vault'
 import { branchItems } from '@cascadia/api/db/schema/versioning'
 import { designCrossReferences } from '@cascadia/api/db/schema/crossReferences'
@@ -154,6 +159,7 @@ export const cloneDesignHandler: JobHandler<
       // 4. Create usage items in batches
       // =========================================================================
       const itemIdMap = new Map<string, string>() // sourceItemId -> targetUsageId
+      const masterIdMap = new Map<string, string>() // sourceMasterId -> targetMasterId
       let usagesCreated = 0
       let filesReferenced = 0
 
@@ -219,6 +225,7 @@ export const cloneDesignHandler: JobHandler<
             )
 
             itemIdMap.set(sourceItem.id, newUsage.id)
+            masterIdMap.set(sourceItem.masterId, newMasterId)
 
             // Copy the type-specific row whole (these are the "overrides" on the
             // usage): every column carries over, including the source's own
@@ -284,6 +291,66 @@ export const cloneDesignHandler: JobHandler<
       }
 
       await context.log.info(`Created ${usagesCreated} usage items`)
+
+      // =========================================================================
+      // 4b. Re-point the hierarchy columns inside the clone
+      // =========================================================================
+      // The whole-row copy above carries `requirements.parent_requirement_id`
+      // and `test_cases.test_plan_master_id` verbatim, so every cloned
+      // requirement pointed at the SOURCE design's parent and every cloned
+      // test case at the source's plan — the source plan listed the clone's
+      // cases, and a derived-requirement tree crossed designs. A pointer whose
+      // target was cloned follows it; one that was not (a parent outside the
+      // design, a plan the clone skipped) is cleared, the way a usage copy
+      // clears it.
+      await db.transaction(async (tx) => {
+        const clonedIds = [...itemIdMap.values()]
+        for (let i = 0; i < clonedIds.length; i += BATCH_SIZE) {
+          const batch = clonedIds.slice(i, i + BATCH_SIZE)
+          const parents = await tx
+            .select({
+              itemId: requirements.itemId,
+              parentRequirementId: requirements.parentRequirementId,
+            })
+            .from(requirements)
+            .where(
+              and(
+                inArray(requirements.itemId, batch),
+                isNotNull(requirements.parentRequirementId),
+              ),
+            )
+          for (const row of parents) {
+            await tx
+              .update(requirements)
+              .set({
+                parentRequirementId:
+                  itemIdMap.get(row.parentRequirementId!) ?? null,
+              })
+              .where(eq(requirements.itemId, row.itemId))
+          }
+          const planned = await tx
+            .select({
+              itemId: testCases.itemId,
+              testPlanMasterId: testCases.testPlanMasterId,
+            })
+            .from(testCases)
+            .where(
+              and(
+                inArray(testCases.itemId, batch),
+                isNotNull(testCases.testPlanMasterId),
+              ),
+            )
+          for (const row of planned) {
+            await tx
+              .update(testCases)
+              .set({
+                testPlanMasterId:
+                  masterIdMap.get(row.testPlanMasterId!) ?? null,
+              })
+              .where(eq(testCases.itemId, row.itemId))
+          }
+        }
+      })
 
       // =========================================================================
       // 5. Create initial commit to record all cloned items
@@ -397,7 +464,7 @@ export const cloneDesignHandler: JobHandler<
             rel.relationshipType,
             optionConditionKey(rel.option),
             rel.targetMakeCode ?? '',
-          ].join(' ')
+          ].join('\u0000')
           if (copiedRelationships.has(relKey)) {
             skippedDuplicate++
             continue

@@ -443,6 +443,86 @@ describe('ImpactAnalysisService', () => {
 
   // ---- isCurrent filter ----
 
+  describe('revision lineage', () => {
+    /**
+     * A release superseded `item`: the new row is the master's current one
+     * and the old row is not, and nothing re-points the edges that name it —
+     * the shape every revision leaves behind.
+     */
+    async function revise(item: {
+      id: string
+      masterId: string
+      itemNumber: string
+      itemType: string
+      name: string | null
+      state: string
+    }) {
+      await testDb.db
+        .update(items)
+        .set({ isCurrent: false })
+        .where(eq(items.id, item.id))
+      return takeFirst(
+        await testDb.db
+          .insert(items)
+          .values({
+            masterId: item.masterId,
+            designId,
+            itemNumber: item.itemNumber,
+            revision: 'B',
+            itemType: item.itemType,
+            name: item.name,
+            state: item.state,
+            isCurrent: true,
+            createdBy: user.id,
+            modifiedBy: user.id,
+          })
+          .returning(),
+      )
+    }
+
+    it('reads a claim made against the revision a requirement superseded, and reports the current row', async () => {
+      const part = await createPart('Satisfier')
+      const requirement = await createRequirement('Revised')
+      await createRelationship(part.id, requirement.id, 'SATISFIES')
+      const revised = await revise(requirement)
+
+      // Downstream from the part: the claim names rev A, and rev B stands
+      // for it now.
+      const fromPart = await ImpactAnalysisService.analyze({
+        itemId: part.id,
+        changeType: 'revision',
+        direction: 'downstream',
+      })
+      expect(fromPart.impactedItems.map((i) => i.item.id)).toEqual([revised.id])
+
+      // Upstream from rev B: it inherited the claim rev A received.
+      const fromRequirement = await ImpactAnalysisService.analyze({
+        itemId: revised.id,
+        changeType: 'revision',
+        direction: 'upstream',
+      })
+      expect(fromRequirement.impactedItems.map((i) => i.item.id)).toEqual([
+        part.id,
+      ])
+    })
+
+    it('does not report the claim a revision of the source left behind', async () => {
+      const part = await createPart('Old claimant')
+      const requirement = await createRequirement('Target')
+      await createRelationship(part.id, requirement.id, 'SATISFIES')
+      // Rev B carries no claim: the change order that revised the part
+      // dropped it on purpose, and the old row's claim is not followed.
+      await revise(part)
+
+      const result = await ImpactAnalysisService.analyze({
+        itemId: requirement.id,
+        changeType: 'revision',
+        direction: 'upstream',
+      })
+      expect(result.impactedItems).toHaveLength(0)
+    })
+  })
+
   describe('isCurrent filter', () => {
     it('skips items where isCurrent is false', async () => {
       const assembly = await createPart('Assembly')

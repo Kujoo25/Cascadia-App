@@ -5,6 +5,7 @@
 import { BOM_FIELDS, PART_FIELDS } from './part-fields'
 import { DOCUMENT_FIELDS } from './document-fields'
 import { ISSUE_FIELDS } from './issue-fields'
+import { REQUIREMENT_FIELDS } from './requirement-fields'
 import type { ImportTypeConfig, ItemFieldConfig } from './types'
 
 export type { ItemFieldConfig, ImportTypeConfig } from './types'
@@ -13,12 +14,16 @@ export type { ItemFieldConfig, ImportTypeConfig } from './types'
 export { PART_FIELDS, BOM_FIELDS } from './part-fields'
 export { DOCUMENT_FIELDS } from './document-fields'
 export { ISSUE_FIELDS } from './issue-fields'
+export {
+  REQUIREMENT_FIELDS,
+  REQUIREMENT_SHEET_FIELDS,
+} from './requirement-fields'
 
 /**
  * Registry of all import type configurations
  */
 const IMPORT_TYPE_CONFIGS: Record<
-  'Part' | 'Document' | 'Issue',
+  'Part' | 'Document' | 'Issue' | 'Requirement',
   ImportTypeConfig
 > = {
   Part: {
@@ -48,13 +53,22 @@ const IMPORT_TYPE_CONFIGS: Record<
     singularLabel: 'Issue',
     pluralLabel: 'Issues',
   },
+  Requirement: {
+    itemType: 'Requirement',
+    fields: REQUIREMENT_FIELDS,
+    requiresDesign: true,
+    supportsBom: false,
+    apiEndpoint: '/api/v1/import/requirements',
+    singularLabel: 'Requirement',
+    pluralLabel: 'Requirements',
+  },
 }
 
 /**
  * Get the import configuration for a specific item type
  */
 export function getImportConfig(
-  itemType: 'Part' | 'Document' | 'Issue',
+  itemType: 'Part' | 'Document' | 'Issue' | 'Requirement',
 ): ImportTypeConfig {
   return IMPORT_TYPE_CONFIGS[itemType]
 }
@@ -63,7 +77,7 @@ export function getImportConfig(
  * Get the fields for a specific item type
  */
 export function getFieldsForItemType(
-  itemType: 'Part' | 'Document' | 'Issue',
+  itemType: 'Part' | 'Document' | 'Issue' | 'Requirement',
 ): Array<ItemFieldConfig> {
   return IMPORT_TYPE_CONFIGS[itemType].fields
 }
@@ -72,7 +86,7 @@ export function getFieldsForItemType(
  * Get all fields for a specific item type (including BOM fields for Parts)
  */
 export function getAllFieldsForItemType(
-  itemType: 'Part' | 'Document' | 'Issue',
+  itemType: 'Part' | 'Document' | 'Issue' | 'Requirement',
 ): Array<ItemFieldConfig> {
   const config = IMPORT_TYPE_CONFIGS[itemType]
   if (config.supportsBom) {
@@ -85,7 +99,7 @@ export function getAllFieldsForItemType(
  * Get field config by field name for a specific item type
  */
 export function getFieldConfigForType(
-  itemType: 'Part' | 'Document' | 'Issue',
+  itemType: 'Part' | 'Document' | 'Issue' | 'Requirement',
   field: string,
 ): ItemFieldConfig | undefined {
   return getAllFieldsForItemType(itemType).find((f) => f.field === field)
@@ -95,7 +109,7 @@ export function getFieldConfigForType(
  * Get required fields for a specific item type
  */
 export function getRequiredFieldsForType(
-  itemType: 'Part' | 'Document' | 'Issue',
+  itemType: 'Part' | 'Document' | 'Issue' | 'Requirement',
 ): Array<ItemFieldConfig> {
   return getFieldsForItemType(itemType).filter((f) => f.required)
 }
@@ -104,7 +118,7 @@ export function getRequiredFieldsForType(
  * Get auto-generate fields for a specific item type
  */
 export function getAutoGenerateFieldsForType(
-  itemType: 'Part' | 'Document' | 'Issue',
+  itemType: 'Part' | 'Document' | 'Issue' | 'Requirement',
 ): Array<ItemFieldConfig> {
   return getFieldsForItemType(itemType).filter((f) => f.autoGenerate)
 }

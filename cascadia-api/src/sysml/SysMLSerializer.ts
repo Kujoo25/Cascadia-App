@@ -6,6 +6,7 @@
  * Converts between Cascadia items and SysML 2.0 API JSON format
  */
 
+import { catalogEntry } from '@cascadia/commons/items/relationships/catalog'
 import { CASCADIA_TO_SYSML_MAP, SYSML_TO_CASCADIA_MAP } from './types'
 import type { SysMLElementType } from './types'
 
@@ -220,9 +221,13 @@ export class SysMLSerializer {
    * Convert Cascadia relationship to SysML Relationship
    */
   static relationshipToSysML(rel: CascadiaRelationship): SysMLRelationship {
+    // A cataloged edge serializes under the SysML name the catalog gives it
+    // — SATISFIES as Satisfy, DECOMPOSES as a PartUsage owned by the parent —
+    // and an uncataloged one under the string it is stored as.
+    const entry = catalogEntry(rel.relationshipType)
     const sysmlRel: SysMLRelationship = {
       '@id': rel.id,
-      '@type': rel.relationshipType,
+      '@type': entry?.sysmlName ?? rel.relationshipType,
       target: [{ '@id': rel.targetId }],
     }
 
@@ -232,6 +237,9 @@ export class SysMLSerializer {
 
     if (rel.isComposite !== null && rel.isComposite !== undefined) {
       sysmlRel.isComposite = rel.isComposite
+    } else if (entry?.composite) {
+      // A structural edge (the architecture tree) is composite by nature.
+      sysmlRel.isComposite = true
     }
 
     if (rel.multiplicityLower !== null && rel.multiplicityLower !== undefined) {

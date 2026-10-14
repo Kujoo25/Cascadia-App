@@ -24,6 +24,10 @@ here through the publish pipeline. Contributions are still made by pull request
 against this repository — see [CONTRIBUTING.md](./CONTRIBUTING.md) for how an
 accepted one reaches `main`, and why it is closed rather than merged.
 
+An edition that composes extra modules keeps its own guide beside its
+composition root (`cascadia-app-enterprise/CLAUDE.md`). When that file exists,
+read it before starting.
+
 Related repositories:
 
 | Repository                          | Purpose                                                                                         |
@@ -141,7 +145,7 @@ cascadia-workers-job/  The Node.js jobs worker
 ├── src/
 │   ├── main.ts        runJobsWorker(): queue naming, health server, shutdown
 │   ├── worker/        The RabbitMQ consumer and job execution
-│   ├── scheduler.ts   Parked-retry sweep, dead-letter depth
+│   ├── scheduler.ts   Parked-retry sweep, dead-letter depth, maintenance registry
 │   ├── handlers/      One handler per job type
 │   └── register.ts    Registers the handlers into JobTypeRegistry
 └── Dockerfile         → ghcr.io/cascadia-plm/cascadia-jobs-worker
@@ -165,11 +169,23 @@ docs/                 # Architecture & feature documentation
 scripts/              # Database seeding, deployment scripts
 ```
 
+An app's _name_ and its directory differ: `cascadia` lives in `cascadia-app/`,
+and an edition that adds an app names it the same way. `CASCADIA_APP`, the
+Dockerfiles' `APP` argument and `npm run build:app -- <name>` take the name;
+`scripts/edition.mjs` maps it to the directory.
+
 Paths were preserved across the splits, then flattened: a file that was
-`packages/core/src/lib/x.ts` became `cascadia-<pkg>/src/lib/x.ts`, and is now
-`cascadia-<pkg>/src/x.ts`, so `@/x` means the same thing inside whichever
-package holds it. `git log --follow` crosses every move for any file, since
-each move commit carried the old content to the new path unchanged.
+`packages/core/src/lib/x.ts` became `packages/cascadia-<pkg>/src/lib/x.ts`,
+then `cascadia-<pkg>/src/lib/x.ts`, and is now `cascadia-<pkg>/src/x.ts`
+([Cascadia-App#117](https://github.com/Cascadia-PLM/Cascadia-App/pull/117)
+removed the `lib/` layer, and the module packages dropped theirs with it). So
+`@/x` means what `@/lib/x` did, inside whichever package holds it, and
+`git log --follow` crosses every move for any file. The one exception is the
+job worker, which public's flatten cut out of the api:
+`lib/jobs/node-handlers/*.ts` became `cascadia-workers-job/src/handlers/*.ts`,
+`lib/jobs/worker/` and `lib/jobs/scheduler.ts` moved under that package's
+`src/`, and `jobs-worker-main.ts` is its `main.ts`. The module packages keep
+their own handlers under `src/jobs/node-handlers/`.
 
 ## Development Commands
 
@@ -216,8 +232,8 @@ npx vitest run -t "should create branch"
 npm run lint          # ESLint (--max-warnings 0)
 npm run format        # Prettier
 npm run check         # Format + lint fix
-npm run openapi:snapshot  # Regenerate docs/api/openapi.v1.json (maintainers — see below)
-npm run openapi:check     # Verify the committed OpenAPI snapshot matches
+npm run openapi:snapshot  # Regenerate the committed OpenAPI snapshot after a route change (every snapshot this tree has an app for)
+npm run openapi:check     # Verify the committed OpenAPI snapshot matches (CI gate)
 npm run license:check     # Every file carries its SPDX header (CI gate)
 npm run boundary:check    # Resolves every import and classifies the target (CI gate)
 npm run permissions:check # Every declared permission tuple is one a role holds (CI gate); -- --audience prints who each admits
@@ -287,6 +303,7 @@ registries core provides:
 | API routes                    | `registerRoutes(mount, path, app)` — mount points: `api-root`, `admin`, `parts`, `files`            |
 | AI tools                      | `registerTool()`                                                                                    |
 | Jobs                          | `JobTypeRegistry.register()` / `.registerHandler()`                                                 |
+| Recurring maintenance         | `registerMaintenanceJobType()` — the jobs worker's sweep submits it on the module's own period      |
 | Cache resources               | `registerResourceDependents()` + declaration merging on `ModuleResources`                           |
 | Package catalog               | `registerPackage()`                                                                                 |
 | Schema                        | `cascadia-app*/src/modules.schema.ts` — a re-export, because drizzle-kit reads it statically        |
@@ -367,12 +384,16 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 | File vault                            | `./docs/features/file-vault.md`                |
 | Auth/permissions                      | `./docs/admin/access-control.md`               |
 | UI components / forms                 | `./docs/development/ui-components.md`          |
+| Component size, refactor-on-touch     | `./docs/development/ui-components.md`          |
+| Data fetching, caching, invalidation  | `./docs/development/data-fetching.md`          |
 | Testing patterns                      | `./docs/development/testing.md`                |
 | Background jobs                       | `./docs/development/adding-background-jobs.md` |
 | Domain events, the event log          | `./docs/development/adding-domain-events.md`   |
 | Extensions, the three phases          | `./docs/development/writing-extensions.md`     |
 | Webhooks, building a receiver         | `./docs/features/webhooks.md`                  |
+| Optional/licensed packages            | `./docs/development/adding-packages.md`        |
 | Demo data and seeding                 | `./docs/development/demo-datasets.md`          |
+| MCP servers, AI tool registry         | `./docs/features/mcp.md`                       |
 
 ## Architecture Quick Reference
 
@@ -414,7 +435,7 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 
 **Lifecycle states are configuration, never literals**: no state name appears in application logic. A state carries `isInitial`, `isFinal` (+ `finalKind`), and the roles it plays in change-action mappings; everything else is the configuring user's choice. Every item type has a lifecycle (defaults in `cascadia-api/src/items/default-lifecycles.ts`). Ask `LifecycleService` — `isReleasedFamilyState`, `isInitialState`, `getFinalStateIds`, `getFinalKind`, `resolveActionStates` — never compare `state === 'Released'`; render with `StateBadge`. See `docs/features/workflow-engine.md`.
 
-**Item types** (13): Part, Document, ChangeOrder, Requirement, Task, TestPlan, TestCase, WorkInstruction, Issue, Tool, Software, WorkOrder, PhysicalPart. All extend `BaseItem` and register via `ItemTypeRegistry` (definitions in `cascadia-commons/src/items/item-type-definitions.ts`, DB handlers in `cascadia-api/src/items/type-handlers/`). A type is more than its definition: it also needs a type handler, a numbering scheme, an RBAC resource and a detail-route path, and the derived surfaces (AI and MCP tools, the OpenAPI create union, the admin listing, the type filters) follow from the definition automatically. `docs/development/adding-item-types.md` has the checklist, marked by which entries a test will catch and which degrade quietly. The one runtime-configurable thing about an item type is which lifecycle governs it.
+**Item types** (14): Part, Document, ChangeOrder, Requirement, SystemElement, Task, TestPlan, TestCase, WorkInstruction, Issue, Tool, Software, WorkOrder, PhysicalPart. All extend `BaseItem` and register via `ItemTypeRegistry` (definitions in `cascadia-commons/src/items/item-type-definitions.ts`, DB handlers in `cascadia-api/src/items/type-handlers/`).
 
 **Physical traceability**: PhysicalPart (serialized units and lots, non-versioned, Tool pattern) + WorkOrder consumption/production recorded as `Consumes`/`Produces`/`Evidences` edges in `item_relationships` (WO/PhysicalPart always the edge source). Genealogy is derived, never stored; the qualification rollup (`GET /api/v1/work-orders/:id/qualification`) reports requirement satisfaction and uncertified-material gaps. Parts carry `trackingMode` (`none | lot | serial`); the AML lives in `manufacturer_parts`/`part_manufacturer_parts` bound to the part masterId. See `docs/features/physical-parts-and-traceability.md`.
 
@@ -442,7 +463,7 @@ Comprehensive documentation lives in-repo at [`./docs/`](./docs/README.md).
 The frontend has **one** cache: the TanStack Query client in `cascadia-web/src/query/`,
 shared with the router through context. Route loaders prime it with
 `ensureQueryData`, components read the same query factory with `useQuery`, and
-mutations refresh it with `useInvalidateResources()`.
+mutations refresh it by naming the resources they wrote.
 
 ```typescript
 // Loader primes the cache — it does not return data.
@@ -453,11 +474,22 @@ loader: ({ context: { queryClient }, deps }) =>
 // Component reads the same factory — resolves from cache, no second fetch.
 const { data } = useQuery(programListQuery())
 
-// Mutation invalidates by resource; dependents follow automatically.
-const invalidate = useInvalidateResources()
-await apiFetch('/api/v1/designs', { method: 'POST', body })
-await invalidate('designs')
+// Writes go through useResourceMutation; dependents follow automatically.
+const archive = useResourceMutation({
+  mutationFn: (id: string) =>
+    apiFetch(`/api/v1/designs/${id}/archive`, { method: 'POST' }),
+  invalidates: ['designs'],
+  onSuccess: () => navigate({ to: '/designs' }),
+})
 ```
+
+**`useResourceMutation` is the standard for new mutation code.** It registers
+the invalidation _before_ running `onSuccess`, so a navigation there lands on a
+page that is already refetching; `invalidates` is a typed `Resource` list; and
+`isPending` comes free. Most of the app still uses the older
+`await apiFetch(...); await invalidate('designs')` pair — that is not broken and
+there is no sweep planned, but a PR that rewrites a mutation handler moves it to
+the hook.
 
 Keys are built with `qk` (never inline) so prefix invalidation reaches them.
 `RESOURCE_DEPENDENTS` in `cascadia-web/src/query/invalidation.ts` encodes which
@@ -512,7 +544,7 @@ Mount new route modules in `cascadia-api/src/server/index.ts` via `app.route('/a
 
 For responses needing custom status codes or headers (201 Created, Set-Cookie), return a raw `Response` from within the handler. Use `parseQuery(request, zodSchema)` for validated query parameters. Use `requireDesignAccess`/`requireBranchAccess` from `@/auth/access` for design/branch access checks.
 
-The OpenAPI document is regenerated from these annotations at request time (`/openapi.json`) and served as Scalar UI at `/api/docs`. The committed snapshot at `docs/api/openapi.v1.json` is the frozen v1 contract. **You do not need to regenerate it in a pull request** — the snapshot is refreshed by the maintainers, and `npm run openapi:check` runs on `main` rather than on PRs. See [`docs/api/README.md`](./docs/api/README.md) for the versioning policy.
+The OpenAPI document is regenerated from these annotations at request time (`/openapi.json`) and served as Scalar UI at `/api/docs`. The committed snapshot at `docs/api/openapi.v1.json` is the frozen v1 contract — `npm run openapi:check` enforces it on every pull request. Run `npm run openapi:snapshot` whenever you change a route signature, then commit the regenerated JSON; an edition that composes modules commits its own contract beside its app the same way. See [`docs/api/README.md`](./docs/api/README.md) for the versioning policy.
 
 ## Common Tasks
 
@@ -535,7 +567,7 @@ The OpenAPI document is regenerated from these annotations at request time (`/op
 7. If new file, mount it in `cascadia-api/src/server/index.ts` via `app.route('/api/v1/newroute', newroute)`
 8. Optional but encouraged: add `openapi: { summary, request, responses }` to the handler options to enrich the spec
 
-The committed `docs/api/openapi.v1.json` snapshot is refreshed by the maintainers — leave it out of your PR.
+9. Run `npm run openapi:snapshot` and commit the regenerated `docs/api/openapi.v1.json`
 
 ### Adding a Background Job Type
 
@@ -754,7 +786,7 @@ Windows checkout byte-identical to it.
 **Do not** rely on `core.autocrlf` alone. Before this rule existed, a Windows
 checkout wrote CRLF and `npm run format:check` flagged **1167 files** — the
 whole repo — because Prettier's `endOfLine` default is `lf`. Genuine drift was
-invisible in that noise.
+invisible in that noise and reached `main` across two merges.
 
 If a clone predates the rule, its files are still CRLF on disk and the check is
 useless again. Refresh once:
@@ -782,6 +814,18 @@ disagree in both directions. A hash check reports the file as drifted content;
 a per-line regex scan terminates at the CR, matches nothing, and passes. Both
 have happened here, and the second is the dangerous one: a check that finds
 nothing looks exactly like a clean tree.
+
+## Merging prose files
+
+**Before formatting a prose file after a merge, grep it for conflict markers.**
+Prettier does not reject an unresolved merge — it reflows the markers into
+valid markdown: a bare `=======` is padded into a `| ======= |` table cell, and
+`>>>>>>> origin/main` becomes a `> > > > > > >` blockquote. After that
+`format:check` is green forever and nothing else in CI reads prose, so the
+damage is permanent and invisible. One plan document carried **two entire
+copies of itself** for weeks that way, which is why it conflicted against every
+branch that touched it. Run `git diff --check`, or `grep -rn '^<<<<<<<' .`,
+before `npm run format` — never after.
 
 ## Common Pitfalls to Avoid
 

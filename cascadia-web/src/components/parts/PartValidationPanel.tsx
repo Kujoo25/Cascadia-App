@@ -13,6 +13,10 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { TestCase } from '@cascadia/commons/items/types/testcase'
+import type {
+  SuspectReason,
+  SuspectReasonLabels,
+} from '@/components/items/suspect-links'
 import { apiFetch } from '@/api/client'
 import {
   entitySubQuery,
@@ -20,6 +24,12 @@ import {
   useInvalidateResources,
 } from '@/query'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
+import {
+  AffirmAllButton,
+  AffirmButton,
+  SuspectBadge,
+  useAffirmLinks,
+} from '@/components/items/suspect-links'
 import {
   Badge,
   Button,
@@ -33,6 +43,16 @@ import {
 
 interface ValidatingTest extends TestCase {
   executionStatus?: 'NotRun' | 'Passed' | 'Failed' | 'Blocked'
+  relationshipId?: string
+  /** The claim is stale: one end revised since it was last affirmed. */
+  suspect?: boolean
+  suspectReasons?: Array<SuspectReason>
+}
+
+// On this panel the link runs test case → part.
+const SUSPECT_REASON_LABELS: SuspectReasonLabels = {
+  source_revised: 'the test case changed since this link was affirmed',
+  target_revised: 'this part revised since this link was affirmed',
 }
 
 interface PartValidationPanelProps {
@@ -51,6 +71,9 @@ export function PartValidationPanel({
   const [linking, setLinking] = useState<string | null>(null)
   const [unlinking, setUnlinking] = useState<string | null>(null)
   const invalidate = useInvalidateResources()
+  // Affirming is a review record, not an edit of the link, so it is offered
+  // whenever the link is suspect — no checkout, no version context.
+  const { affirm, pendingIds } = useAffirmLinks({ invalidates: ['parts'] })
 
   // The tests that validate this part
   const { data: validatingTests = [], isPending: loading } = useQuery(
@@ -60,6 +83,9 @@ export function PartValidationPanel({
       'validating-tests',
       'tests',
     ),
+  )
+  const suspectIds = validatingTests.flatMap((t) =>
+    t.suspect && t.relationshipId ? [t.relationshipId] : [],
   )
 
   // Candidate test cases in the same design, minus the ones already linked.
@@ -162,16 +188,24 @@ export function PartValidationPanel({
               Test cases that validate this part
             </CardDescription>
           </div>
-          {isEditable && !showSearch && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowSearch(true)}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Link Test
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            <AffirmAllButton
+              relationshipIds={suspectIds}
+              pendingIds={pendingIds}
+              onAffirm={affirm}
+              title="Record that every suspect test still validates the part as it now stands"
+            />
+            {isEditable && !showSearch && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowSearch(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Link Test
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -299,7 +333,21 @@ export function PartValidationPanel({
                   >
                     {test.executionStatus || 'Not Run'}
                   </Badge>
+                  {test.suspect && (
+                    <SuspectBadge
+                      reasons={test.suspectReasons}
+                      labels={SUSPECT_REASON_LABELS}
+                    />
+                  )}
                 </Link>
+                {test.suspect && test.relationshipId && (
+                  <AffirmButton
+                    relationshipId={test.relationshipId}
+                    pendingIds={pendingIds}
+                    onAffirm={affirm}
+                    title="Record that this test still validates the part as it now stands"
+                  />
+                )}
                 {isEditable && (
                   <Button
                     variant="ghost"

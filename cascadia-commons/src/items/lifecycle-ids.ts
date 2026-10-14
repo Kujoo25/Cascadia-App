@@ -13,6 +13,7 @@ export const LIFECYCLE_IDS = {
   part: '00000000-0000-4000-8000-000000000100',
   document: '00000000-0000-4000-8000-000000000101',
   requirement: '00000000-0000-4000-8000-000000000105',
+  systemElement: '00000000-0000-4000-8000-000000000115',
 
   // Driving lifecycles (ECO workflows that control Driven lifecycles)
   changeOrder: '00000000-0000-4000-8000-000000000102',

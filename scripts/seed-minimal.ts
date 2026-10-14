@@ -271,6 +271,12 @@ try {
       },
     },
     {
+      itemType: 'SystemElement',
+      config: {
+        lifecycleDefinitionId: LIFECYCLE_IDS.systemElement,
+      },
+    },
+    {
       itemType: 'ChangeOrder',
       config: {
         lifecycleDefinitionId: IDS.changeOrderWorkflow,

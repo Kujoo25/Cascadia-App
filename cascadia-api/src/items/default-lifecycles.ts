@@ -295,6 +295,18 @@ export const REQUIREMENT_LIFECYCLE_DEFINITION = {
   applicableItemTypes: ['Requirement'],
 }
 
+/**
+ * System elements: Driven like a Part — the architecture an ECO reshapes is
+ * isolated on its branch until the release, exactly as the BOM is — with the
+ * Part definition's states and mappings, scoped to the type.
+ */
+export const SYSTEM_ELEMENT_LIFECYCLE_DEFINITION = {
+  ...PART_LIFECYCLE_DEFINITION,
+  description:
+    'System element lifecycle. Release, revision and obsolescence go through ECOs, as for Parts.',
+  applicableItemTypes: ['SystemElement'],
+}
+
 export const WORK_ORDER_LIFECYCLE_DEFINITION = {
   states: [
     {
@@ -557,9 +569,15 @@ const TEST_PLAN_LIFECYCLE_DEFINITION = {
 }
 
 /**
- * Mirrors the historical testCaseStates palette, execution outcomes
- * included. Whether Passed/Failed belong in the lifecycle at all is the
- * Phase 4 status-absorption question; this default preserves today's shape.
+ * Draft / Active / Obsolete — the procedure's own life. Execution results are
+ * not states: they live in `test_cases.execution_status` and the execution
+ * history, written by `VerificationService.recordExecution`, and the
+ * requirements a test verifies derive their verification status from them.
+ * Until v4 the lifecycle carried Not Run / Passed / Failed / Blocked states
+ * beside that column, two truths that the page showed side by side and that
+ * only agreed when someone transitioned by hand; migration 0011 moved every
+ * test case sitting in one of them to Active, keeping the result as the
+ * execution status.
  */
 const TEST_CASE_LIFECYCLE_DEFINITION = {
   states: [
@@ -571,30 +589,9 @@ const TEST_CASE_LIFECYCLE_DEFINITION = {
       isFinal: false,
     },
     {
-      id: 'NotRun',
-      name: 'Not Run',
-      color: 'gray',
-      isInitial: false,
-      isFinal: false,
-    },
-    {
-      id: 'Passed',
-      name: 'Passed',
+      id: 'Active',
+      name: 'Active',
       color: 'green',
-      isInitial: false,
-      isFinal: false,
-    },
-    {
-      id: 'Failed',
-      name: 'Failed',
-      color: 'red',
-      isInitial: false,
-      isFinal: false,
-    },
-    {
-      id: 'Blocked',
-      name: 'Blocked',
-      color: 'yellow',
       isInitial: false,
       isFinal: false,
     },
@@ -607,40 +604,28 @@ const TEST_CASE_LIFECYCLE_DEFINITION = {
     },
   ],
   transitions: [
-    { id: 'tc-t1', name: 'Ready', fromStateId: 'Draft', toStateId: 'NotRun' },
-    { id: 'tc-t2', name: 'Pass', fromStateId: 'NotRun', toStateId: 'Passed' },
-    { id: 'tc-t3', name: 'Fail', fromStateId: 'NotRun', toStateId: 'Failed' },
-    { id: 'tc-t4', name: 'Block', fromStateId: 'NotRun', toStateId: 'Blocked' },
-    { id: 'tc-t5', name: 'Re-run', fromStateId: 'Passed', toStateId: 'NotRun' },
-    { id: 'tc-t6', name: 'Re-run', fromStateId: 'Failed', toStateId: 'NotRun' },
     {
-      id: 'tc-t7',
-      name: 'Re-run',
-      fromStateId: 'Blocked',
-      toStateId: 'NotRun',
+      id: 'tc-t1',
+      name: 'Activate',
+      fromStateId: 'Draft',
+      toStateId: 'Active',
     },
     {
-      id: 'tc-t8',
+      id: 'tc-t2',
+      name: 'Return to Draft',
+      fromStateId: 'Active',
+      toStateId: 'Draft',
+    },
+    {
+      id: 'tc-t3',
       name: 'Obsolete',
-      fromStateId: 'NotRun',
+      fromStateId: 'Draft',
       toStateId: 'Obsolete',
     },
     {
-      id: 'tc-t9',
+      id: 'tc-t4',
       name: 'Obsolete',
-      fromStateId: 'Passed',
-      toStateId: 'Obsolete',
-    },
-    {
-      id: 'tc-t10',
-      name: 'Obsolete',
-      fromStateId: 'Failed',
-      toStateId: 'Obsolete',
-    },
-    {
-      id: 'tc-t11',
-      name: 'Obsolete',
-      fromStateId: 'Blocked',
+      fromStateId: 'Active',
       toStateId: 'Obsolete',
     },
   ],
@@ -1273,6 +1258,14 @@ export const DEFAULT_ITEM_LIFECYCLES: ReadonlyArray<DefaultLifecycle> = [
     version: 4,
   },
   {
+    id: LIFECYCLE_IDS.systemElement,
+    name: 'System Element - Default Lifecycle',
+    lifecycleType: 'Driven',
+    definition: withLayout(SYSTEM_ELEMENT_LIFECYCLE_DEFINITION),
+    // v1: shipped with the systems-engineering architecture (Phase 5).
+    version: 1,
+  },
+  {
     id: LIFECYCLE_IDS.task,
     name: 'Task - Default Lifecycle',
     lifecycleType: 'Free',
@@ -1293,8 +1286,9 @@ export const DEFAULT_ITEM_LIFECYCLES: ReadonlyArray<DefaultLifecycle> = [
     name: 'Test Case - Default Lifecycle',
     lifecycleType: 'Free',
     definition: withLayout(TEST_CASE_LIFECYCLE_DEFINITION),
-    // v3: top-to-bottom layout
-    version: 3,
+    // v3: top-to-bottom layout. v4: Draft / Active / Obsolete — the execution
+    // result states left the lifecycle (migration 0011 moves installed rows).
+    version: 4,
   },
   {
     id: LIFECYCLE_IDS.workInstruction,
@@ -1381,6 +1375,10 @@ export const DEFAULT_LIFECYCLE_LINKS: ReadonlyArray<{
   { itemType: 'Part', lifecycleDefinitionId: LIFECYCLE_IDS.part },
   { itemType: 'Document', lifecycleDefinitionId: LIFECYCLE_IDS.document },
   { itemType: 'Requirement', lifecycleDefinitionId: LIFECYCLE_IDS.requirement },
+  {
+    itemType: 'SystemElement',
+    lifecycleDefinitionId: LIFECYCLE_IDS.systemElement,
+  },
   { itemType: 'Task', lifecycleDefinitionId: LIFECYCLE_IDS.task },
   { itemType: 'TestPlan', lifecycleDefinitionId: LIFECYCLE_IDS.testPlan },
   { itemType: 'TestCase', lifecycleDefinitionId: LIFECYCLE_IDS.testCase },

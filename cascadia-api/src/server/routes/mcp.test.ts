@@ -195,6 +195,8 @@ describe('MCP endpoint — authentication and scoping gates', () => {
     // SPA-only tools must not leak to external agents
     expect(names).not.toContain('offer_navigation')
     expect(names).not.toContain('initiate_collaborative_design')
+    expect(names).not.toContain('request_user_input')
+    expect(names).not.toContain('suggest_actions')
   })
 
   it('auto-registers every item type in the tool schemas', async () => {

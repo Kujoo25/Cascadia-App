@@ -126,7 +126,7 @@ export function AddBomChildToChangeOrderDialog({
 
   const scopeOptions: Array<{ value: DesignScope; label: string }> = [
     { value: 'current', label: 'This Design' },
-    { value: 'library', label: 'Standard Library' },
+    { value: 'library', label: 'Libraries' },
   ]
 
   return (

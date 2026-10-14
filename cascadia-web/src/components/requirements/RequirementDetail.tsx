@@ -16,13 +16,17 @@ import {
   X,
 } from 'lucide-react'
 import { RequirementVerificationPanel } from './RequirementVerificationPanel'
+import { RequirementTraceLinksPanel } from './RequirementTraceLinksPanel'
+import { VerificationStatusControl } from './VerificationStatusControl'
 import type { Requirement } from '@cascadia/commons/items/types/requirement'
 import type { Design } from '@cascadia/commons/types/design'
+import type { ItemDeleteIntent } from '@/components/items/itemBranchActions'
 import { PageContainer } from '@/components/layout'
 import { DigitalThreadNavigator } from '@/components/thread'
 import { RelationshipSection } from '@/components/items/RelationshipSection'
 import { ItemHistoryTab } from '@/components/items/ItemHistoryTab'
 import { CheckoutDialog } from '@/components/items/CheckoutDialog'
+import { resolveItemBranchActions } from '@/components/items/itemBranchActions'
 import { ImpactAnalysisDialog } from '@/components/impact'
 import { useVersionContext } from '@/hooks/useVersionContext'
 import { useEditLock, useItemEditContext } from '@/hooks/useEditLock'
@@ -84,14 +88,6 @@ const VERIFICATION_METHOD_OPTIONS = [
   { value: 'Documentation', label: 'Documentation' },
 ]
 
-const VERIFICATION_STATUS_OPTIONS = [
-  { value: 'NotStarted', label: 'Not Started' },
-  { value: 'InProgress', label: 'In Progress' },
-  { value: 'Passed', label: 'Passed' },
-  { value: 'Failed', label: 'Failed' },
-  { value: 'Waived', label: 'Waived' },
-]
-
 const priorityVariant = (priority: string) => {
   const variants: Record<
     string,
@@ -103,20 +99,6 @@ const priorityVariant = (priority: string) => {
     WontHave: 'secondary',
   }
   return variants[priority] || 'default'
-}
-
-const verificationStatusVariant = (status: string) => {
-  const variants: Record<
-    string,
-    'default' | 'secondary' | 'success' | 'warning' | 'destructive'
-  > = {
-    NotStarted: 'secondary',
-    InProgress: 'default',
-    Passed: 'success',
-    Failed: 'destructive',
-    Waived: 'secondary',
-  }
-  return variants[status] || 'secondary'
 }
 
 const createEmptyRequirement = (): Requirement => ({
@@ -138,7 +120,6 @@ const createEmptyRequirement = (): Requirement => ({
   modifiedAt: undefined,
   verificationMethod: undefined,
   verificationStatus: undefined,
-  allocatedDesignId: undefined,
   parentRequirementId: undefined,
 })
 
@@ -163,7 +144,7 @@ interface RequirementDetailProps {
   designs?: Array<Design>
   defaultDesignId?: string
   onSave: (requirement: Requirement, branchId?: string) => Promise<void>
-  onDelete?: () => Promise<void>
+  onDelete?: (intent: ItemDeleteIntent) => Promise<void>
   onCancel: () => void
   isSubmitting?: boolean
   activeTab?: RequirementDetailTab
@@ -259,14 +240,22 @@ export function RequirementDetail({
     setRequirement((prev) => ({ ...prev, [field]: value }))
   }
 
-  // Released lineage on main is revised through a change order (the
-  // CheckoutDialog); membership comes from the lifecycle's mappings
   const { isReleasedFamily: isReleasedLineage } = useReleasedFamily(
     'Requirement',
     currentRequirement.state,
   )
-  const needsCheckout =
-    !isCreateMode && isReleasedLineage && context.type === 'main'
+  const branchActions = resolveItemBranchActions({
+    itemLabel: 'Requirement',
+    itemNumber: currentRequirement.itemNumber,
+    itemMasterId: currentRequirement.masterId,
+    isCreateMode,
+    isReleasedFamily: isReleasedLineage,
+    isMainProtected: editContext?.isMainProtected ?? false,
+    existsOnMain: editContext?.existsOnMain,
+    context,
+    branch: contextBranch,
+  })
+  const { needsCheckout } = branchActions
 
   // The server-side edit lock behind the Edit button. The hook reads where the
   // lock lives off `editContext`, so released-on-main resolves to no lock
@@ -352,13 +341,19 @@ export function RequirementDetail({
 
   const handleDelete = () => {
     if (!onDelete || !currentRequirement.id) return
+
     confirm({
-      title: 'Delete Requirement',
-      description: `Are you sure you want to delete ${currentRequirement.itemNumber}? This action cannot be undone.`,
-      actionLabel: 'Delete',
+      title: branchActions.deleteTitle,
+      description: branchActions.deleteDescription,
+      actionLabel: branchActions.deleteButtonLabel,
       cancelLabel: 'Cancel',
       variant: 'destructive',
-      onConfirm: onDelete,
+      onConfirm: async () => {
+        await onDelete(branchActions.deleteIntent)
+        if (branchActions.deleteIntent.kind === 'change-order') {
+          setContext({ type: 'main' })
+        }
+      },
     })
   }
 
@@ -515,16 +510,11 @@ export function RequirementDetail({
                           }
                         >
                           {needsCheckout ? (
-                            <>
-                              <GitBranch className="h-4 w-4 mr-2" />
-                              Revise
-                            </>
+                            <GitBranch className="h-4 w-4 mr-2" />
                           ) : (
-                            <>
-                              <Edit className="h-4 w-4 mr-2" />
-                              Edit
-                            </>
+                            <Edit className="h-4 w-4 mr-2" />
                           )}
+                          {branchActions.editButtonLabel}
                         </Button>
                       </span>
                     </TooltipTrigger>
@@ -541,26 +531,24 @@ export function RequirementDetail({
                     }
                   >
                     {needsCheckout ? (
-                      <>
-                        <GitBranch className="h-4 w-4 mr-2" />
-                        Revise
-                      </>
+                      <GitBranch className="h-4 w-4 mr-2" />
                     ) : (
-                      <>
-                        <Edit className="h-4 w-4 mr-2" />
-                        Edit
-                      </>
+                      <Edit className="h-4 w-4 mr-2" />
                     )}
+                    {branchActions.editButtonLabel}
                   </Button>
                 )}
                 {onDelete && (
                   <Button
                     variant="destructive"
                     onClick={handleDelete}
-                    disabled={!isEditable}
+                    disabled={
+                      !isEditable ||
+                      (context.type === 'branch' && !contextBranch)
+                    }
                   >
                     <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
+                    {branchActions.deleteButtonLabel}
                   </Button>
                 )}
               </>
@@ -760,29 +748,37 @@ export function RequirementDetail({
                       options={VERIFICATION_METHOD_OPTIONS}
                       placeholder="Select method..."
                     />
-                    <ViewEditBadge
-                      label="Verification Status"
-                      value={
-                        isEditing
-                          ? requirement.verificationStatus
-                          : currentRequirement.verificationStatus
-                      }
-                      onChange={(v) => updateField('verificationStatus', v)}
-                      isEditing={isEditing}
-                      options={VERIFICATION_STATUS_OPTIONS}
-                      variant={verificationStatusVariant}
+                    {/* Derived from the verifying tests, never edited here;
+                        the waiver is its own action. */}
+                    <VerificationStatusControl
+                      requirement={currentRequirement}
                     />
                   </dl>
                 </CardContent>
               </Card>
 
-              {/* Verification Panel - Test Cases */}
+              {/* The trace panels: what satisfies this requirement, what it
+                  is allocated to, and what verifies it */}
               {!isCreateMode && currentRequirement.id && (
-                <RequirementVerificationPanel
-                  requirementId={currentRequirement.id}
-                  designId={currentRequirement.designId}
-                  isEditable={isEditable}
-                />
+                <>
+                  <RequirementTraceLinksPanel
+                    kind="satisfiedBy"
+                    requirementId={currentRequirement.id}
+                    designId={currentRequirement.designId}
+                    isEditable={isEditable}
+                  />
+                  <RequirementTraceLinksPanel
+                    kind="allocatedTo"
+                    requirementId={currentRequirement.id}
+                    designId={currentRequirement.designId}
+                    isEditable={isEditable}
+                  />
+                  <RequirementVerificationPanel
+                    requirementId={currentRequirement.id}
+                    designId={currentRequirement.designId}
+                    isEditable={isEditable}
+                  />
+                </>
               )}
             </div>
 

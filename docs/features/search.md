@@ -209,18 +209,18 @@ This calls `ItemSearchService.searchByItemNumber()` which:
 
 The `designScope` query parameter controls which designs are searched:
 
-| Value       | Behavior                                       |
-| ----------- | ---------------------------------------------- |
-| `current`   | Only the design specified by `contextDesignId` |
-| `library`   | Only the Standard Library design               |
-| `all`       | All designs accessible to the user             |
-| _(omitted)_ | No design filter applied                       |
+| Value       | Behavior                                                         |
+| ----------- | ---------------------------------------------------------------- |
+| `current`   | Only the design specified by `contextDesignId`                   |
+| `library`   | Every library design: the Standard Library and user-created ones |
+| `all`       | All designs accessible to the user                               |
+| _(omitted)_ | No design filter applied                                         |
 
 An explicit `designIds` parameter (comma-separated UUIDs) overrides the scope.
 
 A requested scope that resolves to no designs matches nothing rather than
-falling back to an unfiltered search — so `library` on an instance without a
-Standard Library, or `all` for a user in no program, returns no results.
+falling back to an unfiltered search — so `library` on an instance with no
+library at all, or `all` for a user in no program, returns no results.
 
 ---
 

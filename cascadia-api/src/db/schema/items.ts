@@ -460,11 +460,24 @@ export const requirements = pgTable(
     acceptanceCriteria: text('acceptance_criteria'),
     source: varchar('source', { length: 200 }),
     category: varchar('category', { length: 100 }),
-    // Phase 2: Verification fields for requirements traceability
     verificationMethod: varchar('verification_method', { length: 50 }), // Analysis | Inspection | Demonstration | Test | Documentation
-    verificationStatus: varchar('verification_status', { length: 50 }), // NotStarted | InProgress | Passed | Failed | Waived
-    // Requirement can be allocated to a specific design element
-    allocatedDesignId: uuid('allocated_design_id').references(() => designs.id),
+    /**
+     * Derived, never hand-set: the rollup of the latest execution of every
+     * test case that verifies this requirement (services/verification-rollup.ts).
+     * NotStarted | InProgress | Passed | Failed, or Waived while a waiver is
+     * recorded below.
+     */
+    verificationStatus: varchar('verification_status', { length: 50 }),
+    /**
+     * The manual exception to the derivation: who waived verification, when,
+     * and why. Set by `POST /requirements/:id/waive`; while present the
+     * status reads `Waived` and the rollup leaves it alone.
+     */
+    verificationWaiver: jsonb(
+      'verification_waiver',
+    ).$type<VerificationWaiver>(),
+    // Allocation is the ALLOCATED_TO edge; the `allocated_design_id` column
+    // that once duplicated it (written at create, read by nothing) is gone.
     // Parent requirement for derived requirements hierarchy (DERIVES_FROM relationship)
     parentRequirementId: uuid('parent_requirement_id').references(
       () => items.id,
@@ -472,9 +485,29 @@ export const requirements = pgTable(
   },
   (table) => [
     index('idx_req_parent').on(table.parentRequirementId),
-    index('idx_req_allocated').on(table.allocatedDesignId),
     index('idx_req_verification_status').on(table.verificationStatus),
   ],
+)
+
+/**
+ * System elements: the logical architecture a requirement is allocated to
+ * before any part exists (systems-engineering Phase 5). One row per item
+ * version, like every type-specific table; the tree is the `DECOMPOSES`
+ * edge in `item_relationships` and the hop to the physical item is
+ * `REALIZED_BY`, so an element has no structural columns of its own.
+ */
+export const systemElements = pgTable(
+  'system_elements',
+  {
+    itemId: uuid('item_id')
+      .primaryKey()
+      .references(() => items.id, { onDelete: 'cascade' }),
+    // system | segment | subsystem | module — a label for the reader, not a
+    // constraint on the tree
+    elementKind: varchar('element_kind', { length: 20 }),
+    description: text('description'),
+  },
+  (table) => [index('idx_system_elements_kind').on(table.elementKind)],
 )
 
 export const tasks = pgTable(
@@ -503,6 +536,17 @@ export const tasks = pgTable(
 /**
  * Test step structure for test_cases.steps JSONB field
  */
+/**
+ * A requirement's verification waiver: who waived it, when, and why. The
+ * column is `requirements.verification_waiver`; the wire type is the same
+ * shape in `@cascadia/commons/items/types/requirement`.
+ */
+export interface VerificationWaiver {
+  note: string
+  waivedBy: string | null
+  waivedAt: string
+}
+
 export interface TestStep {
   stepNumber: number
   action: string
@@ -537,17 +581,22 @@ export const testCases = pgTable(
     itemId: uuid('item_id')
       .primaryKey()
       .references(() => items.id, { onDelete: 'cascade' }),
-    testPlanId: uuid('test_plan_id').references(() => items.id),
+    // items.masterId of the parent TestPlan — a lineage reference like
+    // physical_parts.part_master_id, deliberately not an FK to one version
+    // row, so membership survives whatever revises either side and a clone
+    // can re-point it at the clone's own plan. Replaced `test_plan_id`, which
+    // named one version row and broke on both.
+    testPlanMasterId: uuid('test_plan_master_id'),
     testType: varchar('test_type', { length: 50 }), // 'Unit' | 'Integration' | 'System' | 'Acceptance'
     preconditions: text('preconditions'),
     steps: jsonb('steps').$type<Array<TestStep>>(),
-    executionStatus: varchar('execution_status', { length: 50 }), // 'NotRun' | 'Passed' | 'Failed' | 'Blocked'
+    executionStatus: varchar('execution_status', { length: 50 }), // latest result: 'Passed' | 'Failed' | 'Blocked'; null until the first run
     lastExecutedAt: timestamp('last_executed_at', { withTimezone: true }),
     lastExecutedBy: uuid('last_executed_by').references(() => users.id),
     environment: varchar('environment', { length: 100 }),
   },
   (table) => [
-    index('idx_test_case_plan').on(table.testPlanId),
+    index('idx_test_case_plan_master').on(table.testPlanMasterId),
     index('idx_test_execution_status').on(table.executionStatus),
   ],
 )
@@ -1009,10 +1058,12 @@ export const requirementsRelations = relations(requirements, ({ one }) => ({
     references: [items.id],
     relationName: 'derivedFromRequirement',
   }),
-  // Phase 2: Allocated design
-  allocatedDesign: one(designs, {
-    fields: [requirements.allocatedDesignId],
-    references: [designs.id],
+}))
+
+export const systemElementsRelations = relations(systemElements, ({ one }) => ({
+  item: one(items, {
+    fields: [systemElements.itemId],
+    references: [items.id],
   }),
 }))
 
@@ -1091,10 +1142,9 @@ export const testCasesRelations = relations(testCases, ({ one, many }) => ({
     fields: [testCases.itemId],
     references: [items.id],
   }),
-  testPlan: one(testPlans, {
-    fields: [testCases.testPlanId],
-    references: [testPlans.itemId],
-  }),
+  // No `testPlan` relation: the pointer is a master id, which no single row
+  // answers for — resolve it through `VerificationService.getTestCasesForPlan`
+  // or the type handler's read, which names the plan's current row.
   lastExecutor: one(users, {
     fields: [testCases.lastExecutedBy],
     references: [users.id],

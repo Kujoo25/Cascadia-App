@@ -3,6 +3,8 @@
 
 import { and, eq, inArray, isNull } from 'drizzle-orm'
 import { BRANCH_TYPES } from '@cascadia/commons/versioning/branch-types'
+import { catalogEndMismatch } from '@cascadia/commons/items/relationships/catalog'
+import { isWorkingRevisionValue } from '@cascadia/commons/types/lifecycle'
 import {
   makeCodeSchema,
   optionConditionKey,
@@ -23,7 +25,21 @@ import {
   ValidationError,
 } from '../../errors'
 import { isUniqueViolation } from '../../errors/pg'
-import { resolveEdgeGuardEnd } from '../traceability-relationships'
+import {
+  DECOMPOSES_RELATIONSHIP,
+  VERIFIED_BY_RELATIONSHIP,
+  resolveEdgeGuardEnd,
+} from '../traceability-relationships'
+import { rollupVerificationForMasters } from '../../services/verification-rollup'
+import {
+  SUSPECTABLE_RELATIONSHIP_TYPES,
+  affirmationOf,
+  carryAffirmation,
+  isSuspectable,
+  stampInitialAffirmation,
+  suspectStateOf,
+  withAffirmation,
+} from '../trace-affirmation'
 import { BranchService } from '../../services/BranchService'
 import {
   findSupersededRows,
@@ -39,11 +55,48 @@ import {
 } from '../../events'
 import { publishStructureEdges, structurePayload } from '../structure-events'
 import { ThreadCacheService } from '../../services/ThreadCacheService'
+import type { SuspectState } from '../trace-affirmation'
 import type { TransactionClient } from '../../db'
 import type { PersistedItem } from '@cascadia/commons/items/types/base'
 import type { OptionCondition } from '@cascadia/commons/types/variants'
 import { itemLogger } from '@/logging/logger'
 import { takeFirst } from '@/db/take-first'
+
+/**
+ * The columns an edge keeps when a copy of it is minted for another version
+ * row: its SysML composition and multiplicity, and its cross-design
+ * provenance. Both describe the edge, not the row it hangs off, so a revision
+ * carries them unchanged. Until 2026-10-09 neither the checkout copy nor the
+ * merge rebuild carried them, so every one reverted to its default at the
+ * first revision.
+ */
+export function carriedEdgeColumns(edge: {
+  isComposite: boolean | null
+  isDirected: boolean | null
+  multiplicityLower: number | null
+  multiplicityUpper: number | null
+  usageAttributes: Record<string, unknown> | null
+  sourceDesignId: string | null
+  targetDesignId: string | null
+  sourceDomain: string | null
+  targetDomain: string | null
+  derivationMethod: string | null
+  derivationNotes: string | null
+}) {
+  return {
+    isComposite: edge.isComposite,
+    isDirected: edge.isDirected,
+    multiplicityLower: edge.multiplicityLower,
+    multiplicityUpper: edge.multiplicityUpper,
+    usageAttributes: edge.usageAttributes,
+    sourceDesignId: edge.sourceDesignId,
+    targetDesignId: edge.targetDesignId,
+    sourceDomain: edge.sourceDomain,
+    targetDomain: edge.targetDomain,
+    derivationMethod: edge.derivationMethod,
+    derivationNotes: edge.derivationNotes,
+  }
+}
 
 /**
  * The 409 for an edge that is already there. One shape for every path that can
@@ -299,14 +352,137 @@ export class ItemRelationshipService {
         (row) => row.id,
       ),
     )
+    const hidden = await this.sourcesHiddenFromOwner(
+      rows.map((rel) => rel.sourceId),
+      named,
+    )
 
     for (const rel of rows) {
       if (leftBehind.has(rel.sourceId)) continue
       const owner = lineage.get(rel.targetId)
-      if (owner) byOwner.get(owner)?.push(rel)
+      if (!owner) continue
+      if (hidden(rel.sourceId, owner)) continue
+      byOwner.get(owner)?.push(rel)
     }
 
     return byOwner
+  }
+
+  /**
+   * A predicate for the sources a branch context must not list: each master
+   * answers once, from the row the reader's own context holds.
+   *
+   * A working revision is one branch's own edit, and `resolveInheritedLineage`
+   * already refuses to walk *into* one — nothing inherits from a working
+   * copy. Two rules follow for the sources that point at a row:
+   *
+   * - **Main keeps branch copies out.** Checking a part out copies its claims
+   *   onto the working copy, and that copy names the released requirement
+   *   just as the released part does, so main's list of satisfying parts
+   *   showed the released part and its branch copy side by side. A
+   *   working-copy source is kept only when the row it answers to is a
+   *   working copy on the same branch.
+   * - **A branch keeps main's row out once it holds its own.** Read from
+   *   inside the branch, the same copied claim listed the working copy beside
+   *   the released row it was copied from. When the owner's branch tracks the
+   *   source's master, the branch's row is the authority on that master's
+   *   claims: the released row is dropped whether the copy kept the edge,
+   *   deleted it (then the claim is gone on the branch, as the merge would
+   *   release it), or the branch deleted the item. A checkout that has not
+   *   yet saved still points at the released row itself, which stays listed.
+   */
+  private static async sourcesHiddenFromOwner(
+    sourceIds: Array<string>,
+    ownerIds: Array<string>,
+  ): Promise<(sourceId: string, ownerId: string) => boolean> {
+    const candidates = [...new Set([...sourceIds, ...ownerIds])]
+    const rows = await db
+      .select({
+        id: items.id,
+        revision: items.revision,
+        masterId: items.masterId,
+      })
+      .from(items)
+      .where(inArray(items.id, candidates))
+    const working = new Set(
+      rows
+        .filter((row) => isWorkingRevisionValue(row.revision))
+        .map((row) => row.id),
+    )
+    if (working.size === 0) return () => false
+    const masterOf = new Map(rows.map((row) => [row.id, row.masterId]))
+
+    const tracked = await db
+      .select({
+        itemId: branchItems.currentItemId,
+        branchId: branchItems.branchId,
+      })
+      .from(branchItems)
+      .where(inArray(branchItems.currentItemId, [...working]))
+    const branchOf = new Map<string, string>()
+    for (const row of tracked) {
+      if (row.itemId) branchOf.set(row.itemId, row.branchId)
+    }
+
+    // What each owner's branch holds, by master: the row the branch shows for
+    // it and whether the branch deleted it.
+    const ownerBranches = [
+      ...new Set(
+        ownerIds.flatMap((id) => {
+          const branchId = working.has(id) ? branchOf.get(id) : undefined
+          return branchId ? [branchId] : []
+        }),
+      ),
+    ]
+    const heldOnBranch = new Map<
+      string,
+      Map<string, { currentItemId: string | null; deleted: boolean }>
+    >()
+    if (ownerBranches.length > 0) {
+      const held = await db
+        .select({
+          branchId: branchItems.branchId,
+          masterId: branchItems.itemMasterId,
+          currentItemId: branchItems.currentItemId,
+          changeType: branchItems.changeType,
+        })
+        .from(branchItems)
+        .where(inArray(branchItems.branchId, ownerBranches))
+      for (const row of held) {
+        let byMaster = heldOnBranch.get(row.branchId)
+        if (!byMaster) {
+          byMaster = new Map()
+          heldOnBranch.set(row.branchId, byMaster)
+        }
+        byMaster.set(row.masterId, {
+          currentItemId: row.currentItemId,
+          deleted: row.changeType === 'deleted',
+        })
+      }
+    }
+
+    return (sourceId, ownerId) => {
+      const ownerBranch = working.has(ownerId)
+        ? branchOf.get(ownerId)
+        : undefined
+
+      if (working.has(sourceId)) {
+        const sourceBranch = branchOf.get(sourceId)
+        return (
+          sourceBranch === undefined ||
+          ownerBranch === undefined ||
+          sourceBranch !== ownerBranch
+        )
+      }
+
+      if (ownerBranch === undefined) return false
+      const sourceMaster = masterOf.get(sourceId)
+      const held = sourceMaster
+        ? heldOnBranch.get(ownerBranch)?.get(sourceMaster)
+        : undefined
+      if (!held) return false
+      return held.deleted || held.currentItemId !== sourceId
+    }
   }
 
   /**
@@ -357,6 +533,130 @@ export class ItemRelationshipService {
     }
 
     return bySource
+  }
+
+  /**
+   * The suspect state of each named trace edge — see
+   * `items/trace-affirmation.ts` for what makes a claim suspect.
+   *
+   * Reloads the rows by id rather than trusting what the caller holds:
+   * `findOutgoingLinks` hands back a target already resolved forward, and the
+   * stored pin is what tells a claim that predates affirmations whether its
+   * target has since been superseded. Judged against released rows only, the
+   * rule `followSupersededRows` applies to every other read. An id that names
+   * no edge is absent from the result.
+   */
+  static async suspectStatesFor(
+    relationshipIds: Array<string>,
+  ): Promise<Map<string, SuspectState>> {
+    const states = new Map<string, SuspectState>()
+    const ids = [...new Set(relationshipIds)]
+    if (ids.length === 0) return states
+
+    const rows = await db
+      .select()
+      .from(itemRelationships)
+      .where(inArray(itemRelationships.id, ids))
+    if (rows.length === 0) return states
+
+    const redirects = await followSupersededRows(
+      rows.map((rel) => rel.targetId),
+    )
+    for (const rel of rows) {
+      states.set(
+        rel.id,
+        suspectStateOf(rel, redirects.get(rel.targetId) ?? rel.targetId),
+      )
+    }
+    return states
+  }
+
+  /**
+   * Record that a trace claim still holds.
+   *
+   * Deliberately outside the edit lock: affirming changes nothing the link
+   * says, only who last checked it and against which rows, so a released
+   * part's claims can be re-affirmed after the requirement revises without a
+   * change order on the part. The target is affirmed as the row that currently
+   * answers for it — the pin itself, or the released row that superseded it —
+   * and the pin is left where it points, as every reader resolves it anyway.
+   * Affirmed on a working copy, the affirmation names that copy, and the merge
+   * carries it onto the released row (`carryAffirmation`).
+   */
+  static async affirmRelationship(
+    relationshipId: string,
+    userId: string,
+  ): Promise<{
+    relationship: typeof itemRelationships.$inferSelect
+    state: SuspectState
+  }> {
+    const { ItemService } = await import('./ItemService')
+
+    const [existing] = await db
+      .select()
+      .from(itemRelationships)
+      .where(eq(itemRelationships.id, relationshipId))
+      .limit(1)
+    if (!existing) {
+      throw new NotFoundError('ItemRelationship', relationshipId)
+    }
+    if (!isSuspectable(existing.relationshipType)) {
+      throw new ValidationError(
+        `${existing.relationshipType} links carry no affirmation`,
+        [
+          {
+            field: 'relationshipType',
+            message: `Only ${[...SUSPECTABLE_RELATIONSHIP_TYPES].join(', ')} links can be affirmed`,
+          },
+        ],
+      )
+    }
+
+    const redirects = await followSupersededRows([existing.targetId])
+    const currentTargetId =
+      redirects.get(existing.targetId) ?? existing.targetId
+    const metadata = withAffirmation(existing.metadata, {
+      sourceId: existing.sourceId,
+      targetId: currentTargetId,
+      affirmedBy: userId,
+      affirmedAt: new Date().toISOString(),
+    })
+
+    const [sourceItem, targetItem] = await Promise.all([
+      ItemService.findById(existing.sourceId),
+      ItemService.findById(existing.targetId),
+    ])
+
+    const relationship = await db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(itemRelationships)
+        .set({ metadata, modifiedBy: userId, modifiedAt: new Date() })
+        .where(eq(itemRelationships.id, relationshipId))
+        .returning()
+      if (!updated) {
+        throw new NotFoundError('ItemRelationship', relationshipId)
+      }
+
+      // An affirmation is a change to the edge that integrators may well want
+      // to hear about — it is what clears a suspect flag downstream.
+      if (sourceItem && targetItem) {
+        await publishDomainEvent(tx, RELATIONSHIP_UPDATED, {
+          actorId: userId,
+          subject: { id: existing.sourceId, masterId: sourceItem.masterId },
+          context: { designId: sourceItem.designId ?? undefined },
+          payload: {
+            ...structurePayload(updated, sourceItem, targetItem),
+            changedFields: ['affirmed'],
+          },
+        })
+      }
+      return updated
+    })
+
+    return {
+      relationship,
+      state: suspectStateOf(relationship, currentTargetId),
+    }
   }
 
   /**
@@ -817,6 +1117,52 @@ export class ItemRelationshipService {
       .where(eq(itemRelationships.sourceId, sourceItemId))
     if (sourceRelationships.length === 0) return
 
+    // A trace claim's affirmation names the row it was made on. Copied off a
+    // released row — a checkout — it stays naming that row, so the copy reads
+    // suspect on the branch until the person changing the item affirms it
+    // (items/trace-affirmation.ts). Copied off a working copy, the new row
+    // continues the same branch edit: a rebase or a pull from main that
+    // mints a fresh working copy must not turn an affirmation made on the
+    // previous one stale again, so it follows the edge onto the new row.
+    //
+    // A claim that predates affirmations is read as affirmed by its author
+    // against the rows it names. A checkout writes that reading onto the
+    // copy — the released row it is copied from, by the edge's author, when
+    // the edge was made — so the copy is suspect on the branch like any
+    // other, instead of a revision that silently skips the one check the
+    // flag exists for. Main's own rows are left as they are.
+    const [source] = await executor
+      .select({ revision: items.revision })
+      .from(items)
+      .where(eq(items.id, sourceItemId))
+      .limit(1)
+    const continuesWorkingCopy =
+      source !== undefined && isWorkingRevisionValue(source.revision)
+    const metadataFor = (rel: {
+      relationshipType: string
+      targetId: string
+      metadata: unknown
+      createdBy: string | null
+      createdAt: Date
+    }) => {
+      if (continuesWorkingCopy) {
+        return carryAffirmation(rel.metadata, {
+          fromSourceId: sourceItemId,
+          toSourceId: targetItemId,
+          resolveTarget: (targetId) => targetId,
+        })
+      }
+      if (!isSuspectable(rel.relationshipType) || affirmationOf(rel.metadata)) {
+        return rel.metadata
+      }
+      return withAffirmation(rel.metadata, {
+        sourceId: sourceItemId,
+        targetId: rel.targetId,
+        affirmedBy: rel.createdBy ?? userId,
+        affirmedAt: rel.createdAt.toISOString(),
+      })
+    }
+
     await executor
       .insert(itemRelationships)
       .values(
@@ -827,13 +1173,108 @@ export class ItemRelationshipService {
           quantity: rel.quantity,
           referenceDesignator: rel.referenceDesignator,
           findNumber: rel.findNumber,
-          metadata: rel.metadata,
+          metadata: metadataFor(rel),
           option: rel.option,
           targetMakeCode: rel.targetMakeCode,
+          ...carriedEdgeColumns(rel),
           createdBy: userId,
         })),
       )
       .onConflictDoNothing()
+
+    // A cached thread of either item's lineage read these edges on the old
+    // row; the copy is a new version row the branch now answers with.
+    ThreadCacheService.invalidateForItemsSoon([sourceItemId, targetItemId])
+  }
+
+  /**
+   * `DECOMPOSES` is a tree. Refuse an edge that would close a loop: a child
+   * that is the parent itself, or a parent already somewhere beneath the
+   * child. Walked by master over every version row, so a loop that would
+   * exist on any branch is refused — conservative on purpose: an
+   * architecture that is a tree on main and a loop on a branch could not
+   * merge into anything coherent. The design's architecture read breaks a
+   * loop that reached the store anyway, so the view stays a forest.
+   */
+  private static async assertNoDecompositionCycle(
+    relationshipType: string,
+    source: PersistedItem | null,
+    target: PersistedItem | null,
+  ): Promise<void> {
+    if (relationshipType !== DECOMPOSES_RELATIONSHIP || !source || !target) {
+      return
+    }
+    const refuse = (why: string): never => {
+      throw new ValidationError(why, [{ field: 'targetId', message: why }])
+    }
+    if (source.masterId === target.masterId) {
+      refuse(`${source.itemNumber} cannot decompose into itself`)
+    }
+    const visited = new Set<string>([target.masterId])
+    let frontier = [target.masterId]
+    while (frontier.length > 0) {
+      const rows = await db
+        .select({ id: items.id })
+        .from(items)
+        .where(inArray(items.masterId, frontier))
+      if (rows.length === 0) break
+      const edges = await db
+        .select({ targetId: itemRelationships.targetId })
+        .from(itemRelationships)
+        .where(
+          and(
+            inArray(
+              itemRelationships.sourceId,
+              rows.map((row) => row.id),
+            ),
+            eq(itemRelationships.relationshipType, DECOMPOSES_RELATIONSHIP),
+          ),
+        )
+      if (edges.length === 0) break
+      const descendants = await db
+        .select({ masterId: items.masterId })
+        .from(items)
+        .where(
+          inArray(items.id, [...new Set(edges.map((edge) => edge.targetId))]),
+        )
+      frontier = []
+      for (const row of descendants) {
+        if (row.masterId === source.masterId) {
+          refuse(
+            `${source.itemNumber} already sits beneath ${target.itemNumber}; ` +
+              `decomposing ${target.itemNumber} under it would close a loop`,
+          )
+        }
+        if (!visited.has(row.masterId)) {
+          visited.add(row.masterId)
+          frontier.push(row.masterId)
+        }
+      }
+    }
+  }
+
+  /**
+   * Ends of a cataloged edge type must be the item types the catalog names.
+   * A `SATISFIES` stored requirement → part is not a different claim, it is a
+   * claim no reader finds, and the new-relationship dialog used to let one
+   * through. User-defined types are not cataloged and are not policed.
+   */
+  private static assertCatalogEnds(
+    relationshipType: string,
+    source: { itemType: string } | null,
+    target: { itemType: string } | null,
+  ): void {
+    if (!source || !target) return
+    const mismatch = catalogEndMismatch(
+      relationshipType,
+      source.itemType,
+      target.itemType,
+    )
+    if (mismatch) {
+      throw new ValidationError(mismatch, [
+        { field: 'relationshipType', message: mismatch },
+      ])
+    }
   }
 
   /**
@@ -874,6 +1315,15 @@ export class ItemRelationshipService {
     )
 
     const sourceItem = await ItemService.findById(sourceId)
+    // Read before the transaction so the emit inside it has both ends. The
+    // history block below re-reads the target; this is the same row.
+    const targetItemForEvent = await ItemService.findById(targetId)
+    this.assertCatalogEnds(relationshipType, sourceItem, targetItemForEvent)
+    await this.assertNoDecompositionCycle(
+      relationshipType,
+      sourceItem,
+      targetItemForEvent,
+    )
     await this.assertBomTargetScope([{ sourceId, targetId, relationshipType }])
     if (!options?.bypassEditGuard) {
       await this.requireEdgeEditable(
@@ -908,10 +1358,6 @@ export class ItemRelationshipService {
       throw relationshipExistsError(sourceId, targetId, relationshipType)
     }
 
-    // Read before the transaction so the emit inside it has both ends. The
-    // history block below re-reads the target; this is the same row.
-    const targetItemForEvent = await ItemService.findById(targetId)
-
     let relationship: typeof itemRelationships.$inferSelect
     try {
       relationship = await db.transaction(async (tx) => {
@@ -925,6 +1371,13 @@ export class ItemRelationshipService {
               quantity: data?.quantity,
               referenceDesignator: data?.referenceDesignator,
               findNumber: data?.findNumber,
+              // A trace claim is born affirmed by its author, against the
+              // rows it names — see items/trace-affirmation.ts.
+              metadata: stampInitialAffirmation(
+                null,
+                { sourceId, targetId, relationshipType },
+                userId,
+              ),
               option,
               targetMakeCode,
               createdBy: userId,
@@ -935,6 +1388,19 @@ export class ItemRelationshipService {
         // landed without this would keep its top-level designation, and
         // resurface as a root the day the line is removed.
         await this.clearDesignationOfNestedTargets([inserted], tx)
+
+        // A verification link changes what the requirement's derived status
+        // is computed from, whichever path wrote the edge.
+        if (
+          relationshipType === VERIFIED_BY_RELATIONSHIP &&
+          targetItemForEvent
+        ) {
+          await rollupVerificationForMasters(
+            tx,
+            [targetItemForEvent.masterId],
+            { actorId: userId, cause: 'link', testCaseId: sourceId },
+          )
+        }
 
         // A BOM edit produced a commit and zero events, which made structure
         // the largest class of engineering change completely invisible on the
@@ -1143,6 +1609,24 @@ export class ItemRelationshipService {
       }
     }
 
+    // A cataloged type's ends are policed whether or not the edit guard is
+    // bypassed: a system flow writing a trace edge backwards is no better.
+    const endTypes = new Map<string, PersistedItem | null>()
+    const endType = async (id: string): Promise<PersistedItem | null> => {
+      if (!endTypes.has(id)) endTypes.set(id, await ItemService.findById(id))
+      return endTypes.get(id) ?? null
+    }
+    for (const rel of relationships) {
+      const source = await endType(rel.sourceId)
+      const target = await endType(rel.targetId)
+      this.assertCatalogEnds(rel.relationshipType, source, target)
+      await this.assertNoDecompositionCycle(
+        rel.relationshipType,
+        source,
+        target,
+      )
+    }
+
     // Replace + insert as one unit: either the new structure is in place or
     // the old one never moved.
     let inserted: Array<typeof itemRelationships.$inferSelect>
@@ -1182,7 +1666,11 @@ export class ItemRelationshipService {
               quantity: r.data?.quantity ?? null,
               referenceDesignator: r.data?.referenceDesignator ?? null,
               findNumber: r.data?.findNumber ?? null,
-              metadata: r.data?.metadata ?? null,
+              metadata: stampInitialAffirmation(
+                r.data?.metadata ?? null,
+                r,
+                r.userId,
+              ),
               option: r.data?.option ?? null,
               targetMakeCode: r.data?.targetMakeCode ?? null,
               createdBy: r.userId,
@@ -1190,6 +1678,23 @@ export class ItemRelationshipService {
           )
           .returning()
         await this.clearDesignationOfNestedTargets(rows, tx)
+
+        // Verification links written or replaced here move the derived
+        // status of the requirements they point at, as the single path does.
+        const verifiedTargets = [...cleared, ...rows]
+          .filter((edge) => edge.relationshipType === VERIFIED_BY_RELATIONSHIP)
+          .map((edge) => edge.targetId)
+        if (verifiedTargets.length > 0) {
+          const targetRows = await tx
+            .select({ masterId: items.masterId })
+            .from(items)
+            .where(inArray(items.id, [...new Set(verifiedTargets)]))
+          await rollupVerificationForMasters(
+            tx,
+            targetRows.map((row) => row.masterId),
+            { actorId: relationships[0]?.userId ?? null, cause: 'link' },
+          )
+        }
 
         // The batch records what the one-at-a-time mutators record: each edge
         // a replacement cleared, then each edge written. An edge replaced by
@@ -1412,6 +1917,19 @@ export class ItemRelationshipService {
       await tx
         .delete(itemRelationships)
         .where(eq(itemRelationships.id, relationshipId))
+
+      // A verification link removed changes what the requirement's derived
+      // status is computed from, whichever path removed it.
+      if (
+        relationship.relationshipType === VERIFIED_BY_RELATIONSHIP &&
+        targetItemForEvent
+      ) {
+        await rollupVerificationForMasters(tx, [targetItemForEvent.masterId], {
+          actorId: userId,
+          cause: 'unlink',
+          testCaseId: relationship.sourceId,
+        })
+      }
 
       // The payload carries the values the edge *had*: a consumer reacting to
       // a removal needs to know what was removed, and by then there is nothing

@@ -65,6 +65,7 @@ app.all('/', async (c) => {
   const server = createPlmMcpServer({
     userId: credentials.user.id,
     keyScope: credentials.scope,
+    surface: 'mcp',
   })
 
   // Stateless mode: no session id, one transport per request.

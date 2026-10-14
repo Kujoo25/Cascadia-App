@@ -6,6 +6,17 @@ import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, Link as LinkIcon, Plus, Trash2 } from 'lucide-react'
 import { Link } from '@tanstack/react-router'
 import type { DataGridColumn } from '@/components/ui/DataGrid'
+import type {
+  SuspectReason,
+  SuspectReasonLabels,
+} from '@/components/items/suspect-links'
+import {
+  AffirmAllButton,
+  AffirmButton,
+  SuspectBadge,
+  suspectIdsOf,
+  useAffirmLinks,
+} from '@/components/items/suspect-links'
 import {
   Badge,
   Button,
@@ -40,6 +51,15 @@ interface SatisfiedRequirement {
   priority: string | null
   verificationStatus: string | null
   relationshipId: string
+  /** The claim is stale: one end revised since it was last affirmed. */
+  suspect?: boolean
+  suspectReasons?: Array<SuspectReason>
+}
+
+// On this panel the link runs this item → requirement.
+const SUSPECT_REASON_LABELS: SuspectReasonLabels = {
+  source_revised: 'this item revised since the link was affirmed',
+  target_revised: 'the requirement revised since the link was affirmed',
 }
 
 interface RequirementSearchResult {
@@ -79,6 +99,12 @@ export function RequirementLinkingPanel({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [adding, setAdding] = useState(false)
   const invalidate = useInvalidateResources()
+  // Affirming is a review record, not an edit of the link, so it is offered
+  // whenever a link is suspect — read-only panels included.
+  const { affirm, pendingIds } = useAffirmLinks({
+    invalidates: ['items'],
+    onAffirmed: onUpdate,
+  })
 
   // Requirements this item satisfies
   const { data: requirements = [], isPending: loading } = useQuery(
@@ -261,6 +287,32 @@ export function RequirementLinkingPanel({
           )
         },
       },
+      {
+        id: 'suspect',
+        header: 'Trace',
+        accessorKey: 'suspect',
+        enableSorting: true,
+        meta: { width: '150px' },
+        cell: ({ row }) => {
+          const { suspect, suspectReasons, relationshipId } = row.original
+          if (!suspect) return '-'
+          return (
+            <div className="flex items-center gap-2">
+              <SuspectBadge
+                reasons={suspectReasons}
+                labels={SUSPECT_REASON_LABELS}
+              />
+              <AffirmButton
+                relationshipId={relationshipId}
+                pendingIds={pendingIds}
+                onAffirm={affirm}
+                variant="ghost"
+                title="Record that this item still satisfies the requirement as it now stands"
+              />
+            </div>
+          )
+        },
+      },
       ...(readOnly
         ? []
         : ([
@@ -283,7 +335,7 @@ export function RequirementLinkingPanel({
             },
           ] as Array<DataGridColumn<SatisfiedRequirement>>)),
     ],
-    [readOnly],
+    [readOnly, affirm, pendingIds],
   )
 
   if (loading) {
@@ -316,17 +368,25 @@ export function RequirementLinkingPanel({
                 Requirements that this item helps satisfy
               </CardDescription>
             </div>
-            {!readOnly && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => setAddDialogOpen(true)}
-              >
-                <Plus className="h-4 w-4 mr-1" />
-                Link Requirement
-              </Button>
-            )}
+            <div className="flex items-center gap-2">
+              <AffirmAllButton
+                relationshipIds={suspectIdsOf(requirements)}
+                pendingIds={pendingIds}
+                onAffirm={affirm}
+                title="Record that this item still satisfies every suspect requirement as it now stands"
+              />
+              {!readOnly && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setAddDialogOpen(true)}
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Link Requirement
+                </Button>
+              )}
+            </div>
           </div>
         </CardHeader>
         <CardContent>

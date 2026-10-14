@@ -16,7 +16,8 @@ own tool implementations, permission checks, or audit trails.
 
 Lets people drive their PLM workflows from agentic clients (Claude, IDE
 assistants, custom integrations): find part data, walk BOMs, analyze change
-impact, create ECOs, transition workflow states.
+impact, create ECOs, transition workflow states, review and affirm suspect
+trace links.
 
 ### One tool stack, two frontends
 
@@ -34,8 +35,10 @@ Tool handlers run identically on every surface: permission checks through
 `permissionService`, audit logging to `ai_usage_logs`, ECO-as-Branch
 enforcement in the write paths. Adding a tool to the registry adds it to the
 chatbot and the MCP server at once. UI-coupled tools (`offer_navigation`,
-`initiate_collaborative_design`) are flagged `chat`/`search` only and never
-appear over MCP.
+`initiate_collaborative_design`, `request_user_input`, `suggest_actions`) are
+flagged `chat`/`search` only and never appear over MCP. The read tools that
+attach a chat dialog to their result (`search_items`, `get_bom`, …) do so only
+when the chat panel is listening; over MCP they return the plain result.
 
 ### Endpoint and authentication
 

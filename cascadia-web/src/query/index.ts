@@ -58,6 +58,8 @@ export {
   designDetailQuery,
   designFamiliesQuery,
   designGapAnalysisQuery,
+  designArchitectureQuery,
+  designRtmQuery,
   designHistoryGraphQuery,
   designGridQuery,
   designListQuery,
@@ -123,6 +125,7 @@ export {
   programHistoryGraphQuery,
   programListQuery,
   programMembersQuery,
+  programRequirementsRollupQuery,
   programScopeGraphQuery,
 } from './options/programs'
 export type { ProgramCounts } from './options/programs'
@@ -320,7 +323,11 @@ export type { ItemSearchParams } from './options/item-search'
 export { itemHistoryQuery } from './options/item-history'
 export { upstreamChangesQuery } from './options/mbom'
 export type { UpstreamChange } from './options/mbom'
-export { aiSessionMessagesQuery, aiSessionsQuery } from './options/ai'
+export {
+  aiDialogQuery,
+  aiSessionMessagesQuery,
+  aiSessionsQuery,
+} from './options/ai'
 export type { AiChatSession } from './options/ai'
 export {
   softwareDiffQuery,

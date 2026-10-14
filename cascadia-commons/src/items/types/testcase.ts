@@ -29,7 +29,15 @@ export const testStepSchema = z.object({
 export interface TestCase extends BaseItem {
   itemType: 'TestCase'
   designId: string // Required for TestCases - links to versioning system
-  testPlanId?: string // Link to parent TestPlan
+  /**
+   * The parent TestPlan, as the row that currently answers for it. On a
+   * create or update this is the plan the caller names; what is stored is
+   * its master id (`testPlanMasterId`), so membership survives revisions and
+   * clones.
+   */
+  testPlanId?: string
+  /** items.masterId of the parent TestPlan — the stored pointer. */
+  testPlanMasterId?: string
   testType?: TestType
   preconditions?: string
   steps?: Array<TestStep>

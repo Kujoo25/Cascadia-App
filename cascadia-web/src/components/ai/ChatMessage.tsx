@@ -3,58 +3,26 @@
 
 /**
  * ChatMessage - Individual message display component
+ *
+ * Renders one turn: the text as markdown, then whatever the turn's tool
+ * results add up to — activity lines, confirmation cards, navigation and
+ * dialog buttons. The matching of results back to calls is data work and
+ * lives in `./message-parts`; this file only draws.
  */
 
 import { Bot, ExternalLink, Lightbulb, User } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ConfirmationCard, isConfirmationResult } from './ConfirmationCard'
-import type { ConfirmationDetails } from './ConfirmationCard'
+import { ConfirmationCard } from './ConfirmationCard'
+import { DIALOG_KIND_META } from './dialogs/dialog-kinds'
+import { extractMessageParts } from './message-parts'
+import type { MessagePart } from './message-parts'
+import type { ChatDialogDescriptor } from '@cascadia/commons/ai/dialogs'
 import { Button } from '@/components/ui/Button'
 import { toAppRelativeUrl } from '@/markdown/url-transform'
 import { cn } from '@/utils'
 
-// UI Message part types from TanStack AI
-interface TextPart {
-  type: 'text'
-  content: string
-}
-
-interface ToolCallPart {
-  type: 'tool-call'
-  id: string
-  name: string
-  arguments: string
-  state?: string
-}
-
-interface ToolResultPart {
-  type: 'tool-result'
-  toolCallId: string
-  content: string
-  state?: string
-}
-
-interface ThinkingPart {
-  type: 'thinking'
-  content: string
-}
-
-type MessagePart = TextPart | ToolCallPart | ToolResultPart | ThinkingPart
-
-// Navigation offer from offer_navigation tool
-interface NavigationOffer {
-  itemNumber: string
-  itemName?: string | null
-  label?: string
-  navigationUrl: string
-}
-
-// Design workspace offer from initiate_collaborative_design tool
-interface DesignWorkspaceOffer {
-  sessionId: string
-  workspaceUrl: string
-}
+export type { MessagePart } from './message-parts'
 
 interface ChatMessageProps {
   role: 'user' | 'assistant' | 'system'
@@ -63,6 +31,7 @@ interface ChatMessageProps {
   onNavigate?: (url: string) => void
   onConfirm?: (toolCallId: string, toolName: string, toolArgs: string) => void
   onCancel?: (toolCallId: string) => void
+  onOpenDialog?: (dialog: ChatDialogDescriptor) => void
   respondedConfirmations?: Map<string, 'confirmed' | 'cancelled'>
 }
 
@@ -73,137 +42,20 @@ export function ChatMessage({
   onNavigate,
   onConfirm,
   onCancel,
+  onOpenDialog,
   respondedConfirmations,
 }: ChatMessageProps) {
   const isUser = role === 'user'
   const isAssistant = role === 'assistant'
 
-  // Extract text content from parts
-  const textContent = parts
-    .filter((part): part is TextPart => part.type === 'text')
-    .map((part) => part.content)
-    .join('')
-
-  // Build a map of tool call ID → tool call part for cross-referencing
-  const toolCallMap = new Map<string, ToolCallPart>()
-  for (const part of parts) {
-    if (part.type === 'tool-call') {
-      toolCallMap.set(part.id, part)
-    }
-  }
-
-  // Extract tool calls (excluding specially handled tools)
-  const toolCalls = parts.filter(
-    (part): part is ToolCallPart =>
-      part.type === 'tool-call' &&
-      part.name !== 'offer_navigation' &&
-      part.name !== 'initiate_collaborative_design',
-  )
-
-  // Extract navigation offers by matching tool-result parts back to their tool-call
-  const navigationOffers: Array<NavigationOffer> = []
-  for (const part of parts) {
-    if (part.type === 'tool-result') {
-      const toolCall = toolCallMap.get(part.toolCallId)
-      if (toolCall?.name === 'offer_navigation') {
-        // Parse the result from the content string
-        let result: { navigationUrl?: string; displayed?: boolean } | undefined
-        try {
-          result = JSON.parse(part.content)
-        } catch {
-          // content might not be valid JSON
-        }
-
-        // Parse the args from the tool call's arguments string
-        let args:
-          | {
-              itemNumber?: string
-              itemName?: string | null
-              label?: string
-            }
-          | undefined
-        try {
-          args = JSON.parse(toolCall.arguments)
-        } catch {
-          // arguments might not be valid JSON
-        }
-
-        if (result?.navigationUrl && result.displayed) {
-          navigationOffers.push({
-            itemNumber: args?.itemNumber || 'Item',
-            itemName: args?.itemName ?? null,
-            label: args?.label,
-            navigationUrl: result.navigationUrl,
-          })
-        }
-      }
-    }
-  }
-
-  // Extract design workspace offers from initiate_collaborative_design tool results
-  const designWorkspaceOffers: Array<DesignWorkspaceOffer> = []
-  for (const part of parts) {
-    if (part.type === 'tool-result') {
-      const toolCall = toolCallMap.get(part.toolCallId)
-      if (toolCall?.name === 'initiate_collaborative_design') {
-        let result:
-          | {
-              sessionId?: string
-              workspaceUrl?: string
-              action?: string
-            }
-          | undefined
-        try {
-          result = JSON.parse(part.content)
-        } catch {
-          // content might not be valid JSON
-        }
-
-        if (
-          result?.action === 'open_design_workspace' &&
-          result.sessionId &&
-          result.workspaceUrl
-        ) {
-          designWorkspaceOffers.push({
-            sessionId: result.sessionId,
-            workspaceUrl: result.workspaceUrl,
-          })
-        }
-      }
-    }
-  }
-
-  // Extract confirmation requests from tool results
-  const confirmationRequests: Array<{
-    toolCallId: string
-    toolName: string
-    toolArgs: string
-    message: string
-    details?: ConfirmationDetails
-  }> = []
-  for (const part of parts) {
-    if (part.type === 'tool-result') {
-      const toolCall = toolCallMap.get(part.toolCallId)
-      if (toolCall) {
-        let result: unknown
-        try {
-          result = JSON.parse(part.content)
-        } catch {
-          // content might not be valid JSON
-        }
-        if (isConfirmationResult(result)) {
-          confirmationRequests.push({
-            toolCallId: part.toolCallId,
-            toolName: toolCall.name,
-            toolArgs: toolCall.arguments,
-            message:
-              result.confirmationMessage || 'Please confirm this operation.',
-            details: result.confirmationDetails,
-          })
-        }
-      }
-    }
-  }
+  const {
+    textContent,
+    toolCalls,
+    navigationOffers,
+    designWorkspaceOffers,
+    confirmationRequests,
+    dialogOffers,
+  } = extractMessageParts(parts)
 
   if (role === 'system') {
     return null // Don't display system messages
@@ -403,6 +255,27 @@ export function ChatMessage({
               />
             )
           })}
+
+        {/* Dialog buttons: the full result set, a graph, a form, actions */}
+        {dialogOffers.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {dialogOffers.map((offer) => {
+              const meta = DIALOG_KIND_META[offer.dialog.kind]
+              return (
+                <Button
+                  key={offer.toolCallId}
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onOpenDialog?.(offer.dialog)}
+                  className="text-xs gap-1.5 bg-white dark:bg-slate-600 hover:bg-cyan-50 dark:hover:bg-cyan-900/30 border-cyan-300 dark:border-cyan-400 text-cyan-700 dark:text-cyan-300"
+                >
+                  <meta.Icon className="h-3 w-3" />
+                  {offer.dialog.label ?? meta.label}
+                </Button>
+              )
+            })}
+          </div>
+        )}
 
         {/* Navigation offers */}
         {navigationOffers.length > 0 && (

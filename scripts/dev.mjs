@@ -8,12 +8,13 @@
 // lines after PowerShell has already drawn its next prompt.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { appDir, resolveApp } from './edition.mjs'
+import { appDir, appTsconfig, resolveApp } from './edition.mjs'
 
 // Which app to run is resolved, never named. The published tree has no
 // `cascadia-enterprise`, and a hardcoded path here made `npm run dev` a broken
 // script in a fresh clone of the public repository. See scripts/edition.mjs.
-const APP_DIR = appDir(resolveApp())
+const APP = resolveApp()
+const APP_DIR = appDir(APP)
 
 // `--client` / `--api` run one half, for the npm scripts of the same name.
 const only = process.argv.includes('--client')
@@ -39,11 +40,18 @@ const procs = [
   },
   // `watch` so edits to server/lib files auto-reload the API (matches Vite HMR
   // on the client side); without it the API serves stale code until restarted.
+  // Under the app's tsconfig, which is what resolves `@/` inside the modules
+  // the app composes — see appTsconfig() in scripts/edition.mjs.
   {
     name: 'api',
     color: '\x1b[32m',
     cmd: 'tsx',
-    args: ['watch', `${APP_DIR}/src/server/dev.ts`],
+    args: [
+      'watch',
+      '--tsconfig',
+      appTsconfig(APP),
+      `${APP_DIR}/src/server/dev.ts`,
+    ],
   },
 ].filter((p) => only === null || p.name === only)
 

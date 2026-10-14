@@ -150,7 +150,7 @@ services:
     # and every boot after the demo seed loops. boot-migrate.ts applies the
     # committed SQL instead, and is a no-op once the journal is current.
     command: >
-      sh -c "tsx scripts/boot-migrate.ts
+      sh -c "node scripts/app-tsx.mjs scripts/boot-migrate.ts
       && tsx scripts/seed-minimal.ts
       && tsx scripts/seed-demo.ts
       && npm run serve"

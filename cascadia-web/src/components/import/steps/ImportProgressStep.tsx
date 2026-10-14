@@ -117,6 +117,33 @@ export function ImportProgressStep({
           bypassBranchProtection: context.designPhase === 'pre-release',
           importAsReleased: context.importAsReleased,
         }
+      } else if (itemType === 'Requirement') {
+        rows = validRows.map((row) => ({
+          itemNumber: row.mappedData.itemNumber as string | undefined,
+          name: row.mappedData.name as string,
+          revision: (row.mappedData.revision as string) || '-',
+          description: row.mappedData.description as string | undefined,
+          type: row.mappedData.type as string | undefined,
+          priority: row.mappedData.priority as string | undefined,
+          category: row.mappedData.category as string | undefined,
+          source: row.mappedData.source as string | undefined,
+          acceptanceCriteria: row.mappedData.acceptanceCriteria as
+            string | undefined,
+          verificationMethod: row.mappedData.verificationMethod as
+            string | undefined,
+          parentItemNumber: row.mappedData.parentItemNumber as
+            string | undefined,
+          attributes: row.mappedData.attributes as
+            Record<string, unknown> | undefined,
+        }))
+
+        requestBody = {
+          designId: context.designId,
+          branchId: context.importAsReleased ? undefined : context.branchId,
+          rows,
+          bypassBranchProtection: context.designPhase === 'pre-release',
+          importAsReleased: context.importAsReleased,
+        }
       } else {
         // Issue
         rows = validRows.map((row) => ({

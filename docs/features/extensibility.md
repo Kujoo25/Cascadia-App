@@ -138,14 +138,15 @@ discovered.
 `GET /api/v1/events/types` answers this at runtime for the build you are running.
 A type absent there is a type nothing in that instance publishes.
 
-| Family    | Types                                                                                                                                               |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Items     | `item.created`, `item.updated`, `item.deleted`, `item.released`, `item.obsoleted`, `item.checked_out`, `item.checked_in`, `item.checkout_cancelled` |
-| Change    | `change_order.released`, `change_order.cancelled`, `design.released`, `lifecycle.transitioned`, `approval.voted`                                    |
-| Structure | `relationship.added`, `relationship.removed`, `relationship.updated`                                                                                |
-| Hierarchy | `program.created`, `design.created`, `branch.created`, `branch.archived`                                                                            |
-| Files     | `file.uploaded`, `file.checked_in`, `file.deleted`, `file.restored`                                                                                 |
-| Work      | `work_order.run_completed`, `work_order.sign_off_submitted`                                                                                         |
+| Family       | Types                                                                                                                                               |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Items        | `item.created`, `item.updated`, `item.deleted`, `item.released`, `item.obsoleted`, `item.checked_out`, `item.checked_in`, `item.checkout_cancelled` |
+| Change       | `change_order.released`, `change_order.cancelled`, `design.released`, `lifecycle.transitioned`, `approval.voted`                                    |
+| Structure    | `relationship.added`, `relationship.removed`, `relationship.updated`                                                                                |
+| Hierarchy    | `program.created`, `design.created`, `branch.created`, `branch.archived`                                                                            |
+| Files        | `file.uploaded`, `file.checked_in`, `file.deleted`, `file.restored`                                                                                 |
+| Work         | `work_order.run_completed`, `work_order.sign_off_submitted`                                                                                         |
+| Verification | `test.executed`, `requirement.verification_changed`                                                                                                 |
 
 Two conventions hold across all of them. **Payloads point rather than snapshot** —
 an event carries ids and the few fields a consumer cannot reconstruct, not a copy
@@ -153,6 +154,10 @@ of the row, because a snapshot is stale the moment it is written. And **flags,
 never state names**: `work_order.run_completed` carries `countsTowardRequired`
 rather than a status string, so a consumer never has to know which of six
 literals are countable and does not break when a seventh appears.
+`requirement.verification_changed` carries the derived `status` and its `cause`
+(`execution`, `link`, `unlink`, `waiver`, `waiver_cleared`); those statuses are a
+fixed vocabulary in commons, not lifecycle configuration, which is the
+difference.
 
 ## The ordering guarantee
 

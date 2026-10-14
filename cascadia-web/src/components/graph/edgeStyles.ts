@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Cascadia PLM LLC
 
 import { MarkerType } from '@xyflow/react'
+import { catalogValues } from '@cascadia/commons/items/relationships/catalog'
 import type { Edge, Node } from '@xyflow/react'
 
 /**
@@ -25,7 +26,7 @@ import type { Edge, Node } from '@xyflow/react'
  */
 
 export type GraphEdgeKind =
-  'relationship' | 'usage' | 'physical' | 'file' | 'scope'
+  'relationship' | 'usage' | 'physical' | 'file' | 'scope' | 'architecture'
 
 /**
  * Edge colours, picked to stay legible against both the light (`bg-slate-50`)
@@ -39,6 +40,7 @@ export const GRAPH_EDGE_COLORS: Record<GraphEdgeKind, string> = {
   physical: '#10b981', // emerald-500
   file: '#0ea5e9', // sky-500
   scope: '#94a3b8', // slate-400
+  architecture: '#0d9488', // teal-600
 }
 
 /** Dash pattern per kind. Plain relationships are solid. */
@@ -49,15 +51,32 @@ const GRAPH_EDGE_DASH: Partial<Record<GraphEdgeKind, string>> = {
 }
 
 /**
+ * The architecture edges — the ones a system element is the source of
+ * (`DECOMPOSES`, `REALIZED_BY`) — read from the catalog so the family follows
+ * it. They carry no flag of their own: the graph endpoints put the stored
+ * type on `edge.data.relationshipType`, which is enough to tell them apart.
+ */
+const ARCHITECTURE_RELATIONSHIP_TYPES: ReadonlySet<string> = catalogValues(
+  (entry) => entry.sourceTypes.includes('SystemElement'),
+)
+
+/**
  * Classify an edge from the flags the graph endpoints put on `edge.data`
  * (`isUsageRelationship`, `isPhysicalRelationship`, `isFileRelationship`,
- * `isScopeRelationship`). Anything unflagged is a plain item relationship.
+ * `isScopeRelationship`), or from its stored type for the architecture
+ * family. Anything else is a plain item relationship.
  */
 export function graphEdgeKind(data: Record<string, unknown>): GraphEdgeKind {
   if (data.isUsageRelationship === true) return 'usage'
   if (data.isPhysicalRelationship === true) return 'physical'
   if (data.isFileRelationship === true) return 'file'
   if (data.isScopeRelationship === true) return 'scope'
+  if (
+    typeof data.relationshipType === 'string' &&
+    ARCHITECTURE_RELATIONSHIP_TYPES.has(data.relationshipType)
+  ) {
+    return 'architecture'
+  }
   return 'relationship'
 }
 

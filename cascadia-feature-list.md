@@ -13,21 +13,22 @@ Thirteen core PLM item types are implemented with full CRUD operations, register
 through `ItemTypeRegistry`. (Programs and designs are the organizational hierarchy
 _above_ items, not item types — see [Program & Design Hierarchy](#program--design-hierarchy).)
 
-| Item Type            | Status | Description                                                                                                                                                                |
-| -------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Part**             | ✅     | Parts with materials, partType (Manufacture/Purchase/Phantom/Software), cost, lead times                                                                                   |
-| **Document**         | ✅     | Version-controlled files with check-in/check-out                                                                                                                           |
-| **Change Order**     | ✅     | ECO/ECN/MCO/Deviation change orders, each on its own branch                                                                                                                |
-| **Requirement**      | ✅     | Requirements tracking with acceptance criteria, priority, source. Coverage counts links: "verified" means a VERIFIED_BY edge to a test case exists, not that a test passed |
-| **Task**             | ✅     | Work items with assignees, due dates, estimated/actual hours                                                                                                               |
-| **Test Plan**        | ✅     | Verification planning: scope, environment, entry/exit criteria, grouped test cases                                                                                         |
-| **Test Case**        | ✅     | Executable verification with recorded execution history (NotRun/Passed/Failed/Blocked)                                                                                     |
-| **Work Instruction** | ✅     | Rich step-by-step manufacturing instructions with parametric data                                                                                                          |
-| **Issue**            | ✅     | Defect/quality tracking with severity, category, root cause; dedicated list/detail UI and spreadsheet import                                                               |
-| **Tool**             | ✅     | Manufacturing/quality/utility equipment as non-versioned records (the Tool pattern)                                                                                        |
-| **Software**         | ✅     | Firmware/software configuration items with a content-addressed source store — see [Software Management](#software-management)                                              |
-| **Work Order**       | ✅     | Manufacturing execution: traveler, material consumption, qualification — see [Physical Traceability](#physical-traceability)                                               |
-| **Physical Part**    | ✅     | Serialized units and identified lots of a Part — see [Physical Traceability](#physical-traceability)                                                                       |
+| Item Type            | Status | Description                                                                                                                                                                                                                                                                                     |
+| -------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Part**             | ✅     | Parts with materials, partType (Manufacture/Purchase/Phantom/Software), cost, lead times                                                                                                                                                                                                        |
+| **Document**         | ✅     | Version-controlled files with check-in/check-out                                                                                                                                                                                                                                                |
+| **Change Order**     | ✅     | ECO/ECN/MCO/Deviation change orders, each on its own branch                                                                                                                                                                                                                                     |
+| **Requirement**      | ✅     | Requirements tracking with acceptance criteria, priority, source. Verification status is derived from test executions: Passed only when every verifying test's latest run passed, and a suspect claim is not evidence; a waiver is the one manual exception, recorded with a note               |
+| **System Element**   | ✅     | The logical architecture: system / segment / subsystem / module elements, versioned and ECO-controlled, decomposed by `DECOMPOSES` (a tree that is not the BOM) and realized by parts and software; a requirement is allocated to an element before any part exists and the RTM shows both hops |
+| **Task**             | ✅     | Work items with assignees, due dates, estimated/actual hours                                                                                                                                                                                                                                    |
+| **Test Plan**        | ✅     | Verification planning: scope, environment, entry/exit criteria, grouped test cases                                                                                                                                                                                                              |
+| **Test Case**        | ✅     | Executable verification with recorded execution history (Passed/Failed/Blocked); lifecycle Draft/Active/Obsolete, a result is never a state                                                                                                                                                     |
+| **Work Instruction** | ✅     | Rich step-by-step manufacturing instructions with parametric data                                                                                                                                                                                                                               |
+| **Issue**            | ✅     | Defect/quality tracking with severity, category, root cause; dedicated list/detail UI and spreadsheet import                                                                                                                                                                                    |
+| **Tool**             | ✅     | Manufacturing/quality/utility equipment as non-versioned records (the Tool pattern)                                                                                                                                                                                                             |
+| **Software**         | ✅     | Firmware/software configuration items with a content-addressed source store — see [Software Management](#software-management)                                                                                                                                                                   |
+| **Work Order**       | ✅     | Manufacturing execution: traveler, material consumption, qualification — see [Physical Traceability](#physical-traceability)                                                                                                                                                                    |
+| **Physical Part**    | ✅     | Serialized units and identified lots of a Part — see [Physical Traceability](#physical-traceability)                                                                                                                                                                                            |
 
 ### Two-Table Pattern
 
@@ -356,15 +357,17 @@ Bulk data import from spreadsheets with intelligent BOM parsing.
 
 ### File Import ✅
 
-| Feature                    | Status | Notes                                        |
-| -------------------------- | ------ | -------------------------------------------- |
-| Excel import (.xlsx, .xls) | ✅     | ExcelJS-based parsing                        |
-| CSV import                 | ✅     | RFC 4180 compliant with quoted field support |
-| Column auto-mapping        | ✅     | Intelligent field matching by header names   |
-| Validation preview         | ✅     | Review errors/warnings before import         |
-| Bulk part creation         | ✅     | Up to 500 rows per import                    |
-| Rich text handling         | ✅     | Extracts text from Excel rich text cells     |
-| Formula result extraction  | ✅     | Uses calculated values, not formulas         |
+| Feature                    | Status | Notes                                                                                                                   |
+| -------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Excel import (.xlsx, .xls) | ✅     | ExcelJS-based parsing                                                                                                   |
+| CSV import                 | ✅     | RFC 4180 compliant with quoted field support                                                                            |
+| Column auto-mapping        | ✅     | Intelligent field matching by header names                                                                              |
+| Validation preview         | ✅     | Review errors/warnings before import                                                                                    |
+| Bulk part creation         | ✅     | Up to 500 rows per import                                                                                               |
+| Requirement import         | ✅     | A hierarchy in one sheet: each row names its parent by item number, in any order; loops and missing parents fail by row |
+| Requirements export        | ✅     | `GET /designs/:id/requirements-export` — the sheet the import reads back, so a design round-trips                       |
+| Rich text handling         | ✅     | Extracts text from Excel rich text cells                                                                                |
+| Formula result extraction  | ✅     | Uses calculated values, not formulas                                                                                    |
 
 ### BOM Import ✅
 
@@ -382,10 +385,11 @@ Bulk data import from spreadsheets with intelligent BOM parsing.
 
 ### Import API ✅
 
-| Endpoint                    | Status | Notes                                   |
-| --------------------------- | ------ | --------------------------------------- |
-| `POST /api/v1/import/parts` | ✅     | Bulk part creation + BOM relationships  |
-| Branch-aware import         | ✅     | Import to a change-order branch or main |
+| Endpoint                           | Status | Notes                                                       |
+| ---------------------------------- | ------ | ----------------------------------------------------------- |
+| `POST /api/v1/import/parts`        | ✅     | Bulk part creation + BOM relationships                      |
+| `POST /api/v1/import/requirements` | ✅     | Bulk requirement creation with the hierarchy by item number |
+| Branch-aware import                | ✅     | Import to a change-order branch or main                     |
 
 ---
 
@@ -410,6 +414,7 @@ Cascadia items map to SysML v2 concepts:
 - Parts → PartDefinition / PartUsage
 - Documents → Artifact
 - Requirements → RequirementDefinition / RequirementUsage
+- System elements → PartDefinition; `DECOMPOSES` → PartUsage (composite); `REALIZED_BY` → Allocate
 - BOM → PartUsage (composite)
 - References → Dependency (non-composite)
 
@@ -421,28 +426,29 @@ RESTful API for external system integration.
 
 ### REST API ✅
 
-| Endpoint Category  | Status | Notes                                           |
-| ------------------ | ------ | ----------------------------------------------- |
-| Items CRUD         | ✅     | All item types                                  |
-| Relationships      | ✅     | Create, update, delete                          |
-| Files              | ✅     | Upload, download, check-in/out                  |
-| Workflows          | ✅     | Transitions, history                            |
-| Change Orders      | ✅     | Full ECO lifecycle + impact assessment          |
-| Users & Roles      | ✅     | Administration                                  |
-| Reports            | ✅     | Execute and export                              |
-| Search             | ✅     | Enterprise search                               |
-| Work Instructions  | ✅     | Template CRUD, usage, change alerts             |
-| Requirements & V&V | ✅     | Derive, satisfy, verify, coverage, gap analysis |
-| Test Plans & Cases | ✅     | Plan membership, execution recording            |
-| Digital Thread     | ✅     | Thread graph, cross-context comparison          |
-| Workspaces         | ✅     | CRUD, convert-to-ECO, merge-to-ECO              |
-| Physical Parts     | ✅     | Register, genealogy, recall, as-built           |
-| Work Orders        | ✅     | Traveler, materials, qualification              |
-| Software           | ✅     | Source tree, diff, draft commit                 |
-| MBOM               | ✅     | EBOM-to-MBOM creation and tracking              |
-| Manufacturer Parts | ✅     | AML bound to the part master                    |
-| Dashboard          | ✅     | Cross-program stats and charts                  |
-| AI Chat            | ✅     | Conversations with tool use                     |
+| Endpoint Category   | Status | Notes                                                         |
+| ------------------- | ------ | ------------------------------------------------------------- |
+| Items CRUD          | ✅     | All item types                                                |
+| Relationships       | ✅     | Create, update, delete                                        |
+| Files               | ✅     | Upload, download, check-in/out                                |
+| Lifecycles          | ✅     | Definitions, state approvers                                  |
+| Change Orders       | ✅     | Lifecycle instance, transitions, approvals, impact assessment |
+| Users & Roles       | ✅     | Administration                                                |
+| Reports             | ✅     | Execute and export                                            |
+| Search              | ✅     | Enterprise search                                             |
+| Work Instructions   | ✅     | Template CRUD, usage, change alerts                           |
+| Requirements & V&V  | ✅     | Derive, satisfy, verify, coverage, gap analysis               |
+| System architecture | ✅     | Elements, the tree, realizations, the design's architecture   |
+| Test Plans & Cases  | ✅     | Plan membership, execution recording                          |
+| Digital Thread      | ✅     | Thread graph, cross-context comparison                        |
+| Workspaces          | ✅     | CRUD, convert-to-change-order, merge-to-change-order          |
+| Physical Parts      | ✅     | Register, genealogy, recall, as-built                         |
+| Work Orders         | ✅     | Traveler, materials, qualification                            |
+| Software            | ✅     | Source tree, diff, draft commit                               |
+| MBOM                | ✅     | EBOM-to-MBOM creation and tracking                            |
+| Manufacturer Parts  | ✅     | AML bound to the part master                                  |
+| Dashboard           | ✅     | Cross-program stats and charts                                |
+| AI Chat             | ✅     | Conversations with tool use                                   |
 
 ### Batch Operations ✅
 
@@ -583,6 +589,7 @@ LLM-powered chatbot for navigating and querying PLM data.
 | Feature             | Status | Notes                                                                                                                      |
 | ------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------- |
 | Chat panel UI       | ✅     | Slide-out panel with markdown rendering                                                                                    |
+| Chat dialogs        | ✅     | Result grids, BOM/where-used/impact graphs, model-authored forms and action menus opened from a button in the chat         |
 | Session persistence | ✅     | Conversations saved to database                                                                                            |
 | Read-only PLM tools | ✅     | Search parts, get item details, navigate system                                                                            |
 | Write tools         | ✅     | Create/update items with permission enforcement                                                                            |
@@ -714,33 +721,39 @@ Requirement item type.
 
 ### Requirement Relationships ✅
 
-| Feature              | Status | Notes                                                                  |
-| -------------------- | ------ | ---------------------------------------------------------------------- |
-| Derived requirements | ✅     | `DERIVES_FROM` child→parent hierarchy, `POST /requirements/:id/derive` |
-| Satisfaction links   | ✅     | `SATISFIES` edges from parts/documents to requirements                 |
-| Allocation links     | ✅     | `ALLOCATED_TO` edges from requirements to parts                        |
-| Verification links   | ✅     | `VERIFIED_BY` edges from test cases to requirements                    |
-| Validation links     | ✅     | `VALIDATES` edges from test cases to parts                             |
-| Satisfied-by lookup  | ✅     | `GET /items/:id/satisfied-requirements` — reverse view from an item    |
+| Feature              | Status | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Relationship catalog | ✅     | One catalog declares each trace type's ends, direction, edit-guard end and suspectability; the service refuses a cataloged edge with the wrong ends, and the relationship pickers offer an item the types it may be the source of, with the target types fixed                                                                                                                                                                                                                                                                                                                                                                                |
+| Derived requirements | ✅     | `DERIVES_FROM` child→parent hierarchy, written as an edge beside the `parent_requirement_id` column by `POST /requirements/:id/derive`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Satisfaction links   | ✅     | `SATISFIES` edges from parts, software and documents to requirements; a _Satisfied by_ panel on the requirement page                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Allocation links     | ✅     | `ALLOCATED_TO` edges from requirements to parts, software and documents; an _Allocated to_ panel on the requirement page                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Verification links   | ✅     | `VERIFIED_BY` edges from test cases to requirements                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Validation links     | ✅     | `VALIDATES` edges from test cases to parts                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Satisfied-by lookup  | ✅     | `GET /items/:id/satisfied-requirements` — reverse view from an item                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Suspect links        | ✅     | Each trace link records which versions it was affirmed against and reads as suspect once either end revises; `POST /relationships/:id/affirm` clears one and `POST /relationships/affirm` a batch, answering per link. Badge, _Affirm_ and _Affirm all suspect_ on every panel that lists a trace link (the requirement page, the part page, the Relationships tab); a suspect count and the links in requirements coverage and a `suspect_requirement` gap in the gap analysis; the release preview lists the claims a release will leave suspect, by the same rule; `get_suspect_links` and `affirm_link` for the assistant and MCP clients |
 
 ### Test Management ✅
 
-| Feature             | Status | Notes                                                              |
-| ------------------- | ------ | ------------------------------------------------------------------ |
-| Test plans          | ✅     | Scope, environment, entry/exit criteria; group test cases          |
-| Test case execution | ✅     | `POST /test-cases/:id/execute` records executor, status, timestamp |
-| Execution history   | ✅     | Full run history per test case; latest status shown on the item    |
-| Execution statuses  | ✅     | NotRun / Passed / Failed / Blocked                                 |
+| Feature              | Status | Notes                                                                                                                                                   |
+| -------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Test plans           | ✅     | Scope, environment, entry/exit criteria; group test cases                                                                                               |
+| Test case execution  | ✅     | `POST /test-cases/:id/execute` records executor, status, timestamp                                                                                      |
+| Execution history    | ✅     | Full run history per test case; latest status shown on the item                                                                                         |
+| Execution statuses   | ✅     | Passed / Failed / Blocked; never run is the absence of a result. Each run rolls up into the verified requirements' status and publishes `test.executed` |
+| Verification waivers | ✅     | `POST /requirements/:id/waive` records a note and sets Waived; `DELETE` clears it and re-derives                                                        |
 
 ### Design-Level Rollups ✅
 
-| Feature               | Status | Notes                                                                                                                                                                                           |
-| --------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Requirements coverage | ✅     | `GET /designs/:id/requirements-coverage` — link-based matrix                                                                                                                                    |
-| Test coverage         | ✅     | `GET /designs/:id/test-coverage`                                                                                                                                                                |
-| Verification gaps     | ✅     | `GET /designs/:id/verification-gaps`                                                                                                                                                            |
-| Gap analysis          | ✅     | Seven gap types (unallocated/unsatisfied/unverified requirements, untested parts, unmapped EBOM, orphan MBOM, missing documentation) with severity, per-domain counts, and a completeness score |
-| Gap analysis UI       | ✅     | Summary cards, filterable results table, analysis dialog                                                                                                                                        |
+| Feature                   | Status | Notes                                                                                                                                                                                           |
+| ------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Requirements coverage     | ✅     | `GET /designs/:id/requirements-coverage` — allocated and satisfied by links; verified by the derived status (Passed or Waived, with no suspect claim)                                           |
+| Test coverage             | ✅     | `GET /designs/:id/test-coverage`                                                                                                                                                                |
+| Verification gaps         | ✅     | `GET /designs/:id/verification-gaps`                                                                                                                                                            |
+| Gap analysis              | ✅     | Seven gap types (unallocated/unsatisfied/unverified requirements, untested parts, unmapped EBOM, orphan MBOM, missing documentation) with severity, per-domain counts, and a completeness score |
+| Gap analysis UI           | ✅     | Summary cards, filterable results table, analysis dialog                                                                                                                                        |
+| Traceability matrix (RTM) | ✅     | `GET /designs/:id/rtm?branch=                                                                                                                                                                   | tag= | commit=` — every requirement with what it is allocated to, what satisfies it and what verifies it (with latest results), the derived status, the one "verified" rule, suspect counts and gaps, at any version context; a tag is the compliance snapshot, judged against the rows it holds |
+| Requirements tab          | ✅     | On the design page: coverage cards, the RTM and its VCRM view as a grid with gap, priority and suspect filters, CSV export and _Affirm all suspect_, following the page's version picker        |
+| Program rollup            | ✅     | `GET /programs/:id/requirements-rollup` and the program page's Requirements card — one line per design at main, the totals, and the open gaps across the program, most important first          |
 
 ---
 

@@ -17,6 +17,7 @@ import {
 } from '@/ai/adapters'
 import { knowledgeService } from '@/ai/KnowledgeService'
 import { sessionService } from '@/ai/SessionService'
+import { dialogService } from '@/ai/dialogs/DialogService'
 import { resolveChatScope } from '@/ai/chat-scope'
 import { AccessControlService } from '@/auth/AccessControlService'
 import { acquireStreamSlot, releaseStreamSlot } from '@/ai/stream-limits'
@@ -232,6 +233,9 @@ app.post(
           sessionId: session.id,
           programId: session.programId || undefined,
           designId: session.designId || undefined,
+          // A panel is rendering this session's results: tools may store
+          // dialogs for it (see `@/ai/dialogs`).
+          surface: mode,
         }
         const tools =
           mode === 'search'
@@ -496,6 +500,33 @@ app.get(
 
       return { messages, total: messages.length }
     }),
+  ),
+)
+
+// GET /api/ai/dialogs/:id
+app.get(
+  '/dialogs/:id',
+  adapt(
+    apiHandler<{ id: string }>(
+      {
+        openapi: {
+          summary: 'Get the payload behind a chat dialog button',
+        },
+      },
+      async ({ params, user }) => {
+        // A dialog id travels through the model's context and the stored
+        // transcript, so it is not a secret: the lookup names the caller as
+        // well as the id, and an id that is not one at all is the same
+        // not-found as one that belongs to someone else.
+        const dialog = z.string().uuid().safeParse(params.id).success
+          ? await dialogService.getForUser(params.id, user.id)
+          : null
+        if (!dialog) {
+          throw new NotFoundError('Dialog', params.id)
+        }
+        return { dialog }
+      },
+    ),
   ),
 )
 

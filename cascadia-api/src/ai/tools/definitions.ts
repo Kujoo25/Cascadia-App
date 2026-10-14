@@ -16,11 +16,14 @@
  * - offer_navigation: Offer clickable navigation to item pages
  * - search_programs: Search programs by name, code, or customer
  * - search_designs: Search designs by name, code, or program
+ * - get_suspect_links: List trace links in a design or on an item, with their suspect state
  */
 
 import { toolDefinition } from '@tanstack/ai'
 import { z } from 'zod'
 import { ITEM_TYPE_DEFINITIONS } from '@cascadia/commons/items/item-type-definitions'
+import { dialogDescriptorSchema } from '@cascadia/commons/ai/dialogs'
+import { SUSPECTABLE_RELATIONSHIP_TYPES } from '@/items/trace-affirmation'
 
 /**
  * Item type names derived from the canonical item-type definitions, so
@@ -31,6 +34,17 @@ import { ITEM_TYPE_DEFINITIONS } from '@cascadia/commons/items/item-type-definit
 export const ITEM_TYPE_NAMES = Object.values(ITEM_TYPE_DEFINITIONS).map(
   (def) => def.name,
 ) as [string, ...Array<string>]
+
+/**
+ * The read tools below attach this on the chat surface when a result has
+ * more to show than a message holds — the full result set, a BOM as a graph.
+ * The chat panel renders it as a button; see `@cascadia/commons/ai/dialogs`.
+ */
+const dialogOutputField = dialogDescriptorSchema
+  .optional()
+  .describe(
+    'Present when the chat panel shows a button that opens the full result set. Summarise the top few results and point the user to the button instead of listing everything.',
+  )
 
 // ============================================================================
 // search_items - Search PLM items by type, query, and filters
@@ -81,6 +95,7 @@ If no itemType is specified, searches across all item types.`,
       }),
     ),
     total: z.number().describe('Total count of matching items'),
+    dialog: dialogOutputField,
   }),
 })
 
@@ -215,6 +230,7 @@ Each child includes quantity and find number from the BOM relationship.`,
       }),
     ),
     totalComponents: z.number(),
+    dialog: dialogOutputField,
   }),
 })
 
@@ -258,6 +274,7 @@ Includes cross-design references - shows if the item is used in other designs.`,
       }),
     ),
     totalUsages: z.number(),
+    dialog: dialogOutputField,
   }),
 })
 
@@ -326,6 +343,7 @@ Provides risk assessment with severity levels (low, medium, high, critical).`,
       }),
     ),
     riskLevel: z.enum(['low', 'medium', 'high', 'critical']),
+    dialog: dialogOutputField,
   }),
 })
 
@@ -415,6 +433,7 @@ Results are scoped to programs the user has access to.`,
       }),
     ),
     total: z.number().describe('Total count of matching programs'),
+    dialog: dialogOutputField,
   }),
 })
 
@@ -465,6 +484,95 @@ Results are scoped to designs the user has access to. Excludes archived designs 
       }),
     ),
     total: z.number().describe('Total count of matching designs'),
+    dialog: dialogOutputField,
+  }),
+})
+
+// ============================================================================
+// get_suspect_links - Trace claims that have gone stale
+// ============================================================================
+
+/**
+ * The trace types whose claims can go stale, from the relationship catalog —
+ * the same set the suspect-link readers use, so the tool can neither offer a
+ * type the server ignores nor miss one it flags.
+ */
+export const SUSPECTABLE_TYPE_NAMES = [...SUSPECTABLE_RELATIONSHIP_TYPES] as [
+  string,
+  ...Array<string>,
+]
+
+const traceLinkEndSchema = z.object({
+  itemId: z.string(),
+  itemNumber: z.string(),
+  name: z.string().nullable(),
+  itemType: z.string(),
+  revision: z.string(),
+  state: z.string(),
+})
+
+export const getSuspectLinksDef = toolDefinition({
+  name: 'get_suspect_links',
+  description: `List the trace links (${SUSPECTABLE_TYPE_NAMES.join(', ')}) in a design or on one item, with their suspect state.
+A trace link is a claim one item version makes about another — "this part satisfies that requirement", "this test verifies it". It is SUSPECT once either end has revised since someone last affirmed it, and stays suspect until affirmed again (affirm_link) or fixed.
+By default lists only the suspect links; pass includeAffirmed to see every trace link. Each link says which end moved (source_revised, target_revised) and who last affirmed it.
+Use this to answer "what needs a look after that release", "is this requirement's traceability still good", or before approving a change order.`,
+  inputSchema: z.object({
+    designId: z
+      .string()
+      .optional()
+      .describe(
+        'Design ID (UUID) or design code to list the trace links of. One of designId or itemId is required.',
+      ),
+    itemId: z
+      .string()
+      .optional()
+      .describe(
+        'ID (UUID) of one item — a requirement, part, software, document or test case — to list the trace links touching it.',
+      ),
+    relationshipType: z
+      .enum(SUSPECTABLE_TYPE_NAMES)
+      .optional()
+      .describe(
+        `Only links of this type. One of: ${SUSPECTABLE_TYPE_NAMES.join(', ')}. All of them when omitted.`,
+      ),
+    includeAffirmed: z
+      .boolean()
+      .default(false)
+      .describe(
+        'Also list the links that are not suspect (default false: suspect links only).',
+      ),
+    limit: z
+      .number()
+      .min(1)
+      .max(200)
+      .default(50)
+      .describe('Maximum number of links to return (1-200, default 50)'),
+  }),
+  outputSchema: z.object({
+    scope: z.object({
+      designId: z.string().optional(),
+      designCode: z.string().optional(),
+      designName: z.string().optional(),
+      itemId: z.string().optional(),
+      itemNumber: z.string().optional(),
+    }),
+    links: z.array(
+      z.object({
+        relationshipId: z.string(),
+        relationshipType: z.string(),
+        source: traceLinkEndSchema,
+        target: traceLinkEndSchema,
+        suspect: z.boolean(),
+        suspectReasons: z.array(z.enum(['source_revised', 'target_revised'])),
+        affirmedBy: z.string().nullable(),
+        affirmedAt: z.string().nullable(),
+      }),
+    ),
+    total: z.number().describe('Total count of matching links'),
+    suspectTotal: z
+      .number()
+      .describe('How many of the matching links are suspect'),
   }),
 })
 
@@ -481,6 +589,7 @@ export const allToolDefinitions = [
   offerNavigationDef,
   searchProgramsDef,
   searchDesignsDef,
+  getSuspectLinksDef,
 ]
 
 // Export type helpers for handlers
@@ -496,3 +605,6 @@ export type OfferNavigationInput = z.infer<
 >
 export type SearchProgramsInput = z.infer<typeof searchProgramsDef.inputSchema>
 export type SearchDesignsInput = z.infer<typeof searchDesignsDef.inputSchema>
+export type GetSuspectLinksInput = z.infer<
+  typeof getSuspectLinksDef.inputSchema
+>

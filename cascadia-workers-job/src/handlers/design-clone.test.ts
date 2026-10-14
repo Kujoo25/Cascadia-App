@@ -29,11 +29,20 @@ import {
 import { and, eq } from 'drizzle-orm'
 import { TestDatabase } from '@test/helpers/db'
 import { insertTestUser } from '@test/fixtures/users'
-import { itemVersions, items, parts, programs } from '@cascadia/api/db/schema'
+import {
+  itemVersions,
+  items,
+  parts,
+  programs,
+  requirements,
+  testCases,
+  testPlans,
+} from '@cascadia/api/db/schema'
 import { takeFirst } from '@cascadia/api/db/take-first'
 import { ItemTypeRegistry } from '@cascadia/api/items/registry'
 import { DesignService } from '@cascadia/api/services/DesignService'
 import { LifecycleService } from '@cascadia/api/services/LifecycleService'
+import { VerificationService } from '@cascadia/api/services/VerificationService'
 import { cloneDesignHandler } from './design-clone'
 import type { TestUser } from '@test/fixtures/users'
 import type { JobContext } from '@cascadia/api/jobs/types'
@@ -192,6 +201,112 @@ describe('cloneDesignHandler', () => {
     // the new item. Any parts column that fails to copy — including ones
     // added after this was written — fails here.
     expect({ ...clonedPart, itemId: sourceItem.id }).toEqual(sourcePart)
+  })
+
+  it("re-points a clone's hierarchy inside the clone", async () => {
+    const source = await DesignService.create(
+      {
+        programId,
+        name: 'Hierarchy Source',
+        code: `${uniquePrefix}-HSRC`,
+        designType: 'Engineering',
+      },
+      user.id,
+    )
+    const initialCommit = source.initialCommit
+    if (!initialCommit) {
+      throw new Error('An Engineering design is created with an initial commit')
+    }
+
+    const mint = async (itemType: string, suffix: string) => {
+      const row = takeFirst(
+        await testDb.db
+          .insert(items)
+          .values({
+            masterId: randomUUID(),
+            designId: source.id,
+            itemNumber: `${uniquePrefix}-${suffix}`,
+            revision: 'A',
+            itemType,
+            name: suffix,
+            state: await LifecycleService.getInitialStateId(itemType),
+            isCurrent: true,
+            commitId: initialCommit.id,
+            createdBy: user.id,
+            modifiedBy: user.id,
+          })
+          .returning(),
+      )
+      await testDb.db.insert(itemVersions).values({
+        itemId: row.id,
+        commitId: initialCommit.id,
+        changeType: 'added',
+      })
+      return row
+    }
+    const parent = await mint('Requirement', 'REQ-PARENT')
+    const child = await mint('Requirement', 'REQ-CHILD')
+    const plan = await mint('TestPlan', 'TP-001')
+    const testCase = await mint('TestCase', 'TC-001')
+    await testDb.db.insert(requirements).values([
+      { itemId: parent.id, verificationStatus: 'NotStarted' },
+      {
+        itemId: child.id,
+        parentRequirementId: parent.id,
+        verificationStatus: 'NotStarted',
+      },
+    ])
+    await testDb.db.insert(testPlans).values({ itemId: plan.id })
+    await testDb.db
+      .insert(testCases)
+      .values({ itemId: testCase.id, testPlanMasterId: plan.masterId })
+
+    const result = await cloneDesignHandler.execute(
+      {
+        sourceDesignId: source.id,
+        targetCode: `${uniquePrefix}-HTGT`,
+        targetName: 'Hierarchy Clone',
+        userId: user.id,
+      },
+      jobContext(),
+    )
+    expect(result.itemsCloned).toBe(4)
+
+    const cloned = await testDb.db
+      .select({
+        id: items.id,
+        masterId: items.masterId,
+        usageOf: items.usageOf,
+      })
+      .from(items)
+      .where(eq(items.designId, result.designId))
+    const cloneOf = (sourceId: string) => {
+      const row = cloned.find((item) => item.usageOf === sourceId)
+      if (!row) throw new Error(`no clone of ${sourceId}`)
+      return row
+    }
+
+    // The derived requirement's parent is the clone's parent, not the
+    // source's; the test case's plan is the clone's plan.
+    const [clonedChild] = await testDb.db
+      .select({ parentRequirementId: requirements.parentRequirementId })
+      .from(requirements)
+      .where(eq(requirements.itemId, cloneOf(child.id).id))
+    expect(clonedChild?.parentRequirementId).toBe(cloneOf(parent.id).id)
+
+    const [clonedCase] = await testDb.db
+      .select({ testPlanMasterId: testCases.testPlanMasterId })
+      .from(testCases)
+      .where(eq(testCases.itemId, cloneOf(testCase.id).id))
+    expect(clonedCase?.testPlanMasterId).toBe(cloneOf(plan.id).masterId)
+    expect(clonedCase?.testPlanMasterId).not.toBe(plan.masterId)
+
+    // And the source plan still lists only its own case.
+    expect(
+      (await VerificationService.getTestCasesForPlan(plan.id)).map(
+        (tc) => tc.id,
+      ),
+    ).toEqual([testCase.id])
   })
 
   it('frees the requested code when the clone fails part-way', async () => {

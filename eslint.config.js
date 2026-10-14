@@ -36,9 +36,9 @@ const local = {
 // `MODULE_PACKAGES` comes from the manifest, not a list here. Writing the
 // names here would put a proprietary package id inside a core file —
 // `boundary:check` says so, and it is right: this file is published, where
-// those packages do not exist. In the public tree `PROPRIETARY` is empty, so
-// the list is empty and the rule below restricts nothing, which is exactly
-// correct there.
+// those packages do not exist. In the public tree no workspace is proprietary,
+// so `MODULE_PACKAGES` is empty, the list is empty and the rule below
+// restricts nothing, which is exactly correct there.
 //
 // Each module keeps its code under `<module-name>/` and (where it
 // has any) its components under `components/<module-name>/`, so those
@@ -183,7 +183,7 @@ export default [
   //
   // Omitted entirely when there is nothing to restrict. ESLint rejects an empty
   // `group`, so a config that always declares the rule fails to *load* in the
-  // published tree, where `PROPRIETARY` is empty by design — lint would not
+  // published tree, where `MODULE_PACKAGES` is empty by design — lint would not
   // report a violation there, it would refuse to run at all.
   ...(proprietaryImportPatterns.length > 0
     ? [
@@ -202,7 +202,7 @@ export default [
                   {
                     group: proprietaryImportPatterns,
                     message:
-                      'Core cannot import proprietary code. Invert it through a registry — see docs/architecture/loadable-modules-architecture.md.',
+                      'Core cannot import proprietary code. Invert it through a registry — the registries are listed in CLAUDE.md under the extension boundary.',
                   },
                 ],
               },

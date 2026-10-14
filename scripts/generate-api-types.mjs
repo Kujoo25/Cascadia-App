@@ -11,13 +11,10 @@
  * after `openapi:check`, so one job owns contract drift end to end
  * (routes → snapshot → generated types).
  *
- * The types are generated from the COMMUNITY view of the spec in both trees:
- * in this repository the module endpoints (OPENAPI_DROP_PATHS from
- * publish/overlay.mjs) are filtered out before generation, and in the
- * published repository the committed snapshot never had them — so the
- * committed .gen.ts is byte-identical across editions and the publish
- * pipeline copies it as-is. Module packages type their own routes; core's
- * generated surface must not leak their shapes.
+ * The types are generated from `docs/api/openapi.v1.json`, which is the
+ * community contract in every tree, whichever edition the tree composes — so
+ * the committed .gen.ts is identical across editions. Module packages type
+ * their own routes; core's generated surface must not carry their shapes.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -29,20 +26,7 @@ const SNAPSHOT = resolve(REPO, 'docs', 'api', 'openapi.v1.json')
 const OUT = resolve(REPO, 'cascadia-web', 'src', 'api', 'openapi-types.gen.ts')
 const CHECK = process.argv.includes('--check')
 
-// The module endpoints to filter before generating. In the published tree
-// publish/overlay.mjs does not exist — and its snapshot already lacks these
-// paths — so an empty list is exactly right there.
-let dropPaths = []
-try {
-  ;({ OPENAPI_DROP_PATHS: dropPaths } = await import('../publish/overlay.mjs'))
-} catch {
-  dropPaths = []
-}
-
 const spec = JSON.parse(readFileSync(SNAPSHOT, 'utf8'))
-spec.paths = Object.fromEntries(
-  Object.entries(spec.paths).filter(([path]) => !dropPaths.includes(path)),
-)
 
 const ast = await openapiTS(spec)
 

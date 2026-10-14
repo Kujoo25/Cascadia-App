@@ -125,6 +125,35 @@ New tables grow: see
 `EVENT_RETENTION_DAYS` and `WEBHOOK_DELIVERY_RETENTION_DAYS`, both pruned by the
 maintenance sweep.
 
+## Upgrading to v0.7.0 — verification integrity
+
+v0.7.0's migration touches rows, so read this before running it on a populated
+database. `npm run db:migrate` applies it in one transaction and needs no
+downtime window beyond its own runtime, but three of its effects are visible:
+
+**Every requirement's `verification_status` is recomputed** from the latest
+execution of each test case that verifies it — any failed makes it `Failed`,
+every one passed `Passed`, any run at all `InProgress`, otherwise `NotStarted`
+— and from now on it is derived: the field is ignored on update. A status
+someone set by hand changes to what the tests say. `Waived` is kept, and gets a
+waiver record whose note says it predates the derivation.
+
+**The default TestCase lifecycle collapses to Draft / Active / Obsolete.** A
+test case sitting in `NotRun`, `Passed`, `Failed` or `Blocked` moves to
+`Active`, and a result recorded only as a state is copied into its
+`execution_status` where none was recorded. The definition is rewritten only
+while it is still at the shipped version; one an administrator has edited is
+left alone, together with its test cases, and wants the same collapse by hand
+afterwards.
+
+**`test_cases.test_plan_id` becomes `test_plan_master_id`** (the plan's
+`items.master_id`, so plan membership survives a plan revision), and the unused
+`requirements.allocated_design_id` is dropped. Neither column was accepted by
+any API; `testPlanId` on the wire is unchanged.
+
+`npm run db:check-backfills` replays each of these against seeded rows — see
+[Preflight the data-dependent migrations](#preflight-the-data-dependent-migrations).
+
 ## Upgrading an install created before v0.5.0
 
 Pre-0.5 databases were created by `db:push`, which writes no migration
@@ -391,4 +420,4 @@ for.
   ships it, so each publish carries at most one new migration per edition.
 - The enterprise migrations are proprietary (they name module tables) and
   never publish; the community migrations under `cascadia-app/drizzle/`
-  ship to the public repo. `npm run publish:verify` checks both directions.
+  ship to the public repo. the publish pipeline's verification step checks both directions.

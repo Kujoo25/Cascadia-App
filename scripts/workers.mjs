@@ -21,7 +21,13 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { appDir, resolveApp } from './edition.mjs'
+import { resolve } from 'node:path'
+import { config as loadEnv } from 'dotenv'
+import { appDir, appTsconfig, resolveApp } from './edition.mjs'
+
+// `.env` is what compose reads too, so the check below sees the same values
+// the containers will. A real environment variable still wins.
+loadEnv({ path: resolve(import.meta.dirname, '..', '.env'), quiet: true })
 
 const CAD_WORKERS = [
   ['cascadia-workers-cad', 'cad-converter-dev'],
@@ -33,6 +39,36 @@ const services = CAD_WORKERS.filter(([dir]) => existsSync(dir)).map(
   ([, service]) => service,
 )
 
+/**
+ * Refuse to start containerized workers against a database other than the
+ * app's.
+ *
+ * Compose builds the workers' connection string from POSTGRES_DB (falling back
+ * to `cascadia`, docker-compose.yml's default), never from DATABASE_URL — so a
+ * `.env` whose DATABASE_URL names some other database starts workers that
+ * connect fine, find no job rows, and skip every job while the app's jobs sit
+ * queued forever. That happened, and it was found by reading logs. Failing
+ * here, before anything starts, names the two values that disagree.
+ */
+function assertComposeDatabaseMatches() {
+  const url = process.env.DATABASE_URL
+  if (!url) return
+  let appDatabase
+  try {
+    appDatabase = decodeURIComponent(new URL(url).pathname.replace(/^\//, ''))
+  } catch {
+    return
+  }
+  const composeDatabase = process.env.POSTGRES_DB ?? 'cascadia'
+  if (!appDatabase || appDatabase === composeDatabase) return
+  console.error(
+    `DATABASE_URL names the database "${appDatabase}" but the containerized ` +
+      `workers would use "${composeDatabase}" (POSTGRES_DB${process.env.POSTGRES_DB ? '' : ', unset, so the compose default'}).\n` +
+      `Set POSTGRES_DB=${appDatabase} in .env so the workers see the app's jobs.`,
+  )
+  process.exit(1)
+}
+
 const command = process.argv[2]
 const run = (args) =>
   execFileSync('docker', args, {
@@ -43,13 +79,19 @@ const run = (args) =>
 try {
   switch (command) {
     case 'dev': {
+      assertComposeDatabaseMatches()
       run(['compose', 'up', '-d', 'rabbitmq'])
       if (services.length > 0) {
         run(['compose', '--profile', 'cad', 'up', '-d', ...services, '--build'])
       }
       execFileSync(
         'npx',
-        ['tsx', `${appDir(resolveApp())}/src/jobs-worker.ts`],
+        [
+          'tsx',
+          '--tsconfig',
+          appTsconfig(),
+          `${appDir(resolveApp())}/src/jobs-worker.ts`,
+        ],
         {
           stdio: 'inherit',
           shell: process.platform === 'win32',
@@ -64,7 +106,12 @@ try {
     case 'jobs':
       execFileSync(
         'npx',
-        ['tsx', `${appDir(resolveApp())}/src/jobs-worker.ts`],
+        [
+          'tsx',
+          '--tsconfig',
+          appTsconfig(),
+          `${appDir(resolveApp())}/src/jobs-worker.ts`,
+        ],
         {
           stdio: 'inherit',
           shell: process.platform === 'win32',

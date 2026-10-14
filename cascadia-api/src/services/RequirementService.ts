@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import { db } from '../db'
 import { notDeleted } from '../db/filters'
 import { designs } from '../db/schema/designs'
 import { itemRelationships, items, requirements } from '../db/schema/items'
-import { branchItems } from '../db/schema/versioning'
 import { NotFoundError, ValidationError } from '../errors'
 import { ItemService } from '../items/services/ItemService'
 import { ItemRelationshipService } from '../items/services/ItemRelationshipService'
@@ -17,11 +16,67 @@ import {
   VERIFIED_BY_RELATIONSHIP,
 } from '../items/traceability-relationships'
 import { resolveInheritedLineage } from '../items/version-lineage'
+import { REQUIREMENT_VERIFICATION_CHANGED, publishDomainEvent } from '../events'
 import { BranchService } from './BranchService'
+import { resolveLinkEndIds, resolveLinkEnds } from './link-ends'
 import { VersionResolver } from './VersionResolver'
+import {
+  isVerifiedStatus,
+  rollupVerificationForMasters,
+} from './verification-rollup'
 import type { VersionContext } from './VersionResolver'
+import type { SuspectReason, SuspectState } from '../items/trace-affirmation'
 import type { PersistedItem } from '@cascadia/commons/items/types/base'
-import type { Requirement } from '@cascadia/commons/items/types/requirement'
+import type { RequirementSheetRow } from '@cascadia/commons/import/types/requirement'
+import type {
+  Requirement,
+  VerificationWaiver,
+} from '@cascadia/commons/items/types/requirement'
+
+/**
+ * The suspect flag a trace reader attaches to each link it lists — see
+ * `items/trace-affirmation.ts`. A link whose state could not be computed
+ * (the edge vanished between the two reads) is reported as not suspect.
+ */
+export interface SuspectLinkFields {
+  suspect: boolean
+  suspectReasons: Array<SuspectReason>
+}
+
+/**
+ * The owners (keys of a `findIncomingLinks`/`findOutgoingLinks` read) with at
+ * least one suspect link among those listed for them. The coverage reads
+ * combine it with the derived status: a claim under review is not evidence.
+ */
+export async function requirementsWithSuspectLinks(
+  links: Map<string, Array<{ id: string }>>,
+): Promise<Set<string>> {
+  const ownerOfLink = new Map<string, string>()
+  for (const [ownerId, rels] of links) {
+    for (const rel of rels) ownerOfLink.set(rel.id, ownerId)
+  }
+  const suspect = new Set<string>()
+  if (ownerOfLink.size === 0) return suspect
+  const states = await ItemRelationshipService.suspectStatesFor([
+    ...ownerOfLink.keys(),
+  ])
+  for (const [relationshipId, ownerId] of ownerOfLink) {
+    if (states.get(relationshipId)?.suspect) suspect.add(ownerId)
+  }
+  return suspect
+}
+
+/** The `SuspectLinkFields` for one listed link, from a `suspectStatesFor` read. */
+export function suspectFields(
+  states: Map<string, SuspectState>,
+  relationshipId: string,
+): SuspectLinkFields {
+  const state = states.get(relationshipId)
+  return {
+    suspect: state?.suspect ?? false,
+    suspectReasons: state?.reasons ?? [],
+  }
+}
 
 /**
  * Relationship type constants for requirements domain.
@@ -84,6 +139,25 @@ export interface RequirementGap {
 }
 
 /**
+ * One suspect trace link in a design's coverage: the requirement it is
+ * about, the other end, and why the claim is stale.
+ */
+export interface SuspectCoverageLink {
+  requirementId: string
+  requirementNumber: string
+  requirementName: string | null
+  priority: string | null
+  relationshipId: string
+  relationshipType: string
+  /** The item at the other end of the link, resolved to its current row. */
+  counterpartId: string
+  counterpartNumber: string
+  counterpartName: string | null
+  counterpartType: string
+  suspectReasons: Array<SuspectReason>
+}
+
+/**
  * Requirements coverage metrics for a design
  */
 export interface RequirementsCoverage {
@@ -91,16 +165,25 @@ export interface RequirementsCoverage {
   allocated: number
   satisfied: number
   verified: number
+  /**
+   * Requirements with at least one suspect trace link — a satisfaction,
+   * allocation or verification claim one of whose ends revised since it was
+   * last affirmed. Counted beside the coverage figures rather than subtracted
+   * from them: the link is still there, it just needs a look.
+   */
+  suspect: number
   allocatedPercent: number
   satisfiedPercent: number
   verifiedPercent: number
+  suspectPercent: number
   gaps: Array<RequirementGap>
+  suspectLinks: Array<SuspectCoverageLink>
 }
 
 /**
  * Item that satisfies a requirement
  */
-export interface SatisfyingItem {
+export interface SatisfyingItem extends SuspectLinkFields {
   id: string
   itemNumber: string
   name: string | null
@@ -114,89 +197,6 @@ export interface SatisfyingItem {
  * Service for requirements traceability and satisfaction linking
  */
 export class RequirementService {
-  /**
-   * Resolve one end of a link onto `branchId`: the row that branch is
-   * currently working from for this item's master, or the item itself when
-   * the branch does not track it (it inherits main's row).
-   *
-   * Callers name items by whatever id they hold — usually main's — so
-   * finding the branch's own row is this service's job, not theirs. What the
-   * caller may then do with that row is the edit-lock policy's call, made
-   * where the edge is written.
-   */
-  private static async resolveOnBranch(
-    item: PersistedItem,
-    branchId: string,
-  ): Promise<PersistedItem> {
-    const branch = await BranchService.getById(branchId)
-    if (!branch) {
-      throw new NotFoundError('Branch', branchId, {
-        operation: 'resolveOnBranch',
-      })
-    }
-    if (item.designId && item.designId !== branch.designId) {
-      throw new ValidationError(
-        `Item '${item.itemNumber}' is not in the design that branch '${branch.name}' belongs to`,
-        undefined,
-        { operation: 'resolveOnBranch', itemId: item.id },
-      )
-    }
-
-    const [branchRow] = await db
-      .select({ currentItemId: branchItems.currentItemId })
-      .from(branchItems)
-      .where(
-        and(
-          eq(branchItems.branchId, branchId),
-          eq(branchItems.itemMasterId, item.masterId),
-        ),
-      )
-      .limit(1)
-
-    if (!branchRow?.currentItemId || branchRow.currentItemId === item.id) {
-      return item
-    }
-    return (await ItemService.findById(branchRow.currentItemId)) ?? item
-  }
-
-  /**
-   * Resolve both ends of a link for the branch the caller named. A no-op
-   * without one — the link is then written exactly where the caller pointed.
-   */
-  private static async resolveLinkEnds(
-    source: PersistedItem,
-    target: PersistedItem,
-    branchId: string | undefined,
-  ): Promise<{ source: PersistedItem; target: PersistedItem }> {
-    if (!branchId) return { source, target }
-    return {
-      source: await this.resolveOnBranch(source, branchId),
-      target: await this.resolveOnBranch(target, branchId),
-    }
-  }
-
-  /**
-   * `resolveLinkEnds` for the unlink paths, which work in ids and treat an
-   * item that no longer exists as "no such link" rather than an error — the
-   * behaviour those paths have always had.
-   */
-  private static async resolveLinkEndIds(
-    sourceId: string,
-    targetId: string,
-    branchId: string | undefined,
-  ): Promise<{ sourceId: string; targetId: string }> {
-    if (!branchId) return { sourceId, targetId }
-
-    const [source, target] = await Promise.all([
-      ItemService.findById(sourceId),
-      ItemService.findById(targetId),
-    ])
-    if (!source || !target) return { sourceId, targetId }
-
-    const ends = await this.resolveLinkEnds(source, target, branchId)
-    return { sourceId: ends.source.id, targetId: ends.target.id }
-  }
-
   /**
    * Create SATISFIES relationships between items and a requirement.
    * Direction: Item (Part/Document) → Requirement (source → target)
@@ -224,11 +224,7 @@ export class RequirementService {
         })
       }
 
-      const ends = await this.resolveLinkEnds(
-        item,
-        requirement,
-        options?.branchId,
-      )
+      const ends = await resolveLinkEnds(item, requirement, options?.branchId)
 
       // Check if relationship already exists
       const existing = await db
@@ -263,7 +259,7 @@ export class RequirementService {
     userId: string,
     options?: TraceabilityLinkOptions,
   ): Promise<void> {
-    const ends = await this.resolveLinkEndIds(
+    const ends = await resolveLinkEndIds(
       itemId,
       requirementId,
       options?.branchId,
@@ -320,6 +316,9 @@ export class RequirementService {
       })
       .from(items)
       .where(and(inArray(items.id, sourceIds), notDeleted()))
+    const states = await ItemRelationshipService.suspectStatesFor(
+      relationships.map((r) => r.id),
+    )
 
     // Map items to include relationship ID
     return sourceItems.map((item) => {
@@ -327,6 +326,7 @@ export class RequirementService {
       return {
         ...item,
         relationshipId: rel!.id,
+        ...suspectFields(states, rel!.id),
       }
     })
   }
@@ -335,14 +335,16 @@ export class RequirementService {
    * Get requirements that an item satisfies.
    */
   static async getRequirementsSatisfiedBy(itemId: string): Promise<
-    Array<{
-      id: string
-      itemNumber: string
-      name: string | null
-      priority: string | null
-      verificationStatus: string | null
-      relationshipId: string
-    }>
+    Array<
+      {
+        id: string
+        itemNumber: string
+        name: string | null
+        priority: string | null
+        verificationStatus: string | null
+        relationshipId: string
+      } & SuspectLinkFields
+    >
   > {
     // A requirement revised since this link was made is named by the row the
     // release superseded, so targets resolve forward.
@@ -384,6 +386,9 @@ export class RequirementService {
       })
       .from(requirements)
       .where(inArray(requirements.itemId, targetIds))
+    const states = await ItemRelationshipService.suspectStatesFor(
+      relationships.map((r) => r.id),
+    )
 
     // Combine data
     return requirementItems.map((req) => {
@@ -396,6 +401,7 @@ export class RequirementService {
         priority: reqData?.priority ?? null,
         verificationStatus: reqData?.verificationStatus ?? null,
         relationshipId: rel!.id,
+        ...suspectFields(states, rel!.id),
       }
     })
   }
@@ -426,7 +432,7 @@ export class RequirementService {
       })
     }
 
-    const ends = await this.resolveLinkEnds(
+    const ends = await resolveLinkEnds(
       requirement,
       targetItem,
       options?.branchId,
@@ -464,7 +470,7 @@ export class RequirementService {
     userId: string,
     options?: TraceabilityLinkOptions,
   ): Promise<void> {
-    const ends = await this.resolveLinkEndIds(
+    const ends = await resolveLinkEndIds(
       requirementId,
       targetItemId,
       options?.branchId,
@@ -522,12 +528,16 @@ export class RequirementService {
       })
       .from(items)
       .where(and(inArray(items.id, targetIds), notDeleted()))
+    const states = await ItemRelationshipService.suspectStatesFor(
+      relationships.map((r) => r.id),
+    )
 
     return targetItems.map((item) => {
       const rel = relationships.find((r) => r.targetId === item.id)
       return {
         ...item,
         relationshipId: rel!.id,
+        ...suspectFields(states, rel!.id),
       }
     })
   }
@@ -638,11 +648,13 @@ export class RequirementService {
     // No branch in play: create on main. ItemService.create is what rejects
     // this once the design has released something.
     if (!branchId) {
-      return ItemService.create(
+      const child = await ItemService.create<Requirement>(
         'Requirement',
         derivedData as Requirement,
         userId,
       )
+      await this.recordDerivation(child, parentRequirement, undefined, userId)
+      return child
     }
 
     const branch = await BranchService.getById(branchId)
@@ -669,8 +681,44 @@ export class RequirementService {
         `Derived ${itemNumber} from ${parentRequirement.itemNumber}`,
       userId,
     )
+    const child = item as Requirement
+    await this.recordDerivation(child, parentRequirement, branchId, userId)
 
-    return item as Requirement
+    return child
+  }
+
+  /**
+   * The derive hierarchy as an edge, beside the column.
+   *
+   * `parentRequirementId` is what the hierarchy readers follow; the
+   * `DERIVES_FROM` edge is what the relationship graph, the catalog's pickers
+   * and the demo dataset agree on, and until 2026-10-09 only the dataset had
+   * it. Written with the edit guard bypassed, in the same breath as the
+   * child's creation: it is the child's own initial structure, the way a
+   * materialization writes a new part's BOM lines, and on a branch the child
+   * is not yet checked out to anyone.
+   */
+  private static async recordDerivation(
+    child: Requirement,
+    parent: PersistedItem,
+    branchId: string | undefined,
+    userId: string,
+  ): Promise<void> {
+    // A created requirement carries the base columns at runtime; `Requirement`
+    // types them as optional because the same shape is used for input.
+    const ends = await resolveLinkEnds(
+      child as unknown as PersistedItem,
+      parent,
+      branchId,
+    )
+    await ItemService.addRelationship(
+      ends.source.id,
+      ends.target.id,
+      DERIVES_FROM_RELATIONSHIP,
+      userId,
+      undefined,
+      { bypassEditGuard: true },
+    )
   }
 
   /**
@@ -936,10 +984,13 @@ export class RequirementService {
         allocated: 0,
         satisfied: 0,
         verified: 0,
+        suspect: 0,
         allocatedPercent: 0,
         satisfiedPercent: 0,
         verifiedPercent: 0,
+        suspectPercent: 0,
         gaps: [],
+        suspectLinks: [],
       }
     }
 
@@ -954,30 +1005,45 @@ export class RequirementService {
     )
     const allocatedIds = idsWithLinks(allocatedLinks)
 
-    const satisfiedIds = idsWithLinks(
-      await ItemRelationshipService.findIncomingLinks(
-        requirementIds,
-        SATISFIES_RELATIONSHIP,
-      ),
+    const satisfiedLinks = await ItemRelationshipService.findIncomingLinks(
+      requirementIds,
+      SATISFIES_RELATIONSHIP,
+    )
+    const satisfiedIds = idsWithLinks(satisfiedLinks)
+
+    const verifiedLinks = await ItemRelationshipService.findIncomingLinks(
+      requirementIds,
+      VERIFIED_BY_RELATIONSHIP,
     )
 
-    // A requirement counts as verified with a test case OR verificationStatus 'Passed'
-    const verifiedByTestIds = idsWithLinks(
-      await ItemRelationshipService.findIncomingLinks(
-        requirementIds,
-        VERIFIED_BY_RELATIONSHIP,
-      ),
+    const suspectLinks = await this.suspectCoverageLinks(
+      allRequirements,
+      allocatedLinks,
+      satisfiedLinks,
+      verifiedLinks,
+    )
+    const suspectRequirementIds = new Set(
+      suspectLinks.map((link) => link.requirementId),
     )
 
-    // A requirement is considered verified if it has a test case OR if its status is 'Passed'
-    const verifiedCount = allRequirements.filter(
-      (r) => verifiedByTestIds.has(r.id) || r.verificationStatus === 'Passed',
-    ).length
+    // Verified by the one rule every coverage read applies: the derived
+    // status says Passed (or a waiver is recorded), and no verifying claim is
+    // suspect — a claim under review is not evidence. A linked test that has
+    // never run verifies nothing yet.
+    const suspectVerifiedIds = new Set(
+      suspectLinks
+        .filter((link) => link.relationshipType === VERIFIED_BY_RELATIONSHIP)
+        .map((link) => link.requirementId),
+    )
+    const isVerified = (r: { id: string; verificationStatus: string | null }) =>
+      isVerifiedStatus(r.verificationStatus) && !suspectVerifiedIds.has(r.id)
+    const verifiedCount = allRequirements.filter(isVerified).length
 
     // Calculate percentages
     const allocated = allocatedIds.size
     const satisfied = satisfiedIds.size
     const verified = verifiedCount
+    const suspect = suspectRequirementIds.size
 
     // Identify gaps
     const gaps: Array<RequirementGap> = []
@@ -998,11 +1064,7 @@ export class RequirementService {
           priority: req.priority,
           gapType: 'not_satisfied',
         })
-      } else if (
-        !verifiedByTestIds.has(req.id) &&
-        req.verificationStatus !== 'Passed'
-      ) {
-        // Not verified = no test case AND status not 'Passed'
+      } else if (!isVerified(req)) {
         gaps.push({
           id: req.id,
           itemNumber: req.itemNumber,
@@ -1030,26 +1092,266 @@ export class RequirementService {
       allocated,
       satisfied,
       verified,
+      suspect,
       allocatedPercent: Math.round((allocated / totalRequirements) * 1000) / 10,
       satisfiedPercent: Math.round((satisfied / totalRequirements) * 1000) / 10,
       verifiedPercent: Math.round((verified / totalRequirements) * 1000) / 10,
+      suspectPercent: Math.round((suspect / totalRequirements) * 1000) / 10,
       gaps,
+      suspectLinks,
     }
   }
 
   /**
-   * Update the verification status of a requirement.
+   * The suspect links among a coverage read's trace edges, each attributed to
+   * the requirement it covers — the same edges the coverage counters were
+   * computed from, so a requirement counted as satisfied by a suspect claim
+   * is listed here rather than silently counted clean.
    */
-  static async updateVerificationStatus(
-    requirementId: string,
-    verificationStatus: string,
-    userId: string,
-  ): Promise<void> {
-    await ItemService.update(
-      requirementId,
-      { verificationStatus } as Partial<Requirement>,
-      userId,
+  private static async suspectCoverageLinks(
+    allRequirements: Array<{
+      id: string
+      itemNumber: string
+      name: string | null
+      priority: string | null
+    }>,
+    allocatedLinks: Map<string, Array<typeof itemRelationships.$inferSelect>>,
+    satisfiedLinks: Map<string, Array<typeof itemRelationships.$inferSelect>>,
+    verifiedLinks: Map<string, Array<typeof itemRelationships.$inferSelect>>,
+  ): Promise<Array<SuspectCoverageLink>> {
+    // Allocation is the requirement's outgoing edge, so the other end is its
+    // (forward-resolved) target; satisfaction and verification point at the
+    // requirement, so the other end is the source.
+    const candidates: Array<{
+      requirementId: string
+      rel: typeof itemRelationships.$inferSelect
+      counterpartId: string
+    }> = []
+    for (const [requirementId, rels] of allocatedLinks) {
+      for (const rel of rels) {
+        candidates.push({ requirementId, rel, counterpartId: rel.targetId })
+      }
+    }
+    for (const links of [satisfiedLinks, verifiedLinks]) {
+      for (const [requirementId, rels] of links) {
+        for (const rel of rels) {
+          candidates.push({ requirementId, rel, counterpartId: rel.sourceId })
+        }
+      }
+    }
+    if (candidates.length === 0) return []
+
+    const states = await ItemRelationshipService.suspectStatesFor(
+      candidates.map((c) => c.rel.id),
     )
+    const suspect = candidates.filter((c) => states.get(c.rel.id)?.suspect)
+    if (suspect.length === 0) return []
+
+    const counterparts = await db
+      .select({
+        id: items.id,
+        itemNumber: items.itemNumber,
+        name: items.name,
+        itemType: items.itemType,
+      })
+      .from(items)
+      .where(
+        inArray(items.id, [...new Set(suspect.map((c) => c.counterpartId))]),
+      )
+    const counterpartById = new Map(counterparts.map((row) => [row.id, row]))
+    const requirementById = new Map(allRequirements.map((r) => [r.id, r]))
+
+    return suspect.flatMap(({ requirementId, rel, counterpartId }) => {
+      const requirement = requirementById.get(requirementId)
+      const counterpart = counterpartById.get(counterpartId)
+      if (!requirement || !counterpart) return []
+      return [
+        {
+          requirementId,
+          requirementNumber: requirement.itemNumber,
+          requirementName: requirement.name,
+          priority: requirement.priority,
+          relationshipId: rel.id,
+          relationshipType: rel.relationshipType,
+          counterpartId: counterpart.id,
+          counterpartNumber: counterpart.itemNumber,
+          counterpartName: counterpart.name,
+          counterpartType: counterpart.itemType,
+          suspectReasons: states.get(rel.id)?.reasons ?? [],
+        },
+      ]
+    })
+  }
+
+  /**
+   * Waive a requirement's verification: the one manual exception to the
+   * derived status. Needs a note, wins over the derivation until cleared,
+   * and is a review record rather than a design edit — written without the
+   * edit lock, so a released requirement can be waived with no change order,
+   * charged `requirements:update` by its route.
+   */
+  /**
+   * The design's current requirements as sheet rows, the way the requirements
+   * export writes them: every import field but the revision, each a string,
+   * the parent by item number so the hierarchy survives a round trip.
+   */
+  static async exportRows(
+    designId: string,
+  ): Promise<Array<RequirementSheetRow>> {
+    const rows = await db
+      .select({
+        itemNumber: items.itemNumber,
+        name: items.name,
+        description: requirements.description,
+        type: requirements.type,
+        priority: requirements.priority,
+        category: requirements.category,
+        source: requirements.source,
+        acceptanceCriteria: requirements.acceptanceCriteria,
+        verificationMethod: requirements.verificationMethod,
+        parentRequirementId: requirements.parentRequirementId,
+      })
+      .from(items)
+      .innerJoin(requirements, eq(items.id, requirements.itemId))
+      .where(
+        and(
+          eq(items.designId, designId),
+          eq(items.itemType, 'Requirement'),
+          eq(items.isCurrent, true),
+          notDeleted(),
+        ),
+      )
+      .orderBy(asc(items.itemNumber))
+
+    const parentIds = [
+      ...new Set(
+        rows
+          .map((row) => row.parentRequirementId)
+          .filter((id): id is string => id !== null),
+      ),
+    ]
+    const parents =
+      parentIds.length > 0
+        ? await db
+            .select({ id: items.id, itemNumber: items.itemNumber })
+            .from(items)
+            .where(inArray(items.id, parentIds))
+        : []
+    const numberById = new Map(parents.map((p) => [p.id, p.itemNumber]))
+
+    return rows.map((row) => ({
+      itemNumber: row.itemNumber,
+      name: row.name ?? '',
+      description: row.description ?? '',
+      type: row.type ?? '',
+      priority: row.priority ?? '',
+      category: row.category ?? '',
+      source: row.source ?? '',
+      acceptanceCriteria: row.acceptanceCriteria ?? '',
+      verificationMethod: row.verificationMethod ?? '',
+      parentItemNumber: row.parentRequirementId
+        ? (numberById.get(row.parentRequirementId) ?? '')
+        : '',
+    }))
+  }
+
+  static async waiveVerification(
+    requirementId: string,
+    note: string,
+    userId: string,
+  ): Promise<{ status: 'Waived'; waiver: VerificationWaiver }> {
+    const requirement = await ItemService.findById(requirementId)
+    if (!requirement || requirement.itemType !== 'Requirement') {
+      throw new NotFoundError('Requirement', requirementId, {
+        operation: 'waiveVerification',
+      })
+    }
+    const trimmed = note.trim()
+    if (!trimmed) {
+      throw new ValidationError('A waiver needs a note saying why', [
+        { field: 'note', message: 'Required' },
+      ])
+    }
+    const waiver: VerificationWaiver = {
+      note: trimmed,
+      waivedBy: userId,
+      waivedAt: new Date().toISOString(),
+    }
+
+    await db.transaction(async (tx) => {
+      const [before] = await tx
+        .select({ verificationStatus: requirements.verificationStatus })
+        .from(requirements)
+        .where(eq(requirements.itemId, requirementId))
+        .limit(1)
+      await tx
+        .update(requirements)
+        .set({ verificationStatus: 'Waived', verificationWaiver: waiver })
+        .where(eq(requirements.itemId, requirementId))
+      await tx
+        .update(items)
+        .set({ modifiedAt: new Date(), modifiedBy: userId })
+        .where(eq(items.id, requirementId))
+      if (before?.verificationStatus !== 'Waived') {
+        await publishDomainEvent(tx, REQUIREMENT_VERIFICATION_CHANGED, {
+          actorId: userId,
+          subject: { id: requirement.id, masterId: requirement.masterId },
+          context: { designId: requirement.designId ?? undefined },
+          payload: {
+            requirementId: requirement.id,
+            masterId: requirement.masterId,
+            itemNumber: requirement.itemNumber,
+            designId: requirement.designId ?? null,
+            previousStatus: before?.verificationStatus ?? null,
+            status: 'Waived',
+            cause: 'waiver',
+            testCaseId: null,
+          },
+        })
+      }
+    })
+
+    return { status: 'Waived', waiver }
+  }
+
+  /**
+   * Clear a waiver: the derived status takes over again, recomputed from the
+   * verifying tests' executions in the same transaction.
+   */
+  static async clearVerificationWaiver(
+    requirementId: string,
+    userId: string,
+  ): Promise<{ status: string }> {
+    const requirement = await ItemService.findById(requirementId)
+    if (!requirement || requirement.itemType !== 'Requirement') {
+      throw new NotFoundError('Requirement', requirementId, {
+        operation: 'clearVerificationWaiver',
+      })
+    }
+
+    return db.transaction(async (tx) => {
+      await tx
+        .update(requirements)
+        .set({ verificationWaiver: null })
+        .where(eq(requirements.itemId, requirementId))
+      await tx
+        .update(items)
+        .set({ modifiedAt: new Date(), modifiedBy: userId })
+        .where(eq(items.id, requirementId))
+      const changes = await rollupVerificationForMasters(
+        tx,
+        [requirement.masterId],
+        { actorId: userId, cause: 'waiver_cleared' },
+      )
+      const own = changes.find((c) => c.requirementId === requirementId)
+      if (own) return { status: own.status }
+      const [row] = await tx
+        .select({ verificationStatus: requirements.verificationStatus })
+        .from(requirements)
+        .where(eq(requirements.itemId, requirementId))
+        .limit(1)
+      return { status: row?.verificationStatus ?? 'NotStarted' }
+    })
   }
 
   /**
@@ -1103,7 +1405,7 @@ export class RequirementService {
         )
       }
 
-      const ends = await this.resolveLinkEnds(
+      const ends = await resolveLinkEnds(
         testCase,
         requirement,
         options?.branchId,
@@ -1142,7 +1444,7 @@ export class RequirementService {
     userId: string,
     options?: TraceabilityLinkOptions,
   ): Promise<void> {
-    const ends = await this.resolveLinkEndIds(
+    const ends = await resolveLinkEndIds(
       testCaseId,
       requirementId,
       options?.branchId,
@@ -1170,15 +1472,17 @@ export class RequirementService {
    * Get test cases that verify a requirement (VERIFIED_BY relationships).
    */
   static async getVerifyingTests(requirementId: string): Promise<
-    Array<{
-      id: string
-      itemNumber: string
-      name: string | null
-      testType: string | null
-      executionStatus: string | null
-      lastExecutedAt: Date | null
-      relationshipId: string
-    }>
+    Array<
+      {
+        id: string
+        itemNumber: string
+        name: string | null
+        testType: string | null
+        executionStatus: string | null
+        lastExecutedAt: Date | null
+        relationshipId: string
+      } & SuspectLinkFields
+    >
   > {
     // Inherited across revisions, and without the rows a revision left
     // behind — see ItemRelationshipService.findIncomingLinks.
@@ -1224,6 +1528,9 @@ export class RequirementService {
       })
       .from(testCases)
       .where(inArray(testCases.itemId, sourceIds))
+    const states = await ItemRelationshipService.suspectStatesFor(
+      relationships.map((r) => r.id),
+    )
 
     // Combine data
     return testCaseItems.map((tc) => {
@@ -1237,6 +1544,7 @@ export class RequirementService {
         executionStatus: tcData?.executionStatus ?? null,
         lastExecutedAt: tcData?.lastExecutedAt ?? null,
         relationshipId: rel!.id,
+        ...suspectFields(states, rel!.id),
       }
     })
   }
@@ -1245,14 +1553,16 @@ export class RequirementService {
    * Get requirements that a test case verifies (VERIFIED_BY relationships).
    */
   static async getRequirementsVerifiedBy(testCaseId: string): Promise<
-    Array<{
-      id: string
-      itemNumber: string
-      name: string | null
-      priority: string | null
-      verificationStatus: string | null
-      relationshipId: string
-    }>
+    Array<
+      {
+        id: string
+        itemNumber: string
+        name: string | null
+        priority: string | null
+        verificationStatus: string | null
+        relationshipId: string
+      } & SuspectLinkFields
+    >
   > {
     // Targets resolve forward: a requirement revised since the link was made
     // is named by the row the release superseded.
@@ -1294,6 +1604,9 @@ export class RequirementService {
       })
       .from(requirements)
       .where(inArray(requirements.itemId, targetIds))
+    const states = await ItemRelationshipService.suspectStatesFor(
+      relationships.map((r) => r.id),
+    )
 
     // Combine data
     return requirementItems.map((req) => {
@@ -1306,6 +1619,7 @@ export class RequirementService {
         priority: reqData?.priority ?? null,
         verificationStatus: reqData?.verificationStatus ?? null,
         relationshipId: rel!.id,
+        ...suspectFields(states, rel!.id),
       }
     })
   }

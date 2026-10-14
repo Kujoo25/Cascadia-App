@@ -9,6 +9,7 @@ import type { Requirement } from '@cascadia/commons/items/types/requirement'
 import type { ItemFilters } from '@/query'
 import { PageContainer } from '@/components/layout'
 import { RequirementTable } from '@/components/requirements/RequirementTable'
+import { ImportButton } from '@/components/import/ImportButton'
 import { useVersionContext } from '@/hooks/useVersionContext'
 import { useServerDataGrid } from '@/hooks/useServerDataGrid'
 import {
@@ -195,15 +196,26 @@ function RequirementsListPage() {
             )}
           </p>
         </div>
-        <Link
-          to="/requirements/new"
-          search={selectedDesignId ? { designId: selectedDesignId } : undefined}
-        >
-          <Button disabled={!isEditable && context.type !== 'main'}>
-            <Plus className="h-4 w-4 mr-2" />
-            Create Requirement
-          </Button>
-        </Link>
+        <div className="flex items-center gap-2">
+          <ImportButton
+            itemType="Requirement"
+            designId={selectedDesignId}
+            onImportComplete={() => {
+              void invalidate('requirements')
+            }}
+          />
+          <Link
+            to="/requirements/new"
+            search={
+              selectedDesignId ? { designId: selectedDesignId } : undefined
+            }
+          >
+            <Button disabled={!isEditable && context.type !== 'main'}>
+              <Plus className="h-4 w-4 mr-2" />
+              Create Requirement
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Stats — one card per lifecycle state, from configuration */}

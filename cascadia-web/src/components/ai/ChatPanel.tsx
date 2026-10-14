@@ -15,7 +15,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ChatInput } from './ChatInput'
 import { ChatMessage } from './ChatMessage'
+import { ChatDialog } from './dialogs/ChatDialog'
 
+import type { ChatDialogDescriptor } from '@cascadia/commons/ai/dialogs'
 import { Button } from '@/components/ui/Button'
 import { ResizeHandle } from '@/components/ui/ResizeHandle'
 import {
@@ -167,6 +169,14 @@ export function ChatPanel() {
     Map<string, 'confirmed' | 'cancelled'>
   >(new Map())
 
+  // The dialog a "View results" / "Fill in details" button opened, if any.
+  // One at a time: the modal covers the panel, so a second cannot be opened
+  // while the first is up.
+  const [openDialog, setOpenDialog] = useState<ChatDialogDescriptor | null>(
+    null,
+  )
+  const closeDialog = useCallback(() => setOpenDialog(null), [])
+
   const handleConfirm = useCallback(
     (toolCallId: string, toolName: string, toolArgs: string) => {
       setRespondedConfirmations((prev) =>
@@ -205,8 +215,9 @@ export function ChatPanel() {
   //
   // Deliberately once per session rather than on every arrival of query
   // data: a finished response invalidates 'ai', and re-hydrating from the
-  // persisted history there would drop the tool results and confirmation
-  // cards that only ever exist in the streamed messages.
+  // persisted history there would drop the confirmation cards, which only
+  // ever exist in the streamed messages (persisted tool results do come
+  // back — see aiSessionMessagesQuery — but a write preview is not restored).
   useEffect(() => {
     if (!currentSessionId) {
       hydratedSessionRef.current = undefined
@@ -405,12 +416,22 @@ export function ChatPanel() {
               onNavigate={handleNavigate}
               onConfirm={handleConfirm}
               onCancel={handleCancel}
+              onOpenDialog={setOpenDialog}
               respondedConfirmations={respondedConfirmations}
             />
           ))
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* The modal behind a dialog button. Portaled, so it sits above the
+          panel wherever this is rendered. */}
+      <ChatDialog
+        descriptor={openDialog}
+        onClose={closeDialog}
+        onNavigate={handleNavigate}
+        onSendMessage={sendMessage}
+      />
 
       {/* Error display */}
       {error && (

@@ -8,14 +8,19 @@ import {
   makeCodeSchema,
   optionConditionSchema,
 } from '@cascadia/commons/types/variants'
+import { hasPermission } from '@cascadia/commons/auth/permissions'
 import { tagged } from '../adapter'
 import type { OptionCondition } from '@cascadia/commons/types/variants'
 import { db } from '@/db'
 import { itemRelationships, items } from '@/db/schema'
-import { NotFoundError, ValidationError } from '@/errors'
+import { NotFoundError, PermissionDeniedError, ValidationError } from '@/errors'
 import { requireDesignAccess, requireItemsAccess } from '@/auth/access'
+import { intersectPermissions } from '@/auth/api-key-utils'
+import { permissionService } from '@/auth/permission-service'
+import { requireAuth, requirePermission } from '@/auth/server'
 import { ItemService } from '@/items/services/ItemService'
 import { ItemRelationshipService } from '@/items/services/ItemRelationshipService'
+import { getResourceType } from '@/items/item-type-resources'
 import { apiHandler, jsonResponse } from '@/api/handler'
 // Register item types (server-side version)
 import '@/items/registerItemTypes.server'
@@ -111,7 +116,7 @@ const app = new Hono()
 async function requireEdgeAccess(
   userId: string,
   relationshipId: string,
-): Promise<void> {
+): Promise<{ sourceId: string; targetId: string }> {
   const [edge] = await db
     .select({
       sourceId: itemRelationships.sourceId,
@@ -124,6 +129,7 @@ async function requireEdgeAccess(
   if (!edge) throw new NotFoundError('ItemRelationship', relationshipId)
 
   await requireItemsAccess(userId, [edge.sourceId, edge.targetId])
+  return edge
 }
 
 // GET /api/relationships
@@ -468,6 +474,245 @@ app.delete(
 
         await ItemService.removeRelationship(params.relationshipId, user.id)
         return { success: true, message: 'Relationship deleted successfully' }
+      },
+    ),
+  ),
+)
+
+const suspectReasonSchema = z.enum(['source_revised', 'target_revised'])
+
+const bulkAffirmBodySchema = z.object({
+  relationshipIds: z.array(z.string().uuid()).min(1).max(500),
+})
+
+/**
+ * What became of one id in a bulk affirm. Per row rather than all-or-nothing:
+ * an "affirm all suspect" over a panel's links must not be refused outright
+ * because one of them is in a program the caller cannot reach, and a
+ * reviewer wants to know which ones were.
+ */
+const affirmOutcomeSchema = z.enum([
+  'affirmed',
+  'not_found',
+  'forbidden',
+  'not_suspectable',
+])
+
+const bulkAffirmResponseSchema = z.object({
+  affirmed: z.number().int(),
+  results: z.array(
+    z.object({
+      relationshipId: z.string().uuid(),
+      outcome: affirmOutcomeSchema,
+      /** Present when `outcome` is `affirmed`. */
+      suspect: z.boolean().optional(),
+      reasons: z.array(suspectReasonSchema).optional(),
+    }),
+  ),
+})
+
+type BulkAffirmResponse = z.infer<typeof bulkAffirmResponseSchema>
+
+// POST /api/relationships/affirm
+app.post(
+  '/affirm',
+  adapt(
+    apiHandler<Record<string, never>, z.infer<typeof bulkAffirmBodySchema>>(
+      {
+        body: bulkAffirmBodySchema,
+        openapi: {
+          summary: 'Affirm several trace links',
+          description:
+            'The bulk form of `POST /relationships/{relationshipId}/affirm`: ' +
+            'records that each named claim still holds for the versions its ' +
+            'ends currently name. Each id is charged on its own — `update` on ' +
+            'the source item’s type, plus access to both ends — and reported ' +
+            'on its own, so one link the caller may not affirm does not refuse ' +
+            'the rest. At most 500 ids per call.',
+          request: { body: { schema: bulkAffirmBodySchema } },
+          responses: { 200: { schema: bulkAffirmResponseSchema } },
+        },
+      },
+      async ({ body, request, user }) => {
+        const ids = [...new Set(body.relationshipIds)]
+        const edges = await db
+          .select({
+            id: itemRelationships.id,
+            sourceId: itemRelationships.sourceId,
+            targetId: itemRelationships.targetId,
+          })
+          .from(itemRelationships)
+          .where(inArray(itemRelationships.id, ids))
+        const edgeById = new Map(edges.map((edge) => [edge.id, edge]))
+
+        // One type-level check per source type present: the tuple the
+        // single-link route charges, asked rather than required, since a
+        // refusal here is a row's outcome and not the request's. The same
+        // arithmetic as `requirePermission` — a scoped API key narrows the
+        // role's grants and never widens them.
+        const sourceTypes = new Map(
+          (
+            await db
+              .select({ id: items.id, itemType: items.itemType })
+              .from(items)
+              .where(
+                inArray(items.id, [
+                  ...new Set(edges.map((edge) => edge.sourceId)),
+                ]),
+              )
+          ).map((row) => [row.id, row.itemType]),
+        )
+        const auth = await requireAuth(request)
+        const effectivePermissions = auth.scope
+          ? intersectPermissions(
+              await permissionService.getUserPermissions(user.id),
+              auth.scope,
+            )
+          : null
+        const permittedType = new Map<string, boolean>()
+        for (const itemType of new Set(sourceTypes.values())) {
+          const resource = getResourceType(itemType)
+          permittedType.set(
+            itemType,
+            effectivePermissions
+              ? hasPermission(effectivePermissions, resource, 'update')
+              : await permissionService.canUser(user.id, 'update', resource),
+          )
+        }
+
+        // Instance-level access to both ends. One read covers the common
+        // case; only when it refuses does each edge get asked on its own.
+        const ends = [
+          ...new Set(edges.flatMap((edge) => [edge.sourceId, edge.targetId])),
+        ]
+        let reachable: (edge: { sourceId: string; targetId: string }) => boolean
+        try {
+          await requireItemsAccess(user.id, ends)
+          reachable = () => true
+        } catch (error) {
+          if (
+            !(error instanceof PermissionDeniedError) &&
+            !(error instanceof NotFoundError)
+          ) {
+            throw error
+          }
+          const refused = new Set<string>()
+          for (const id of ends) {
+            try {
+              await requireItemsAccess(user.id, [id])
+            } catch (perItem) {
+              if (
+                !(perItem instanceof PermissionDeniedError) &&
+                !(perItem instanceof NotFoundError)
+              ) {
+                throw perItem
+              }
+              refused.add(id)
+            }
+          }
+          reachable = (edge) =>
+            !refused.has(edge.sourceId) && !refused.has(edge.targetId)
+        }
+
+        const results: BulkAffirmResponse['results'] = []
+        for (const relationshipId of ids) {
+          const edge = edgeById.get(relationshipId)
+          if (!edge) {
+            results.push({ relationshipId, outcome: 'not_found' })
+            continue
+          }
+          const sourceType = sourceTypes.get(edge.sourceId)
+          if (
+            !sourceType ||
+            !permittedType.get(sourceType) ||
+            !reachable(edge)
+          ) {
+            results.push({ relationshipId, outcome: 'forbidden' })
+            continue
+          }
+          try {
+            const { state } = await ItemRelationshipService.affirmRelationship(
+              relationshipId,
+              user.id,
+            )
+            results.push({
+              relationshipId,
+              outcome: 'affirmed',
+              suspect: state.suspect,
+              reasons: state.reasons,
+            })
+          } catch (error) {
+            if (error instanceof ValidationError) {
+              results.push({ relationshipId, outcome: 'not_suspectable' })
+            } else if (error instanceof NotFoundError) {
+              results.push({ relationshipId, outcome: 'not_found' })
+            } else {
+              throw error
+            }
+          }
+        }
+
+        return {
+          affirmed: results.filter((r) => r.outcome === 'affirmed').length,
+          results,
+        }
+      },
+    ),
+  ),
+)
+
+// POST /api/relationships/:relationshipId/affirm
+app.post(
+  '/:relationshipId/affirm',
+  adapt(
+    apiHandler<{ relationshipId: string }>(
+      {
+        openapi: {
+          summary: 'Affirm a trace link',
+          description:
+            'Records that a traceability claim (`SATISFIES`, `ALLOCATED_TO`, ' +
+            '`VERIFIED_BY`, `VALIDATES`) still holds for the versions its ends ' +
+            'currently name, which clears its suspect flag. Affirming is a ' +
+            'review record, not an edit of the link, so it needs no checkout; ' +
+            'it charges `update` on the source item’s own type.',
+          request: {
+            params: z.object({ relationshipId: z.string().uuid() }),
+          },
+          responses: {
+            200: {
+              schema: z.object({
+                relationshipId: z.string().uuid(),
+                suspect: z.boolean(),
+                reasons: z.array(suspectReasonSchema),
+              }),
+            },
+          },
+        },
+      },
+      async ({ params, request, user }) => {
+        const edge = await requireEdgeAccess(user.id, params.relationshipId)
+        // Charged on the source's own type, like every other write to an
+        // item's structure (see POST /items/:id/relationships).
+        const source = await ItemService.findById(edge.sourceId)
+        if (!source) {
+          throw new NotFoundError('Item', edge.sourceId)
+        }
+        await requirePermission(
+          request,
+          getResourceType(source.itemType),
+          'update',
+        )
+
+        const { relationship, state } =
+          await ItemRelationshipService.affirmRelationship(
+            params.relationshipId,
+            user.id,
+          )
+        return {
+          relationshipId: relationship.id,
+          suspect: state.suspect,
+          reasons: state.reasons,
+        }
       },
     ),
   ),

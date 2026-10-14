@@ -503,4 +503,88 @@ app.get(
   ),
 )
 
+const waiveBodySchema = z.object({
+  note: z.string().trim().min(1).max(2000),
+})
+
+const waiverSchema = z.object({
+  note: z.string(),
+  waivedBy: z.string().uuid().nullable(),
+  waivedAt: z.string(),
+})
+
+// POST /api/requirements/:id/waive
+app.post(
+  '/:id/waive',
+  adapt(
+    apiHandler<{ id: string }, z.infer<typeof waiveBodySchema>>(
+      {
+        permission: ['requirements', 'update'],
+        access: ({ params, user }) => requireItemAccess(user.id, params.id),
+        body: waiveBodySchema,
+        openapi: {
+          summary: "Waive a requirement's verification",
+          description:
+            "A requirement's verification status is derived from the latest " +
+            'execution of every test case that verifies it. A waiver is the one ' +
+            'manual exception: it records who waived verification, when and ' +
+            'why, the status reads `Waived` until the waiver is cleared, and ' +
+            'the rollup leaves the row alone meanwhile. A review record, not a ' +
+            'design edit, so it needs no checkout or change order.',
+          request: {
+            params: z.object({ id: z.string().uuid() }),
+            body: { schema: waiveBodySchema },
+          },
+          responses: {
+            200: {
+              schema: z.object({
+                verificationStatus: z.literal('Waived'),
+                verificationWaiver: waiverSchema,
+              }),
+            },
+          },
+        },
+      },
+      async ({ params, body, user }) => {
+        const { waiver } = await RequirementService.waiveVerification(
+          params.id,
+          body.note,
+          user.id,
+        )
+        return { verificationStatus: 'Waived', verificationWaiver: waiver }
+      },
+    ),
+  ),
+)
+
+// DELETE /api/requirements/:id/waive
+app.delete(
+  '/:id/waive',
+  adapt(
+    apiHandler<{ id: string }>(
+      {
+        permission: ['requirements', 'update'],
+        access: ({ params, user }) => requireItemAccess(user.id, params.id),
+        openapi: {
+          summary: "Clear a requirement's verification waiver",
+          description:
+            'The derived status takes over again, recomputed from the ' +
+            "verifying tests' executions.",
+          request: { params: z.object({ id: z.string().uuid() }) },
+          responses: {
+            200: { schema: z.object({ verificationStatus: z.string() }) },
+          },
+        },
+      },
+      async ({ params, user }) => {
+        const { status } = await RequirementService.clearVerificationWaiver(
+          params.id,
+          user.id,
+        )
+        return { verificationStatus: status }
+      },
+    ),
+  ),
+)
+
 export default app

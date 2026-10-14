@@ -6,6 +6,7 @@ import { and, asc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { BRANCH_TYPES } from '@cascadia/commons/versioning/branch-types'
 import { optionConditionKey } from '@cascadia/commons/types/variants'
+import { REQUIREMENT_SHEET_FIELDS } from '@cascadia/commons/import'
 import { tagged } from '../adapter'
 import type { ScopeGraphEdge, ScopeGraphNode } from '@/api/scope-graph'
 import type { BOMTreeNode, OrphanItem } from '@cascadia/commons/types/bom'
@@ -24,6 +25,10 @@ import { ItemService } from '@/items/services/ItemService'
 import { CrossDesignReferenceService } from '@/services/CrossDesignReferenceService'
 import { UsageService } from '@/services/UsageService'
 import { VersionResolver } from '@/services/VersionResolver'
+import { RequirementsMatrixService } from '@/services/RequirementsMatrixService'
+import { SystemElementService } from '@/services/SystemElementService'
+import { parseSheetFormat, sheetResponse } from '@/import/sheet'
+import { ThreadCacheService } from '@/services/ThreadCacheService'
 import { RequirementService } from '@/services/RequirementService'
 import { VerificationService } from '@/services/VerificationService'
 import {
@@ -1297,6 +1302,13 @@ app.post(
 
           return { items: createdUsages, relationshipsCreated }
         })
+
+        // Each usage begins a thread of its own, and its definition's gains
+        // a usage.
+        ThreadCacheService.invalidateForItemsSoon([
+          ...chainItemIds,
+          ...result.items.map((row) => row.id),
+        ])
 
         return {
           pulledIn: true,
@@ -3014,6 +3026,227 @@ app.get(
         const coverage = await RequirementService.getCoverage(designId)
 
         return coverage
+      },
+    ),
+  ),
+)
+
+// GET /api/designs/:designId/rtm — the requirements traceability matrix
+const rtmQuerySchema = z.object({
+  branch: z.string().uuid().optional(),
+  tag: z.string().uuid().optional(),
+  commit: z.string().uuid().optional(),
+})
+const rtmLinkSchema = z.object({
+  relationshipId: z.string().uuid(),
+  itemId: z.string().uuid(),
+  masterId: z.string().uuid(),
+  itemNumber: z.string(),
+  name: z.string().nullable(),
+  itemType: z.string(),
+  revision: z.string(),
+  state: z.string(),
+  suspect: z.boolean(),
+  suspectReasons: z.array(z.enum(['source_revised', 'target_revised'])),
+})
+/** An allocation carries the second hop when its target is a system element. */
+const rtmAllocationLinkSchema = rtmLinkSchema.extend({
+  realizedBy: z.array(rtmLinkSchema).optional(),
+})
+export const rtmGapSchema = z.enum([
+  'not_allocated',
+  'not_satisfied',
+  'not_verified',
+])
+export const rtmTotalsSchema = z.object({
+  total: z.number().int(),
+  allocated: z.number().int(),
+  satisfied: z.number().int(),
+  verified: z.number().int(),
+  suspect: z.number().int(),
+  gaps: z.object({
+    not_allocated: z.number().int(),
+    not_satisfied: z.number().int(),
+    not_verified: z.number().int(),
+  }),
+})
+export const requirementsMatrixSchema = z.object({
+  designId: z.string().uuid(),
+  designCode: z.string(),
+  designName: z.string(),
+  context: z.object({
+    type: z.enum(['released', 'branch', 'tag', 'commit']),
+    id: z.string().uuid().nullable(),
+  }),
+  rows: z.array(
+    z.object({
+      requirement: z.object({
+        id: z.string().uuid(),
+        masterId: z.string().uuid(),
+        itemNumber: z.string(),
+        name: z.string().nullable(),
+        revision: z.string(),
+        state: z.string(),
+        priority: z.string().nullable(),
+        requirementType: z.string().nullable(),
+        verificationMethod: z.string().nullable(),
+        verificationStatus: z.string().nullable(),
+      }),
+      allocatedTo: z.array(rtmAllocationLinkSchema),
+      satisfiedBy: z.array(rtmLinkSchema),
+      verifiedBy: z.array(
+        rtmLinkSchema.extend({
+          executionStatus: z.string().nullable(),
+          lastExecutedAt: z.string().nullable(),
+        }),
+      ),
+      verified: z.boolean(),
+      suspectCount: z.number().int(),
+      gaps: z.array(rtmGapSchema),
+    }),
+  ),
+  totals: rtmTotalsSchema,
+})
+
+app.get(
+  '/:designId/rtm',
+  adapt(
+    apiHandler<{ designId: string }>(
+      {
+        access: ({ params, user }) =>
+          requireDesignAccess(user.id, params.designId),
+        openapi: {
+          summary: 'Requirements traceability matrix for a design',
+          description:
+            'Every requirement of the design with what it is allocated to, what satisfies it and what verifies it, read at a version context: main as it stands when no context is given, else the branch, tag or commit named. Each link carries its suspect state, each row the one "verified" rule and its gaps, and the totals count rows. A tag is the compliance snapshot: claims are judged against the rows the tag holds.',
+          request: {
+            params: z.object({ designId: z.string().uuid() }),
+            query: rtmQuerySchema,
+          },
+          responses: {
+            200: { schema: requirementsMatrixSchema },
+          },
+        },
+      },
+      async ({ params, request }) => {
+        const { designId } = params
+        const query = parseQuery(request, rtmQuerySchema)
+        // The context is the query string's word, and the design check above
+        // says nothing about it — same rule as GET /:id/structure.
+        if (query.branch) await requireBranchOfDesign(designId, query.branch)
+        if (query.tag) await requireTagOfDesign(designId, query.tag)
+        if (query.commit) await requireCommitOfDesign(designId, query.commit)
+        const context = VersionResolver.parseContext({
+          designId,
+          branch: query.branch,
+          tag: query.tag,
+          commit: query.commit,
+        }) ?? { type: 'released', designId }
+        return RequirementsMatrixService.forDesign(designId, context)
+      },
+    ),
+  ),
+)
+
+// GET /api/designs/:designId/architecture — the system architecture
+// Recursive like the structure tree, and described the way that one is: the
+// subtree is `unknown[]` on the wire rather than a `$ref`, which the snapshot
+// would otherwise hoist every shared schema into.
+const architectureNodeSchema = z.object({
+  itemId: z.string().uuid(),
+  masterId: z.string().uuid(),
+  itemNumber: z.string(),
+  name: z.string().nullable(),
+  revision: z.string(),
+  state: z.string(),
+  elementKind: z.string().nullable(),
+  description: z.string().nullable(),
+  relationshipId: z.string().uuid().optional(),
+  realizedBy: z.array(rtmLinkSchema),
+  allocatedRequirements: z.array(rtmLinkSchema),
+  /** The elements this one decomposes into — nodes of this same shape. */
+  children: z.array(z.unknown()),
+})
+export const designArchitectureSchema = z.object({
+  designId: z.string().uuid(),
+  designCode: z.string(),
+  designName: z.string(),
+  context: z.object({
+    type: z.enum(['released', 'branch', 'tag', 'commit']),
+    id: z.string().uuid().nullable(),
+  }),
+  roots: z.array(architectureNodeSchema),
+  totals: z.object({
+    elements: z.number().int(),
+    realized: z.number().int(),
+    allocated: z.number().int(),
+    suspect: z.number().int(),
+  }),
+})
+
+app.get(
+  '/:designId/architecture',
+  adapt(
+    apiHandler<{ designId: string }>(
+      {
+        access: ({ params, user }) =>
+          requireDesignAccess(user.id, params.designId),
+        openapi: {
+          summary: 'System architecture of a design',
+          description:
+            "The DECOMPOSES tree of the design's system elements at a version context — main as it stands when no context is given, else the branch, tag or commit named — each element with the items that realize it and the requirements allocated to it. Links are resolved and judged the way the requirements matrix resolves and judges them.",
+          request: {
+            params: z.object({ designId: z.string().uuid() }),
+            query: rtmQuerySchema,
+          },
+          responses: {
+            200: { schema: designArchitectureSchema },
+          },
+        },
+      },
+      async ({ params, request }) => {
+        const { designId } = params
+        const query = parseQuery(request, rtmQuerySchema)
+        if (query.branch) await requireBranchOfDesign(designId, query.branch)
+        if (query.tag) await requireTagOfDesign(designId, query.tag)
+        if (query.commit) await requireCommitOfDesign(designId, query.commit)
+        const context = VersionResolver.parseContext({
+          designId,
+          branch: query.branch,
+          tag: query.tag,
+          commit: query.commit,
+        }) ?? { type: 'released', designId }
+        return SystemElementService.forDesign(designId, context)
+      },
+    ),
+  ),
+)
+
+// GET /api/designs/:designId/requirements-export — the requirements as a sheet
+// the requirements import reads back: every import field but the revision,
+// the parent by item number. CSV by default, XLSX with `format=xlsx`.
+app.get(
+  '/:designId/requirements-export',
+  adapt(
+    apiHandler<{ designId: string }>(
+      {
+        permission: ['requirements', 'read'],
+        access: ({ params, user }) =>
+          requireDesignAccess(user.id, params.designId),
+      },
+      async ({ params, request }) => {
+        const design = await DesignService.getById(params.designId)
+        if (!design) throw new NotFoundError('Design', params.designId)
+        const url = new URL(request.url, 'http://localhost')
+        const format = parseSheetFormat(url.searchParams.get('format'))
+        const rows = await RequirementService.exportRows(params.designId)
+        return sheetResponse({
+          fields: REQUIREMENT_SHEET_FIELDS,
+          rows: rows.map((row) => ({ ...row })),
+          format,
+          fileName: `${design.code}-requirements`,
+          sheetName: 'Requirements',
+        })
       },
     ),
   ),

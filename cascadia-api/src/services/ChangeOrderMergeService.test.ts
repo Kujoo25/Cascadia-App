@@ -24,6 +24,7 @@ import { and, eq, inArray, isNotNull, isNull } from 'drizzle-orm'
 import { LIFECYCLE_IDS } from '@cascadia/commons/items/lifecycle-ids'
 import { ItemService } from '../items/services/ItemService'
 import { ChangeOrderService } from '../items/services/ChangeOrderService'
+import { ItemRelationshipService } from '../items/services/ItemRelationshipService'
 import { ChangeOrderMergeService } from './ChangeOrderMergeService'
 import { BranchService } from './BranchService'
 import { CheckoutService } from './CheckoutService'
@@ -31,6 +32,9 @@ import { DesignService } from './DesignService'
 import { RequirementService } from './RequirementService'
 import { LifecycleService } from './LifecycleService'
 import { RevisionService } from './RevisionService'
+import { ThreadCacheService } from './ThreadCacheService'
+import { ThreadService } from './ThreadService'
+import { VerificationService } from './VerificationService'
 import type { TestUser } from '@/__tests__/fixtures/users'
 import type { PersistedItem } from '@cascadia/commons/items/types/base'
 import type { DesignReleasedPayload } from '@/events'
@@ -4293,10 +4297,29 @@ describe('ChangeOrderMergeService', () => {
         [part.id!],
         user.id,
       )
+      // Verified means the test passed, not that it is linked: the status is
+      // derived from the execution, and the revision must keep it.
+      await VerificationService.recordExecution(
+        testCase.id,
+        { status: 'Passed' },
+        user.id,
+      )
       await testDb.db
         .update(items)
         .set({ state: 'Released' })
         .where(eq(items.id, requirement.id))
+
+      // A thread cached for the requirement read its claims off this row.
+      // The release moves them, so the entry must not survive it.
+      const threadRequest = { itemId: requirement.id }
+      await ThreadCacheService.cacheThread(
+        threadRequest,
+        await ThreadService.getThread(threadRequest),
+        1,
+      )
+      expect(await ThreadCacheService.getCachedThread(threadRequest)).not.toBe(
+        null,
+      )
 
       // An ECO that revises the requirement and nothing else.
       const changeOrder = await createChangeOrder()
@@ -4312,6 +4335,8 @@ describe('ChangeOrderMergeService', () => {
       })
       await approveChangeOrder(changeOrder.id)
       await ChangeOrderMergeService.merge(changeOrder.id, user.id)
+
+      expect(await ThreadCacheService.getCachedThread(threadRequest)).toBe(null)
 
       const revised = await currentRevision(requirement.masterId)
       expect(revised.id).not.toBe(requirement.id)
@@ -4335,12 +4360,29 @@ describe('ChangeOrderMergeService', () => {
         ),
       ).toEqual([revised.id])
 
-      // ...and the coverage report agrees, rather than raising the revision
-      // as a fresh gap.
-      const coverage = await RequirementService.getCoverage(designId)
-      expect(coverage.verified).toBe(1)
-      expect(coverage.satisfied).toBe(1)
-      expect(coverage.gaps.map((g) => g.gapType)).not.toContain('not_verified')
+      // ...and the coverage report agrees that the links are there: the
+      // revision is satisfied, not raised as a fresh gap. Its verification is
+      // another matter. The claim was affirmed against the row the release
+      // superseded, so it is suspect now, and a claim under review is not
+      // evidence - the requirement changed, and whether the test still
+      // verifies it is exactly the open question. The derived status rode the
+      // revision; affirming the claim is all it takes.
+      const before = await RequirementService.getCoverage(designId)
+      expect(before.satisfied).toBe(1)
+      expect(before.suspect).toBe(1)
+      expect(before.verified).toBe(0)
+
+      const [claim] = verifying
+      expect(claim?.suspect).toBe(true)
+      await ItemRelationshipService.affirmRelationship(
+        claim!.relationshipId,
+        user.id,
+      )
+      const after = await RequirementService.getCoverage(designId)
+      expect(after.satisfied).toBe(1)
+      expect(after.verified).toBe(1)
+      // The satisfaction claim is still under review; that is its own call.
+      expect(after.suspect).toBe(1)
     })
 
     /**

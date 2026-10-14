@@ -154,6 +154,11 @@ app.post(
   adapt(
     apiHandler<{ id: string }, { testCaseIds: Array<string> }>(
       {
+        // A validation link is the part's own claim about its tests (the
+        // edit guard falls on the part end), so it charges the part's tuple.
+        // Declared nowhere until 2026-10-09: role grants were never consulted
+        // and a read-only key could rewire any part's validation.
+        permission: ['parts', 'update'],
         access: ({ params, user }) => requireItemAccess(user.id, params.id),
         body: z.object({
           testCaseIds: z.array(z.string().uuid()).max(1000),
@@ -181,21 +186,24 @@ app.post(
 app.delete(
   '/:id/validate',
   adapt(
-    apiHandler<{ id: string }>({}, async ({ request, params, user }) => {
-      const { id } = params
-      await requireItemAccess(user.id, id)
-      const url = new URL(request.url)
-      const testCaseId = url.searchParams.get('testCaseId')
+    apiHandler<{ id: string }>(
+      { permission: ['parts', 'update'] },
+      async ({ request, params, user }) => {
+        const { id } = params
+        await requireItemAccess(user.id, id)
+        const url = new URL(request.url)
+        const testCaseId = url.searchParams.get('testCaseId')
 
-      if (!testCaseId) {
-        throw new ValidationError('testCaseId query parameter is required')
-      }
+        if (!testCaseId) {
+          throw new ValidationError('testCaseId query parameter is required')
+        }
 
-      await requireItemsAccess(user.id, [testCaseId])
-      await VerificationService.unlinkValidation(testCaseId, id, user.id)
+        await requireItemsAccess(user.id, [testCaseId])
+        await VerificationService.unlinkValidation(testCaseId, id, user.id)
 
-      return { success: true }
-    }),
+        return { success: true }
+      },
+    ),
   ),
 )
 
@@ -203,13 +211,16 @@ app.delete(
 app.get(
   '/:id/validating-tests',
   adapt(
-    apiHandler<{ id: string }>({}, async ({ params, user }) => {
-      const { id } = params
-      await requireItemAccess(user.id, id)
-      const tests = await VerificationService.getValidatingTests(id)
+    apiHandler<{ id: string }>(
+      { permission: ['parts', 'read'] },
+      async ({ params, user }) => {
+        const { id } = params
+        await requireItemAccess(user.id, id)
+        const tests = await VerificationService.getValidatingTests(id)
 
-      return { tests }
-    }),
+        return { tests }
+      },
+    ),
   ),
 )
 

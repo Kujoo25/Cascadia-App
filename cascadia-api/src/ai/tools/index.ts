@@ -17,6 +17,11 @@
  * - offer_navigation: Offer clickable navigation to item pages
  * - search_programs: Search programs by name, code, or customer
  * - search_designs: Search designs by name, code, or program
+ * - get_suspect_links: List trace links in a design or on an item, with their suspect state
+ *
+ * Dialog Tools (chat panel only — open a modal):
+ * - request_user_input: Collect details through a form dialog
+ * - suggest_actions: Offer next steps as clickable actions
  *
  * Write Tools (require user confirmation):
  * - create_item: Create a new item (Part, Document, Requirement, Task)
@@ -25,6 +30,7 @@
  * - transition_item_state: Transition items through workflow states
  * - create_change_order: Create a new ECO for managing changes
  * - create_program: Create a new program (creator becomes admin)
+ * - affirm_link: Record that a trace claim still holds, clearing its suspect flag
  *
  * Usage:
  * ```typescript
@@ -65,6 +71,12 @@ import {
   updateItemDef,
 } from './write-definitions'
 
+import {
+  allDialogToolDefinitions,
+  requestUserInputDef,
+  suggestActionsDef,
+} from './dialog-definitions'
+
 import { toolRegistry, toolsForSurface } from './registry'
 
 import type { ToolContext } from './permission-wrapper'
@@ -73,6 +85,7 @@ import type { ToolContext } from './permission-wrapper'
 export {
   allToolDefinitions,
   allWriteToolDefinitions,
+  allDialogToolDefinitions,
   toolRegistry,
   toolsForSurface,
   type ToolContext,
@@ -95,6 +108,8 @@ export {
   transitionItemStateDef,
   createChangeOrderDef,
   createProgramDef,
+  requestUserInputDef,
+  suggestActionsDef,
 }
 
 /**

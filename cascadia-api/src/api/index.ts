@@ -92,6 +92,7 @@ export {
   requirementUpdateSchema,
   requirementPrioritySchema,
   verificationMethodSchema,
+  verificationStatusSchema,
   type RequirementCreate,
   type RequirementUpdate,
 

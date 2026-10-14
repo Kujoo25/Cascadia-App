@@ -99,8 +99,9 @@ export interface BomTargetScope {
  * A BOM line belongs to a design: parent and child are versioned together on
  * that design's branches, an ECO releases them together, and the structure
  * endpoints read the tree one design at a time. So BOM narrows the picker to
- * the source item's own design — plus the Standard Library, whose parts are
- * global and are exactly what a BOM reaches for in fasteners and raw stock.
+ * the source item's own design — plus the libraries (the Standard Library and
+ * any user-created ones), whose parts are shared and are exactly what a BOM
+ * reaches for in fasteners, electrical components and raw stock.
  * Every other relationship type is left unscoped; cross-design references are
  * the point of `Reference`, `Document`, and friends.
  *
@@ -144,7 +145,7 @@ export function useBomTargetScope(
  * Two modes, chosen by whether the user has typed a search term.
  *
  * **Browsing** (no term) lists what exists. Under BOM that is the source
- * item's design plus the Standard Library, each fetched on its own so neither
+ * item's design plus the libraries, each fetched on its own so neither
  * crowds the other out of the row limit; under any other type it is a short
  * by-type list.
  *
@@ -324,15 +325,15 @@ export function BomScopeNotice({ scope }: { scope: BomTargetScope }) {
         <p className="text-cyan-700 dark:text-cyan-300 mt-0.5">
           {scope.noDesign ? (
             <>
-              This item belongs to no design, so only Standard Library parts can
-              be added.
+              This item belongs to no design, so only library parts can be
+              added.
             </>
           ) : (
             <>
               Only parts in{' '}
               <strong>{scope.designLabel ?? 'this item’s design'}</strong> and
-              the Standard Library can be added. To reference a part from
-              another design, use a different relationship type.
+              the libraries can be added. To reference a part from another
+              design, use a different relationship type.
             </>
           )}
         </p>

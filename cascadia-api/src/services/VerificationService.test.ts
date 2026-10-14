@@ -269,6 +269,10 @@ describe('VerificationService', () => {
       expect(coverage.totalRequirements).toBe(3)
       expect(coverage.requirementsWithTests).toBe(2)
       expect(coverage.coveragePercent).toBe(66.7)
+      // Verified is the derived status, not the link: reqA's test passed,
+      // reqB's failed, the third has none → 1/3 = 33.3
+      expect(coverage.requirementsVerified).toBe(1)
+      expect(coverage.verifiedPercent).toBe(33.3)
       expect(coverage.totalTests).toBe(4)
       expect(coverage.passed).toBe(1)
       expect(coverage.failed).toBe(1)
@@ -308,29 +312,72 @@ describe('VerificationService', () => {
   })
 
   describe('getVerificationGaps', () => {
-    it('lists exactly the requirements nothing verifies', async () => {
-      const covered = await createRequirement({ name: 'Covered' })
-      const gap = await createRequirement({ name: 'Uncovered' })
-      const testCase = await createTestCase()
+    it('lists the requirements that are not verified: no test, a test never run, a failed test', async () => {
+      const verified = await createRequirement({ name: 'Verified' })
+      const noTest = await createRequirement({ name: 'No test' })
+      const neverRun = await createRequirement({ name: 'Never run' })
+      const failed = await createRequirement({ name: 'Failed' })
+      const passing = await createTestCase()
+      const idle = await createTestCase()
+      const failing = await createTestCase()
 
       await RequirementService.linkVerification(
-        covered.id!,
-        [testCase.id!],
+        verified.id!,
+        [passing.id!],
+        user.id,
+      )
+      await RequirementService.linkVerification(
+        neverRun.id!,
+        [idle.id!],
+        user.id,
+      )
+      await RequirementService.linkVerification(
+        failed.id!,
+        [failing.id!],
+        user.id,
+      )
+      await VerificationService.recordExecution(
+        passing.id!,
+        { status: 'Passed' },
+        user.id,
+      )
+      await VerificationService.recordExecution(
+        failing.id!,
+        { status: 'Failed' },
         user.id,
       )
 
       const gaps = await VerificationService.getVerificationGaps(designId)
 
-      expect(gaps.map((g) => g.id)).toEqual([gap.id])
-      expect(gaps[0]?.name).toBe('Uncovered')
+      expect(gaps.map((g) => g.id).sort()).toEqual(
+        [noTest.id, neverRun.id, failed.id].sort(),
+      )
+      expect(
+        Object.fromEntries(gaps.map((g) => [g.name, g.verificationStatus])),
+      ).toEqual({
+        'No test': 'NotStarted',
+        'Never run': 'NotStarted',
+        Failed: 'Failed',
+      })
     })
 
-    it('is empty when every requirement is verified', async () => {
-      const req = await createRequirement()
+    it('is empty when every requirement has passed or is waived', async () => {
+      const passed = await createRequirement()
+      const waived = await createRequirement()
       const testCase = await createTestCase()
       await RequirementService.linkVerification(
-        req.id!,
+        passed.id!,
         [testCase.id!],
+        user.id,
+      )
+      await VerificationService.recordExecution(
+        testCase.id!,
+        { status: 'Passed' },
+        user.id,
+      )
+      await RequirementService.waiveVerification(
+        waived.id!,
+        'Verified by inspection',
         user.id,
       )
 

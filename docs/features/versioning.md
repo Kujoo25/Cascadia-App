@@ -179,6 +179,14 @@ actually had. **Nothing ever inherits from a working revision** -- that is what
 keeps a link recorded inside one ECO invisible to main and to every other
 branch until the merge promotes it.
 
+The same isolation holds on the **source** side. Checking an item out copies
+its claims onto the working copy, and that copy names the released
+requirement just as the released row does, so an incoming read on main found
+the released part and its branch copy side by side. `findIncomingLinks` keeps
+a working-copy source only when the row it answers to is a working copy on
+the same branch; from main, and from every other branch, a branch's own edits
+are invisible until the merge promotes them.
+
 Thread caches invalidate by lineage for the same reason: a cached thread lists
 the rows it resolved to, but the edges behind it can hang off a different
 revision of the same item, so a write anywhere in a lineage invalidates the
@@ -208,6 +216,51 @@ A row names its own context -- the ECO/workspace branch it is a working copy
 on, or its design's released context -- so neither read takes a branch
 parameter. Read from inside a branch, both answer with that branch's rows;
 read from main, with the current released ones.
+
+#### Suspect links: affirmed trace claims
+
+A trace edge (`SATISFIES`, `ALLOCATED_TO`, `VERIFIED_BY`, `VALIDATES`) is a
+claim one version makes about another, and the same two rules above decide
+when the claim has gone stale. The edge carries an **affirmation** in its
+`metadata` -- the source row it hung off and the target row it was checked
+against when someone last said the claim holds -- written by the author when
+the link is created, and re-written by `POST /api/v1/relationships/{id}/affirm`.
+The edge is **suspect** when either end has moved on:
+
+| What happened                           | How the readers see it                                                                                                    |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| The target revised                      | The affirmed target row is superseded: `target_revised`, with no write anywhere                                           |
+| The source was checked out              | The carried copy hangs off the working copy while its affirmation names the released row: `source_revised`, on the branch |
+| Affirmed on the branch, then released   | The merge re-homes the edge with its metadata and re-points the affirmation to the released row: released affirmed        |
+| Never looked at on the branch, released | The affirmation still names the superseded row: released suspect                                                          |
+
+Suspicion is judged against released rows -- a target pinned to a working copy
+is a branch's own edit and counts as current, as everywhere else here.
+Affirming is a review record, not an edit of the link: it runs without the
+edit lock, so a released part's claims can be re-affirmed after the requirement
+revises with no change order on the part. An edge that predates affirmations
+is read as affirmed against the rows it names. The rules live in
+`items/trace-affirmation.ts`; `ItemRelationshipService.suspectStatesFor` applies
+them, and every trace reader attaches `suspect` and `suspectReasons` to the
+links it lists. `POST /api/v1/relationships/affirm` affirms a batch, answering
+per link, so one link the caller may not affirm does not refuse the rest.
+
+A relationship copy keeps the affirmation it finds, and where it lands decides
+what it means. Taken off a released row -- a checkout -- it still names that
+row, so the copy reads `source_revised` on the branch until the person changing
+the item affirms it; a claim that predates affirmations gets that reading
+written onto the copy (the released row, by its author, when it was made), so
+it is suspect there like any other while main's own row is left as it was.
+Taken off a working copy -- a rebase or a pull from main minting a fresh row --
+it follows the edge onto the new row, so a claim affirmed on the branch stays
+affirmed through either.
+
+The release preview (`traceImpact` on `GET /api/v1/change-orders/{id}/release`)
+lists the claims a release will leave suspect, computed by the same rule
+against the edges as the merge will write them, so the count shown before the
+release is the count read back after it. Requirements coverage counts the
+requirements covered by at least one suspect claim and lists the links, and the
+gap analysis reports each as a `suspect_requirement` gap.
 
 ---
 

@@ -17,6 +17,7 @@ import {
   idsWithLinks,
 } from './RequirementService'
 import { VALIDATES_RELATIONSHIP } from './VerificationService'
+import { isVerifiedStatus } from './verification-rollup'
 import type { ThreadDomain } from './ThreadService'
 
 // ============================================================================
@@ -50,6 +51,7 @@ export const gapAnalysisRequestSchema = z.object({
         'unallocated_requirement',
         'unsatisfied_requirement',
         'unverified_requirement',
+        'suspect_requirement',
         'untested_part',
         'unmapped_ebom_item',
         'orphan_mbom_item',
@@ -224,6 +226,7 @@ export class GapAnalysisService {
    * - unallocated_requirement: Not allocated to any design element
    * - unsatisfied_requirement: Not satisfied by any part/document
    * - unverified_requirement: Not linked to any test case
+   * - suspect_requirement: A trace link's end revised since it was affirmed
    */
   static async findRequirementGaps(designId: string): Promise<Array<Gap>> {
     const gaps: Array<Gap> = []
@@ -241,27 +244,61 @@ export class GapAnalysisService {
     // at the other end, so a release leaves them naming the row it superseded.
     // Allocation is the requirement's own outgoing edge and rides the
     // revision. See ItemRelationshipService.find{Incoming,Outgoing}Links.
-    const allocatedIds = idsWithLinks(
-      await ItemRelationshipService.findOutgoingLinks(
-        requirementIds,
-        ALLOCATED_TO_RELATIONSHIP,
-      ),
+    const allocatedLinks = await ItemRelationshipService.findOutgoingLinks(
+      requirementIds,
+      ALLOCATED_TO_RELATIONSHIP,
     )
-    const satisfiedIds = idsWithLinks(
-      await ItemRelationshipService.findIncomingLinks(
-        requirementIds,
-        SATISFIES_RELATIONSHIP,
-      ),
+    const satisfiedLinks = await ItemRelationshipService.findIncomingLinks(
+      requirementIds,
+      SATISFIES_RELATIONSHIP,
     )
-    const verifiedByTestIds = idsWithLinks(
-      await ItemRelationshipService.findIncomingLinks(
-        requirementIds,
-        VERIFIED_BY_RELATIONSHIP,
-      ),
+    const verifiedLinks = await ItemRelationshipService.findIncomingLinks(
+      requirementIds,
+      VERIFIED_BY_RELATIONSHIP,
     )
+    const allocatedIds = idsWithLinks(allocatedLinks)
+    const satisfiedIds = idsWithLinks(satisfiedLinks)
+    const { counts: suspectCounts, suspectVerified } =
+      await this.suspectLinkCounts({
+        allocatedLinks,
+        satisfiedLinks,
+        verifiedLinks,
+      })
+    // Verified by the one rule every coverage read applies: the derived
+    // status says Passed (or a waiver is recorded), and no verifying claim is
+    // suspect. A linked test that has never run verifies nothing yet.
+    const isVerified = (req: {
+      id: string
+      verificationStatus: string | null
+    }) =>
+      isVerifiedStatus(req.verificationStatus) && !suspectVerified.has(req.id)
 
     // Process each requirement
     for (const req of allRequirements) {
+      // A stale claim is a gap of its own, whatever else the requirement is
+      // missing: the link still counts it as covered, and that is exactly
+      // what someone has to look at.
+      const suspectLinks = suspectCounts.get(req.id) ?? 0
+      if (suspectLinks > 0) {
+        gaps.push({
+          id: `gap-${req.id}-suspect`,
+          type: 'suspect_requirement',
+          itemId: req.id,
+          itemNumber: req.itemNumber,
+          itemName: req.name,
+          itemType: req.itemType,
+          revision: req.revision,
+          state: req.state,
+          domain: 'requirements',
+          severity: this.calculateRequirementSeverity(req.priority),
+          priority: req.priority,
+          suggestion:
+            suspectLinks === 1
+              ? 'One trace link is suspect: an end revised since it was affirmed. Affirm it, or fix what changed'
+              : `${suspectLinks} trace links are suspect: an end revised since each was affirmed. Affirm them, or fix what changed`,
+        })
+      }
+
       // Check for unallocated
       if (!allocatedIds.has(req.id)) {
         gaps.push({
@@ -299,10 +336,7 @@ export class GapAnalysisService {
         })
       }
       // Check for unverified (only if satisfied)
-      else if (
-        !verifiedByTestIds.has(req.id) &&
-        req.verificationStatus !== 'Passed'
-      ) {
+      else if (!isVerified(req)) {
         gaps.push({
           id: `gap-${req.id}-unverified`,
           type: 'unverified_requirement',
@@ -520,28 +554,35 @@ export class GapAnalysisService {
     let allocated = 0
     let satisfied = 0
     let verified = 0
+    let suspect = 0
 
     if (requirementIds.length > 0) {
       // Same reads as findRequirementGaps, so the summary and the gap list
       // cannot disagree about what a revised requirement still covers.
-      allocated = idsWithLinks(
-        await ItemRelationshipService.findOutgoingLinks(
-          requirementIds,
-          ALLOCATED_TO_RELATIONSHIP,
-        ),
-      ).size
-      satisfied = idsWithLinks(
-        await ItemRelationshipService.findIncomingLinks(
-          requirementIds,
-          SATISFIES_RELATIONSHIP,
-        ),
-      ).size
-      verified = idsWithLinks(
-        await ItemRelationshipService.findIncomingLinks(
-          requirementIds,
-          VERIFIED_BY_RELATIONSHIP,
-        ),
-      ).size
+      const allocatedLinks = await ItemRelationshipService.findOutgoingLinks(
+        requirementIds,
+        ALLOCATED_TO_RELATIONSHIP,
+      )
+      const satisfiedLinks = await ItemRelationshipService.findIncomingLinks(
+        requirementIds,
+        SATISFIES_RELATIONSHIP,
+      )
+      const verifiedLinks = await ItemRelationshipService.findIncomingLinks(
+        requirementIds,
+        VERIFIED_BY_RELATIONSHIP,
+      )
+      allocated = idsWithLinks(allocatedLinks).size
+      satisfied = idsWithLinks(satisfiedLinks).size
+      const { counts, suspectVerified } = await this.suspectLinkCounts({
+        allocatedLinks,
+        satisfiedLinks,
+        verifiedLinks,
+      })
+      verified = allRequirements.filter(
+        (r) =>
+          isVerifiedStatus(r.verificationStatus) && !suspectVerified.has(r.id),
+      ).length
+      suspect = counts.size
     }
 
     // Engineering coverage
@@ -606,6 +647,7 @@ export class GapAnalysisService {
         allocated,
         satisfied,
         verified,
+        suspect,
       },
       engineering: {
         total: allParts.length,
@@ -617,6 +659,47 @@ export class GapAnalysisService {
         linkedToEbom,
       },
     }
+  }
+
+  /**
+   * How many of each requirement's trace links are suspect, over the links
+   * the coverage reads already fetched — the same edges the counters were
+   * computed from, so a requirement counted as covered by a stale claim is
+   * reported rather than silently counted clean. Requirements with none are
+   * absent from the result.
+   */
+  private static async suspectLinkCounts(linkSets: {
+    allocatedLinks: Map<string, Array<{ id: string }>>
+    satisfiedLinks: Map<string, Array<{ id: string }>>
+    verifiedLinks: Map<string, Array<{ id: string }>>
+  }): Promise<{
+    counts: Map<string, number>
+    /** Requirements with a suspect verifying claim — not verified, whatever the status says. */
+    suspectVerified: Set<string>
+  }> {
+    const ownerOfLink = new Map<string, string>()
+    const verifying = new Set<string>()
+    for (const [kind, links] of Object.entries(linkSets)) {
+      for (const [requirementId, rels] of links) {
+        for (const rel of rels) {
+          ownerOfLink.set(rel.id, requirementId)
+          if (kind === 'verifiedLinks') verifying.add(rel.id)
+        }
+      }
+    }
+    const counts = new Map<string, number>()
+    const suspectVerified = new Set<string>()
+    if (ownerOfLink.size === 0) return { counts, suspectVerified }
+
+    const states = await ItemRelationshipService.suspectStatesFor([
+      ...ownerOfLink.keys(),
+    ])
+    for (const [relationshipId, requirementId] of ownerOfLink) {
+      if (!states.get(relationshipId)?.suspect) continue
+      counts.set(requirementId, (counts.get(requirementId) ?? 0) + 1)
+      if (verifying.has(relationshipId)) suspectVerified.add(requirementId)
+    }
+    return { counts, suspectVerified }
   }
 
   /**
@@ -665,6 +748,7 @@ export class GapAnalysisService {
       unallocated_requirement: 0,
       unsatisfied_requirement: 0,
       unverified_requirement: 0,
+      suspect_requirement: 0,
       untested_part: 0,
       unmapped_ebom_item: 0,
       orphan_mbom_item: 0,

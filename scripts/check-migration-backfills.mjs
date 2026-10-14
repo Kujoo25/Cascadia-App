@@ -1725,6 +1725,551 @@ const SCENARIOS = [
       )
     },
   },
+  {
+    tag: SYSTEM_ELEMENTS_TAG(),
+    // Not applied twice: the file also creates the table. Its data
+    // statements' idempotence is the next scenario's question instead.
+    name: 'the SystemElement lifecycle and its item-type link land on an upgraded database',
+    async seed(sql) {
+      // The seed's system user exists, as it does on every database the
+      // minimal seed wrote — the link records it as the writer.
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into users (id, email, name) values
+          ('00000000-0000-4000-8000-000000000000', 'system@fixture.invalid', 'System User');
+        `,
+      )
+    },
+    async assert(sql) {
+      const definition = await one(
+        sql,
+        `select name, version, lifecycle_type from workflow_definitions where id = '00000000-0000-4000-8000-000000000115'`,
+      )
+      expectEqual(
+        definition.name,
+        'System Element - Default Lifecycle',
+        'the shipped definition',
+      )
+      expectEqual(definition.version, 1, 'the shipped version')
+      expectEqual(definition.lifecycle_type, 'Driven', 'a Driven lifecycle')
+      const link = await one(
+        sql,
+        `select config->>'lifecycleDefinitionId' as lifecycle_definition_id from item_type_configs where item_type = 'SystemElement'`,
+      )
+      expectEqual(
+        link.lifecycle_definition_id,
+        '00000000-0000-4000-8000-000000000115',
+        'the item-type link',
+      )
+    },
+  },
+
+  {
+    tag: SYSTEM_ELEMENTS_TAG(),
+    name: 'a database the seed already wrote — the definition at its version and the link in place — is left as it is',
+    async seed(sql) {
+      // The shape a fresh install has after `db:seed`: the definition row,
+      // renamed by an administrator so an overwrite would show, and the link.
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into users (id, email, name) values
+          ('00000000-0000-4000-8000-000000000000', 'system@fixture.invalid', 'System User');
+        insert into workflow_definitions (id, name, version, workflow_type, definition, lifecycle_type)
+          values ('00000000-0000-4000-8000-000000000115', 'Elements, renamed by an administrator', 1, 'strict', '{}'::jsonb, 'Driven');
+        insert into item_type_configs (item_type, config, modified_by)
+          values ('SystemElement', '{"lifecycleDefinitionId": "00000000-0000-4000-8000-000000000115", "note": "kept"}'::jsonb, '00000000-0000-4000-8000-000000000000');
+        `,
+      )
+    },
+    async assert(sql) {
+      const definition = await one(
+        sql,
+        `select name, definition::text as definition from workflow_definitions where id = '00000000-0000-4000-8000-000000000115'`,
+      )
+      expectEqual(
+        definition.name,
+        'Elements, renamed by an administrator',
+        'a definition that already exists is not rewritten',
+      )
+      expectEqual(definition.definition, '{}', 'nor is its body')
+      const link = await one(
+        sql,
+        `select config->>'note' as note from item_type_configs where item_type = 'SystemElement'`,
+      )
+      expectEqual(
+        link.note,
+        'kept',
+        'a link that already exists is not rewritten',
+      )
+    },
+  },
+
+  {
+    tag: SYSTEM_ELEMENTS_TAG(),
+    name: 'every role that can reach requirements can reach system elements the same way; one that already names them is left alone',
+    async seed(sql) {
+      await exec(
+        sql,
+        `
+        insert into roles (id, name, description, permissions) values
+          ('${id(930)}', 'Reviewer', 'reads and approves', '{"requirements": ["read", "approve"], "parts": ["read"]}'::jsonb),
+          ('${id(931)}', 'Architect', 'already granted', '{"requirements": ["read"], "system_elements": ["create", "read", "update", "delete"]}'::jsonb),
+          ('${id(932)}', 'Operator', 'no requirements', '{"work_orders": ["read", "update"]}'::jsonb);
+        `,
+      )
+    },
+    async assert(sql) {
+      const reviewer = await one(
+        sql,
+        `select permissions->'system_elements' as granted from roles where id = '${id(930)}'`,
+      )
+      expectEqual(
+        JSON.stringify(reviewer.granted),
+        JSON.stringify(['read', 'approve']),
+        'a role holding requirements gets the same verbs on system elements',
+      )
+      const architect = await one(
+        sql,
+        `select permissions->'system_elements' as granted from roles where id = '${id(931)}'`,
+      )
+      expectEqual(
+        JSON.stringify(architect.granted),
+        JSON.stringify(['create', 'read', 'update', 'delete']),
+        'a role already naming system elements keeps its own grant',
+      )
+      const operator = await one(
+        sql,
+        `select permissions ? 'system_elements' as granted from roles where id = '${id(932)}'`,
+      )
+      expectEqual(
+        operator.granted,
+        false,
+        'a role without requirements gets nothing',
+      )
+    },
+  },
+
+  {
+    tag: SYSTEM_ELEMENTS_TAG(),
+    name: "without the seed's system user the definition still lands and the link is left to the code default",
+    async seed(sql) {
+      await exec(sql, USERS)
+    },
+    async assert(sql) {
+      const definition = await one(
+        sql,
+        `select name from workflow_definitions where id = '00000000-0000-4000-8000-000000000115'`,
+      )
+      expectEqual(
+        definition.name,
+        'System Element - Default Lifecycle',
+        'the shipped definition',
+      )
+      const links = await one(
+        sql,
+        `select count(*)::int as n from item_type_configs where item_type = 'SystemElement'`,
+      )
+      expectEqual(links.n, 0, 'no link is written with nobody to record it')
+    },
+  },
+
+  {
+    tag: VERIFICATION_INTEGRITY_TAG(),
+    name: "a test case's plan pointer moves to the plan's master, whichever revision of the plan it named",
+    async seed(sql) {
+      // The plan at revision B, its superseded revision A, and three test
+      // cases: one naming the current plan row, one still naming the
+      // superseded one (the shape a plan revision left behind, which is why
+      // the pointer moves), and one in no plan.
+      const row = (n, master, number, revision, type, current) =>
+        `('${id(n)}', '${id(master)}', '${number}', '${revision}', '${type}', 'Draft', ${current}, false, '${U1}', '${U1}')`
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into items
+          (id, master_id, item_number, revision, item_type, state,
+           is_current, is_deleted, created_by, modified_by)
+        values
+          ${row(1101, 1100, 'VI-PLAN', 'B', 'TestPlan', true)},
+          ${row(1106, 1100, 'VI-PLAN', 'A', 'TestPlan', false)},
+          ${row(1103, 1102, 'VI-TC-CURRENT-PLAN', 'A', 'TestCase', true)},
+          ${row(1108, 1107, 'VI-TC-OLD-PLAN', 'A', 'TestCase', true)},
+          ${row(1105, 1104, 'VI-TC-NO-PLAN', 'A', 'TestCase', true)};
+        insert into test_plans (item_id) values ('${id(1101)}'), ('${id(1106)}');
+        insert into test_cases (item_id, test_plan_id) values
+          ('${id(1103)}', '${id(1101)}'),
+          ('${id(1108)}', '${id(1106)}'),
+          ('${id(1105)}', null);
+        `,
+      )
+    },
+    async assert(sql) {
+      const planOf = async (n) =>
+        (
+          await one(
+            sql,
+            `select test_plan_master_id as m from test_cases where item_id = '${id(n)}'`,
+          )
+        ).m
+      expectEqual(
+        await planOf(1103),
+        id(1100),
+        'a test case naming the current plan row now names the plan',
+      )
+      expectEqual(
+        await planOf(1108),
+        id(1100),
+        'a test case naming a superseded plan row names the same plan',
+      )
+      expectEqual(
+        await planOf(1105),
+        null,
+        'a test case in no plan stays in none',
+      )
+
+      const column = async (table, name) =>
+        (
+          await one(
+            sql,
+            `select count(*)::int as n from information_schema.columns
+              where table_schema = 'public' and table_name = '${table}'
+                and column_name = '${name}'`,
+          )
+        ).n
+      expectEqual(
+        await column('test_cases', 'test_plan_id'),
+        0,
+        'the version-row pointer is gone',
+      )
+      expect(
+        !(await constraintExists(sql, 'test_cases_test_plan_id_items_id_fk')),
+        'its foreign key is gone with it',
+      )
+      expect(
+        !(await relationExists(sql, 'idx_test_case_plan')),
+        'and so is its index',
+      )
+      expect(
+        await relationExists(sql, 'idx_test_case_plan_master'),
+        'the master pointer is indexed',
+      )
+      expectEqual(
+        await column('requirements', 'allocated_design_id'),
+        0,
+        'the unused allocation column is gone',
+      )
+      expectEqual(
+        await column('requirements', 'verification_waiver'),
+        1,
+        'the waiver column exists',
+      )
+    },
+  },
+
+  {
+    tag: VERIFICATION_INTEGRITY_TAG(),
+    name: 'the shipped test-case lifecycle collapses to Draft / Active / Obsolete, and a test case sitting in a result state moves to Active carrying the result',
+    async seed(sql) {
+      // The shipped definition at the version the seed last wrote, and test
+      // cases in every state the old lifecycle had — plus a Task in a state
+      // that happens to share a name, which is not a test case's business.
+      const row = (n, master, number, type, state) =>
+        `('${id(n)}', '${id(master)}', '${number}', 'A', '${type}', '${state}', true, false, '${U1}', '${U1}')`
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into workflow_definitions
+          (id, name, version, workflow_type, definition, lifecycle_type)
+        values
+          ('00000000-0000-4000-8000-000000000108', 'Test Case - Default Lifecycle', 3, 'flexible',
+           '{"states":[{"id":"NotRun","name":"Not Run"},{"id":"Passed","name":"Passed"}]}'::jsonb, 'Free');
+        insert into items
+          (id, master_id, item_number, revision, item_type, state,
+           is_current, is_deleted, created_by, modified_by)
+        values
+          ${row(1121, 1120, 'VI-TC-PASSED', 'TestCase', 'Passed')},
+          ${row(1123, 1122, 'VI-TC-FAILED-RECORDED', 'TestCase', 'Failed')},
+          ${row(1125, 1124, 'VI-TC-NOTRUN', 'TestCase', 'NotRun')},
+          ${row(1127, 1126, 'VI-TC-DRAFT', 'TestCase', 'Draft')},
+          ${row(1129, 1128, 'VI-TC-OBSOLETE', 'TestCase', 'Obsolete')},
+          ${row(1131, 1130, 'VI-TASK-BLOCKED', 'Task', 'Blocked')};
+        insert into test_cases (item_id, execution_status) values
+          ('${id(1121)}', null),
+          ('${id(1123)}', 'Blocked'),
+          ('${id(1125)}', null),
+          ('${id(1127)}', null),
+          ('${id(1129)}', null);
+        `,
+      )
+    },
+    async assert(sql) {
+      const definition = await one(
+        sql,
+        `select version, definition from workflow_definitions
+          where id = '00000000-0000-4000-8000-000000000108'`,
+      )
+      expectEqual(
+        definition.version,
+        4,
+        'the definition is at the collapsed version',
+      )
+      expectEqual(
+        definition.definition.states.map((state) => state.id).join(','),
+        'Draft,Active,Obsolete',
+        'the definition has the three states',
+      )
+
+      const stateOf = async (n) =>
+        (await one(sql, `select state from items where id = '${id(n)}'`)).state
+      const resultOf = async (n) =>
+        (
+          await one(
+            sql,
+            `select execution_status as r from test_cases where item_id = '${id(n)}'`,
+          )
+        ).r
+      expectEqual(await stateOf(1121), 'Active', 'a passed test case is Active')
+      expectEqual(
+        await resultOf(1121),
+        'Passed',
+        'and its result, recorded only as a state, survives as its execution status',
+      )
+      expectEqual(await stateOf(1123), 'Active', 'a failed test case is Active')
+      expectEqual(
+        await resultOf(1123),
+        'Blocked',
+        'a result the history already recorded is not overwritten by the state',
+      )
+      expectEqual(
+        await stateOf(1125),
+        'Active',
+        'a not-run test case is Active',
+      )
+      expectEqual(
+        await resultOf(1125),
+        null,
+        'with no result, since it has none',
+      )
+      expectEqual(await stateOf(1127), 'Draft', 'a draft stays a draft')
+      expectEqual(
+        await stateOf(1129),
+        'Obsolete',
+        'an obsolete one stays obsolete',
+      )
+      expectEqual(
+        await stateOf(1131),
+        'Blocked',
+        'a Task in a state of the same name is not a test case and is left alone',
+      )
+    },
+  },
+
+  {
+    tag: VERIFICATION_INTEGRITY_TAG(),
+    name: 'a test-case lifecycle an administrator edited past the shipped version keeps its states, and its test cases keep theirs',
+    async seed(sql) {
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into workflow_definitions
+          (id, name, version, workflow_type, definition, lifecycle_type)
+        values
+          ('00000000-0000-4000-8000-000000000108', 'Test Case - Default Lifecycle', 5, 'flexible',
+           '{"states":[{"id":"NotRun","name":"Not Run"},{"id":"Passed","name":"Passed"}]}'::jsonb, 'Free');
+        insert into items
+          (id, master_id, item_number, revision, item_type, state,
+           is_current, is_deleted, created_by, modified_by)
+        values
+          ('${id(1141)}', '${id(1140)}', 'VI-TC-EDITED', 'A', 'TestCase', 'Passed', true, false, '${U1}', '${U1}');
+        insert into test_cases (item_id, execution_status) values ('${id(1141)}', null);
+        `,
+      )
+    },
+    async assert(sql) {
+      const definition = await one(
+        sql,
+        `select version, definition from workflow_definitions
+          where id = '00000000-0000-4000-8000-000000000108'`,
+      )
+      expectEqual(definition.version, 5, 'the edited version stands')
+      expectEqual(
+        definition.definition.states.map((state) => state.id).join(','),
+        'NotRun,Passed',
+        'the edited definition is untouched',
+      )
+      const item = await one(
+        sql,
+        `select i.state, tc.execution_status as result
+           from items i join test_cases tc on tc.item_id = i.id
+          where i.id = '${id(1141)}'`,
+      )
+      expectEqual(
+        item.state,
+        'Passed',
+        'its test case keeps the state its lifecycle still has',
+      )
+      expectEqual(
+        item.result,
+        null,
+        'and nothing is read into its execution status',
+      )
+    },
+  },
+
+  {
+    tag: VERIFICATION_INTEGRITY_TAG(),
+    name: 'verification status is derived from the latest results by the rule the rollup applies; a hand-set waiver is kept and gets its note',
+    async seed(sql) {
+      // Requirements in every shape the derivation has to judge, each with
+      // the status someone set by hand before it was derived.
+      const row = (n, master, number, type, current, deleted) =>
+        `('${id(n)}', '${id(master)}', '${number}', 'A', '${type}', 'Draft', ${current}, ${deleted}, '${U1}', '${U1}')`
+      const edge = (n, source, target) =>
+        `('${id(n)}', '${id(source)}', '${id(target)}', 'VERIFIED_BY', '${U1}')`
+      await exec(
+        sql,
+        `
+        ${USERS}
+        insert into items
+          (id, master_id, item_number, revision, item_type, state,
+           is_current, is_deleted, created_by, modified_by)
+        values
+          -- the test cases: failed, passed, never run, blocked, a deleted one,
+          -- and the passed one's superseded revision
+          ${row(1221, 1220, 'VI-TC-F', 'TestCase', true, false)},
+          ${row(1223, 1222, 'VI-TC-P', 'TestCase', true, false)},
+          ${row(1225, 1224, 'VI-TC-N', 'TestCase', true, false)},
+          ${row(1229, 1228, 'VI-TC-B', 'TestCase', true, false)},
+          ${row(1227, 1226, 'VI-TC-D', 'TestCase', true, true)},
+          ('${id(1231)}', '${id(1222)}', 'VI-TC-P', '-00000000', 'TestCase', 'Draft', false, false, '${U1}', '${U1}'),
+          -- the requirements
+          ${row(1201, 1200, 'VI-REQ-FAILS', 'Requirement', true, false)},
+          ${row(1203, 1202, 'VI-REQ-PASSES', 'Requirement', true, false)},
+          ${row(1205, 1204, 'VI-REQ-WAIVED', 'Requirement', true, false)},
+          ${row(1207, 1206, 'VI-REQ-UNLINKED', 'Requirement', true, false)},
+          ${row(1209, 1208, 'VI-REQ-HALF-RUN', 'Requirement', true, false)},
+          ${row(1211, 1210, 'VI-REQ-DELETED-TEST', 'Requirement', true, false)},
+          ('${id(1213)}', '${id(1212)}', 'VI-REQ-REVISED', 'A', 'Requirement', 'Released', false, false, '${U1}', '${U1}'),
+          ('${id(1214)}', '${id(1212)}', 'VI-REQ-REVISED', 'B', 'Requirement', 'Draft', true, false, '${U1}', '${U1}'),
+          ${row(1216, 1215, 'VI-REQ-BLOCKED', 'Requirement', true, false)},
+          ${row(1218, 1217, 'VI-REQ-OLD-TEST', 'Requirement', true, false)};
+        insert into test_cases (item_id, execution_status) values
+          ('${id(1221)}', 'Failed'),
+          ('${id(1223)}', 'Passed'),
+          ('${id(1225)}', null),
+          ('${id(1229)}', 'Blocked'),
+          ('${id(1227)}', 'Passed'),
+          ('${id(1231)}', 'Failed');
+        insert into requirements (item_id, verification_status) values
+          ('${id(1201)}', 'Passed'),
+          ('${id(1203)}', 'NotStarted'),
+          ('${id(1205)}', 'Waived'),
+          ('${id(1207)}', 'InProgress'),
+          ('${id(1209)}', 'NotStarted'),
+          ('${id(1211)}', 'Passed'),
+          ('${id(1213)}', 'NotStarted'),
+          ('${id(1214)}', 'NotStarted'),
+          ('${id(1216)}', 'Failed'),
+          ('${id(1218)}', 'NotStarted');
+        insert into item_relationships
+          (id, source_id, target_id, relationship_type, created_by)
+        values
+          ${edge(1241, 1221, 1201)},
+          ${edge(1242, 1223, 1203)},
+          ${edge(1243, 1221, 1205)},
+          ${edge(1244, 1223, 1209)},
+          ${edge(1245, 1225, 1209)},
+          ${edge(1246, 1227, 1211)},
+          ${edge(1247, 1223, 1213)},
+          ${edge(1248, 1229, 1216)},
+          ${edge(1249, 1231, 1218)};
+        `,
+      )
+    },
+    async assert(sql) {
+      const statusOf = async (n) =>
+        (
+          await one(
+            sql,
+            `select verification_status as s from requirements where item_id = '${id(n)}'`,
+          )
+        ).s
+      expectEqual(
+        await statusOf(1201),
+        'Failed',
+        'a hand-set Passed with a failed test is Failed',
+      )
+      expectEqual(
+        await statusOf(1203),
+        'Passed',
+        'a NotStarted whose only test passed is Passed',
+      )
+      expectEqual(
+        await statusOf(1207),
+        'NotStarted',
+        'a hand-set InProgress with no verifying test is NotStarted',
+      )
+      expectEqual(
+        await statusOf(1209),
+        'InProgress',
+        'one passed test and one never run is InProgress',
+      )
+      expectEqual(
+        await statusOf(1211),
+        'NotStarted',
+        'a deleted test case is not evidence',
+      )
+      expectEqual(
+        await statusOf(1214),
+        'Passed',
+        "a claim against the requirement's earlier revision counts for the current one",
+      )
+      expectEqual(
+        await statusOf(1216),
+        'InProgress',
+        'a hand-set Failed whose test is blocked is InProgress',
+      )
+      expectEqual(
+        await statusOf(1218),
+        'NotStarted',
+        "a claim from a test case's superseded revision is not evidence",
+      )
+
+      const waived = await one(
+        sql,
+        `select verification_status as s, verification_waiver as w
+           from requirements where item_id = '${id(1205)}'`,
+      )
+      expectEqual(
+        waived.s,
+        'Waived',
+        'a waiver set by hand stands, failed test or not',
+      )
+      expectEqual(
+        waived.w.note,
+        'Waived before verification status was derived',
+        'and says where it came from',
+      )
+      expectEqual(waived.w.waivedBy, null, 'nobody is named as the waiver')
+      expect(
+        typeof waived.w.waivedAt === 'string' && waived.w.waivedAt.length > 0,
+        'the waiver is dated',
+      )
+      const others = await one(
+        sql,
+        `select count(*)::int as n from requirements
+          where verification_waiver is not null and item_id <> '${id(1205)}'`,
+      )
+      expectEqual(others.n, 0, 'no other requirement gained a waiver')
+    },
+  },
 ]
 
 /**
@@ -2688,6 +3233,43 @@ function signingCredentialSeed() {
  * Prefer a scenario. An argument is only better than an execution when there
  * is genuinely nothing to execute.
  */
+/**
+ * The verification-integrity migration (systems-engineering Phase 2), named
+ * by the recompute it runs so the scenarios follow a fold. Its three row
+ * changes — the plan pointer's move to the plan's master, the test-case
+ * lifecycle collapse with its item moves, and the derived verification status
+ * with the waiver backfill — ship in one file, so every scenario names it.
+ */
+function VERIFICATION_INTEGRITY_TAG() {
+  const found = migrations.find((m) =>
+    m.sql.some((s) =>
+      s.includes('UPDATE "requirements" r SET "verification_status"'),
+    ),
+  )
+  if (!found) {
+    throw new Error(
+      'No migration derives requirements.verification_status — the verification-integrity scenarios name a file that no longer exists.',
+    )
+  }
+  return found.tag
+}
+
+/**
+ * The migration that creates `system_elements`, named by what it builds for
+ * the same reason as the helpers above.
+ */
+function SYSTEM_ELEMENTS_TAG() {
+  const found = migrations.find((m) =>
+    m.sql.some((s) => s.includes('CREATE TABLE "system_elements"')),
+  )
+  if (!found) {
+    throw new Error(
+      'No migration creates system_elements — the system-element scenarios name a file that no longer exists.',
+    )
+  }
+  return found.tag
+}
+
 /**
  * The domain-event sequencing migration, named by what it builds for the same
  * reason as the helpers above: the tag differs per edition.

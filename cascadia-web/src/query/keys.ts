@@ -56,6 +56,7 @@ export const RESOURCES = [
   'setup',
   'software',
   'sysml',
+  'system-elements',
   'tags',
   'tasks',
   'test-cases',

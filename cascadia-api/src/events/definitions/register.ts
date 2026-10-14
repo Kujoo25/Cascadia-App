@@ -19,6 +19,7 @@ import './lifecycles'
 import './relationships'
 import './work-orders'
 import './hierarchy'
+import './verification'
 
 /*
  * ## What the catalog deliberately does not say

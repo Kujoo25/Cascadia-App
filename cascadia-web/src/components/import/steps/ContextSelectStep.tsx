@@ -306,8 +306,8 @@ export function ContextSelectStep({
             required={isPostRelease}
             helpText={
               isPostRelease
-                ? 'This design has released items. Select a branch to import new parts.'
-                : 'Parts will be imported to the main branch.'
+                ? `This design has released items. Select a branch to import new ${config.pluralLabel.toLowerCase()}.`
+                : `${config.pluralLabel} will be imported to the main branch.`
             }
           >
             <div className="flex items-center gap-2">

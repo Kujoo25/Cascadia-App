@@ -15,6 +15,7 @@ import { extensionRowCopy } from '../items/type-handlers/copy'
 import { publishStructureEdges } from '../items/structure-events'
 import { BranchService } from './BranchService'
 import { LifecycleService } from './LifecycleService'
+import { ThreadCacheService } from './ThreadCacheService'
 import type { BaseItem } from '@cascadia/commons/items/types/base'
 import '../items/type-handlers/init'
 import { takeFirst } from '@/db/take-first'
@@ -185,9 +186,30 @@ export class UsageService {
       { fieldName: 'category', mode: 'inherit' },
       { fieldName: 'verificationMethod', mode: 'inherit' },
       { fieldName: 'priority', mode: 'copy' },
+      // Derived per requirement from its own verifying tests, so a usage
+      // starts from nothing; so does its waiver.
       { fieldName: 'verificationStatus', mode: 'usage-only' },
-      { fieldName: 'allocatedDesignId', mode: 'usage-only' },
+      { fieldName: 'verificationWaiver', mode: 'usage-only' },
       { fieldName: 'parentRequirementId', mode: 'usage-only' },
+    ],
+  }
+
+  /**
+   * Inheritance configuration for TestCase fields. The procedure is the
+   * definition's; its plan membership and its execution record belong to the
+   * design it is used in, and start empty there.
+   */
+  private static readonly TEST_CASE_INHERITANCE: ItemTypeInheritanceConfig = {
+    itemType: 'TestCase',
+    fields: [
+      { fieldName: 'testType', mode: 'inherit' },
+      { fieldName: 'preconditions', mode: 'inherit' },
+      { fieldName: 'steps', mode: 'inherit' },
+      { fieldName: 'testPlanMasterId', mode: 'usage-only' },
+      { fieldName: 'executionStatus', mode: 'usage-only' },
+      { fieldName: 'lastExecutedAt', mode: 'usage-only' },
+      { fieldName: 'lastExecutedBy', mode: 'usage-only' },
+      { fieldName: 'environment', mode: 'usage-only' },
     ],
   }
 
@@ -303,6 +325,9 @@ export class UsageService {
           revision: usage.revision,
         },
       })
+
+      // The definition's thread gains a usage, and the usage's begins.
+      ThreadCacheService.invalidateForItemsSoon([definition.id, usage.id])
 
       return { usage, definition, typeData }
     })
@@ -789,6 +814,11 @@ export class UsageService {
           .where(inArray(items.id, [...nestedReusedIds]))
       }
 
+      ThreadCacheService.invalidateForItemsSoon([
+        ...itemIdMap.keys(),
+        ...itemIdMap.values(),
+      ])
+
       return { items: createdUsages, relationshipsCreated }
     })
   }
@@ -842,6 +872,8 @@ export class UsageService {
         return this.REQUIREMENT_INHERITANCE
       case 'Task':
         return this.TASK_INHERITANCE
+      case 'TestCase':
+        return this.TEST_CASE_INHERITANCE
       default:
         // Default: all fields are copied
         return { itemType, fields: [] }

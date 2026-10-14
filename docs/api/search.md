@@ -193,7 +193,7 @@ curl /api/v1/items/search?q=motor&designIds=UUID1,UUID2
 | ----------------- | ------------------------------------------------------------------ |
 | `current`         | Only search within `contextDesignId`                               |
 | `all`             | Search all designs the user has access to (via program membership) |
-| `library`         | Search only the Standard Library design                            |
+| `library`         | Search every library: the Standard Library and user-created ones   |
 | _(not specified)_ | No design filtering applied                                        |
 
 When `designIds` is provided, it takes precedence over `designScope`.

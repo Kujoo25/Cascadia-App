@@ -2418,6 +2418,42 @@
         ]
       }
     },
+    "/api/v1/ai/dialogs/{id}": {
+      "get": {
+        "operationId": "getApiV1AiDialogsById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Get the payload behind a chat dialog button",
+        "tags": [
+          "AI"
+        ]
+      }
+    },
     "/api/v1/ai/sessions": {
       "get": {
         "operationId": "getApiV1AiSessions",
@@ -4122,8 +4158,41 @@
     },
     "/api/v1/change-orders/{id}/affected-items": {
       "delete": {
+        "description": "Address the affected-items row with itemId, or the logical item with itemMasterId. Set discardBranchChanges=true to discard its ECO working copy and checkout as well.",
         "operationId": "deleteApiV1ChangeOrdersByIdAffectedItems",
         "parameters": [
+          {
+            "in": "query",
+            "name": "itemId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "itemMasterId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "discardBranchChanges",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          },
           {
             "in": "path",
             "name": "id",
@@ -4134,6 +4203,32 @@
           }
         ],
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "success": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "success"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
           "400": {
             "$ref": "#/components/responses/ValidationError"
           },
@@ -4150,6 +4245,7 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "summary": "Remove an affected item from a change order",
         "tags": [
           "Change Orders"
         ]
@@ -7021,6 +7117,394 @@
         ]
       }
     },
+    "/api/v1/designs/{designId}/architecture": {
+      "get": {
+        "description": "The DECOMPOSES tree of the design's system elements at a version context — main as it stands when no context is given, else the branch, tag or commit named — each element with the items that realize it and the requirements allocated to it. Links are resolved and judged the way the requirements matrix resolves and judges them.",
+        "operationId": "getApiV1DesignsByDesignIdArchitecture",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "designId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "commit",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "context": {
+                          "properties": {
+                            "id": {
+                              "anyOf": [
+                                {
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "type": {
+                              "enum": [
+                                "released",
+                                "branch",
+                                "tag",
+                                "commit"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "type": "object"
+                        },
+                        "designCode": {
+                          "type": "string"
+                        },
+                        "designId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "designName": {
+                          "type": "string"
+                        },
+                        "roots": {
+                          "items": {
+                            "properties": {
+                              "allocatedRequirements": {
+                                "items": {
+                                  "properties": {
+                                    "itemId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "itemNumber": {
+                                      "type": "string"
+                                    },
+                                    "itemType": {
+                                      "type": "string"
+                                    },
+                                    "masterId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "relationshipId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "revision": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    },
+                                    "suspect": {
+                                      "type": "boolean"
+                                    },
+                                    "suspectReasons": {
+                                      "items": {
+                                        "enum": [
+                                          "source_revised",
+                                          "target_revised"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "relationshipId",
+                                    "itemId",
+                                    "masterId",
+                                    "itemNumber",
+                                    "name",
+                                    "itemType",
+                                    "revision",
+                                    "state",
+                                    "suspect",
+                                    "suspectReasons"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "children": {
+                                "items": {},
+                                "type": "array"
+                              },
+                              "description": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "elementKind": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "itemId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "itemNumber": {
+                                "type": "string"
+                              },
+                              "masterId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "name": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "realizedBy": {
+                                "items": {
+                                  "properties": {
+                                    "itemId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "itemNumber": {
+                                      "type": "string"
+                                    },
+                                    "itemType": {
+                                      "type": "string"
+                                    },
+                                    "masterId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "relationshipId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "revision": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    },
+                                    "suspect": {
+                                      "type": "boolean"
+                                    },
+                                    "suspectReasons": {
+                                      "items": {
+                                        "enum": [
+                                          "source_revised",
+                                          "target_revised"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "relationshipId",
+                                    "itemId",
+                                    "masterId",
+                                    "itemNumber",
+                                    "name",
+                                    "itemType",
+                                    "revision",
+                                    "state",
+                                    "suspect",
+                                    "suspectReasons"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "relationshipId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "itemId",
+                              "masterId",
+                              "itemNumber",
+                              "name",
+                              "revision",
+                              "state",
+                              "elementKind",
+                              "description",
+                              "realizedBy",
+                              "allocatedRequirements",
+                              "children"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "totals": {
+                          "properties": {
+                            "allocated": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "elements": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "realized": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "suspect": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "elements",
+                            "realized",
+                            "allocated",
+                            "suspect"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "designId",
+                        "designCode",
+                        "designName",
+                        "context",
+                        "roots",
+                        "totals"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "System architecture of a design",
+        "tags": [
+          "Designs"
+        ]
+      }
+    },
     "/api/v1/designs/{designId}/gap-analysis": {
       "get": {
         "operationId": "getApiV1DesignsByDesignIdGapAnalysis",
@@ -7101,6 +7585,7 @@
                         "unallocated_requirement",
                         "unsatisfied_requirement",
                         "unverified_requirement",
+                        "suspect_requirement",
                         "untested_part",
                         "unmapped_ebom_item",
                         "orphan_mbom_item",
@@ -7169,6 +7654,666 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "tags": [
+          "Designs"
+        ]
+      }
+    },
+    "/api/v1/designs/{designId}/requirements-export": {
+      "get": {
+        "operationId": "getApiV1DesignsByDesignIdRequirementsExport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "designId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "tags": [
+          "Designs"
+        ]
+      }
+    },
+    "/api/v1/designs/{designId}/rtm": {
+      "get": {
+        "description": "Every requirement of the design with what it is allocated to, what satisfies it and what verifies it, read at a version context: main as it stands when no context is given, else the branch, tag or commit named. Each link carries its suspect state, each row the one \"verified\" rule and its gaps, and the totals count rows. A tag is the compliance snapshot: claims are judged against the rows the tag holds.",
+        "operationId": "getApiV1DesignsByDesignIdRtm",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "designId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "branch",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "commit",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "context": {
+                          "properties": {
+                            "id": {
+                              "anyOf": [
+                                {
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "type": {
+                              "enum": [
+                                "released",
+                                "branch",
+                                "tag",
+                                "commit"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "id"
+                          ],
+                          "type": "object"
+                        },
+                        "designCode": {
+                          "type": "string"
+                        },
+                        "designId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "designName": {
+                          "type": "string"
+                        },
+                        "rows": {
+                          "items": {
+                            "properties": {
+                              "allocatedTo": {
+                                "items": {
+                                  "properties": {
+                                    "itemId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "itemNumber": {
+                                      "type": "string"
+                                    },
+                                    "itemType": {
+                                      "type": "string"
+                                    },
+                                    "masterId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "realizedBy": {
+                                      "items": {
+                                        "properties": {
+                                          "itemId": {
+                                            "format": "uuid",
+                                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                            "type": "string"
+                                          },
+                                          "itemNumber": {
+                                            "type": "string"
+                                          },
+                                          "itemType": {
+                                            "type": "string"
+                                          },
+                                          "masterId": {
+                                            "format": "uuid",
+                                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                            "type": "string"
+                                          },
+                                          "name": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "relationshipId": {
+                                            "format": "uuid",
+                                            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                            "type": "string"
+                                          },
+                                          "revision": {
+                                            "type": "string"
+                                          },
+                                          "state": {
+                                            "type": "string"
+                                          },
+                                          "suspect": {
+                                            "type": "boolean"
+                                          },
+                                          "suspectReasons": {
+                                            "items": {
+                                              "enum": [
+                                                "source_revised",
+                                                "target_revised"
+                                              ],
+                                              "type": "string"
+                                            },
+                                            "type": "array"
+                                          }
+                                        },
+                                        "required": [
+                                          "relationshipId",
+                                          "itemId",
+                                          "masterId",
+                                          "itemNumber",
+                                          "name",
+                                          "itemType",
+                                          "revision",
+                                          "state",
+                                          "suspect",
+                                          "suspectReasons"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      "type": "array"
+                                    },
+                                    "relationshipId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "revision": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    },
+                                    "suspect": {
+                                      "type": "boolean"
+                                    },
+                                    "suspectReasons": {
+                                      "items": {
+                                        "enum": [
+                                          "source_revised",
+                                          "target_revised"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "relationshipId",
+                                    "itemId",
+                                    "masterId",
+                                    "itemNumber",
+                                    "name",
+                                    "itemType",
+                                    "revision",
+                                    "state",
+                                    "suspect",
+                                    "suspectReasons"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "gaps": {
+                                "items": {
+                                  "enum": [
+                                    "not_allocated",
+                                    "not_satisfied",
+                                    "not_verified"
+                                  ],
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "requirement": {
+                                "properties": {
+                                  "id": {
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                    "type": "string"
+                                  },
+                                  "itemNumber": {
+                                    "type": "string"
+                                  },
+                                  "masterId": {
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                    "type": "string"
+                                  },
+                                  "name": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "priority": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "requirementType": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "revision": {
+                                    "type": "string"
+                                  },
+                                  "state": {
+                                    "type": "string"
+                                  },
+                                  "verificationMethod": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "verificationStatus": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "masterId",
+                                  "itemNumber",
+                                  "name",
+                                  "revision",
+                                  "state",
+                                  "priority",
+                                  "requirementType",
+                                  "verificationMethod",
+                                  "verificationStatus"
+                                ],
+                                "type": "object"
+                              },
+                              "satisfiedBy": {
+                                "items": {
+                                  "properties": {
+                                    "itemId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "itemNumber": {
+                                      "type": "string"
+                                    },
+                                    "itemType": {
+                                      "type": "string"
+                                    },
+                                    "masterId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "relationshipId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "revision": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    },
+                                    "suspect": {
+                                      "type": "boolean"
+                                    },
+                                    "suspectReasons": {
+                                      "items": {
+                                        "enum": [
+                                          "source_revised",
+                                          "target_revised"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "relationshipId",
+                                    "itemId",
+                                    "masterId",
+                                    "itemNumber",
+                                    "name",
+                                    "itemType",
+                                    "revision",
+                                    "state",
+                                    "suspect",
+                                    "suspectReasons"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "suspectCount": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              },
+                              "verified": {
+                                "type": "boolean"
+                              },
+                              "verifiedBy": {
+                                "items": {
+                                  "properties": {
+                                    "executionStatus": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "itemId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "itemNumber": {
+                                      "type": "string"
+                                    },
+                                    "itemType": {
+                                      "type": "string"
+                                    },
+                                    "lastExecutedAt": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "masterId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "name": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "type": "null"
+                                        }
+                                      ]
+                                    },
+                                    "relationshipId": {
+                                      "format": "uuid",
+                                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                      "type": "string"
+                                    },
+                                    "revision": {
+                                      "type": "string"
+                                    },
+                                    "state": {
+                                      "type": "string"
+                                    },
+                                    "suspect": {
+                                      "type": "boolean"
+                                    },
+                                    "suspectReasons": {
+                                      "items": {
+                                        "enum": [
+                                          "source_revised",
+                                          "target_revised"
+                                        ],
+                                        "type": "string"
+                                      },
+                                      "type": "array"
+                                    }
+                                  },
+                                  "required": [
+                                    "relationshipId",
+                                    "itemId",
+                                    "masterId",
+                                    "itemNumber",
+                                    "name",
+                                    "itemType",
+                                    "revision",
+                                    "state",
+                                    "suspect",
+                                    "suspectReasons",
+                                    "executionStatus",
+                                    "lastExecutedAt"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "requirement",
+                              "allocatedTo",
+                              "satisfiedBy",
+                              "verifiedBy",
+                              "verified",
+                              "suspectCount",
+                              "gaps"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "totals": {
+                          "properties": {
+                            "allocated": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "gaps": {
+                              "properties": {
+                                "not_allocated": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                },
+                                "not_satisfied": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                },
+                                "not_verified": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "not_allocated",
+                                "not_satisfied",
+                                "not_verified"
+                              ],
+                              "type": "object"
+                            },
+                            "satisfied": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "suspect": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "total": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "verified": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "total",
+                            "allocated",
+                            "satisfied",
+                            "verified",
+                            "suspect",
+                            "gaps"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "designId",
+                        "designCode",
+                        "designName",
+                        "context",
+                        "rows",
+                        "totals"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Requirements traceability matrix for a design",
         "tags": [
           "Designs"
         ]
@@ -10904,6 +12049,117 @@
         ]
       }
     },
+    "/api/v1/files/{fileId}/applicability": {
+      "patch": {
+        "description": "The file remains owned and revisioned by its Part. Null makes it common to every execution; otherwise it is effective when any condition matches the Part selections.",
+        "operationId": "patchApiV1FilesByFileIdApplicability",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "fileId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "applicability": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "any": {
+                            "items": {
+                              "properties": {
+                                "all": {
+                                  "items": {
+                                    "properties": {
+                                      "family": {
+                                        "maxLength": 50,
+                                        "minLength": 1,
+                                        "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                        "type": "string"
+                                      },
+                                      "values": {
+                                        "items": {
+                                          "maxLength": 50,
+                                          "minLength": 1,
+                                          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                          "type": "string"
+                                        },
+                                        "minItems": 1,
+                                        "type": "array"
+                                      }
+                                    },
+                                    "required": [
+                                      "family",
+                                      "values"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "minItems": 1,
+                                  "type": "array"
+                                }
+                              },
+                              "required": [
+                                "all"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 100,
+                            "minItems": 1,
+                            "type": "array"
+                          }
+                        },
+                        "required": [
+                          "any"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "applicability"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Set a file's product-configuration applicability",
+        "tags": [
+          "Files"
+        ]
+      }
+    },
     "/api/v1/files/{fileId}/cad-nodes": {
       "get": {
         "description": "Each glTF node in the model, resolved to a PLM part by matching the CAD's own name against the assembly's BOM, with any recorded corrections applied. Empty for a model with no part structure.",
@@ -12203,6 +13459,147 @@
         ]
       }
     },
+    "/api/v1/import/requirements": {
+      "post": {
+        "operationId": "postApiV1ImportRequirements",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "branchId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "bypassBranchProtection": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "designId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "importAsReleased": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "rows": {
+                    "items": {
+                      "properties": {
+                        "acceptanceCriteria": {
+                          "maxLength": 10000,
+                          "type": "string"
+                        },
+                        "attributes": {
+                          "additionalProperties": {},
+                          "type": "object"
+                        },
+                        "category": {
+                          "maxLength": 100,
+                          "type": "string"
+                        },
+                        "description": {
+                          "maxLength": 10000,
+                          "type": "string"
+                        },
+                        "itemNumber": {
+                          "maxLength": 100,
+                          "type": "string"
+                        },
+                        "name": {
+                          "maxLength": 500,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "parentItemNumber": {
+                          "maxLength": 100,
+                          "type": "string"
+                        },
+                        "priority": {
+                          "enum": [
+                            "MustHave",
+                            "ShouldHave",
+                            "CouldHave",
+                            "WontHave"
+                          ],
+                          "type": "string"
+                        },
+                        "revision": {
+                          "default": "-",
+                          "maxLength": 10,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "source": {
+                          "maxLength": 200,
+                          "type": "string"
+                        },
+                        "type": {
+                          "enum": [
+                            "Functional",
+                            "Non-Functional",
+                            "Performance",
+                            "Security",
+                            "Usability",
+                            "Business"
+                          ],
+                          "type": "string"
+                        },
+                        "verificationMethod": {
+                          "enum": [
+                            "Analysis",
+                            "Inspection",
+                            "Demonstration",
+                            "Test",
+                            "Documentation"
+                          ],
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ],
+                      "type": "object"
+                    },
+                    "maxItems": 500,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "designId",
+                  "rows"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "tags": [
+          "Import"
+        ]
+      }
+    },
     "/api/v1/import/templates/documents": {
       "get": {
         "operationId": "getApiV1ImportTemplatesDocuments",
@@ -12256,6 +13653,31 @@
     "/api/v1/import/templates/parts": {
       "get": {
         "operationId": "getApiV1ImportTemplatesParts",
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "tags": [
+          "Import"
+        ]
+      }
+    },
+    "/api/v1/import/templates/requirements": {
+      "get": {
+        "operationId": "getApiV1ImportTemplatesRequirements",
         "responses": {
           "400": {
             "$ref": "#/components/responses/ValidationError"
@@ -13018,11 +14440,6 @@
                         "maxLength": 5000,
                         "type": "string"
                       },
-                      "allocatedDesignId": {
-                        "format": "uuid",
-                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
-                        "type": "string"
-                      },
                       "attributes": {
                         "additionalProperties": {},
                         "type": "object"
@@ -13116,15 +14533,74 @@
                           "Documentation"
                         ],
                         "type": "string"
+                      }
+                    },
+                    "required": [
+                      "designId",
+                      "itemType"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "properties": {
+                      "attributes": {
+                        "additionalProperties": {},
+                        "type": "object"
                       },
-                      "verificationStatus": {
+                      "branchId": {
+                        "description": "Create the item on this ECO branch instead of directly on main. Omitting it writes to main, which branch protection allows only before the design has released.",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "commitMessage": {
+                        "description": "Message for the commit the branch write produces. Ignored without `branchId`. Defaults to \"Created <itemType> <itemNumber>\".",
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      "description": {
+                        "maxLength": 5000,
+                        "type": "string"
+                      },
+                      "designId": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                        "type": "string"
+                      },
+                      "elementKind": {
                         "enum": [
-                          "NotStarted",
-                          "InProgress",
-                          "Passed",
-                          "Failed",
-                          "Waived"
+                          "system",
+                          "segment",
+                          "subsystem",
+                          "module"
                         ],
+                        "type": "string"
+                      },
+                      "itemNumber": {
+                        "maxLength": 100,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "itemType": {
+                        "const": "SystemElement",
+                        "type": "string"
+                      },
+                      "name": {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      "revision": {
+                        "maxLength": 10,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "state": {
+                        "maxLength": 50,
+                        "type": "string"
+                      },
+                      "usageOf": {
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
                         "type": "string"
                       }
                     },
@@ -16513,7 +17989,7 @@
     },
     "/api/v1/items/{itemId}/files/upload": {
       "post": {
-        "description": "`multipart/form-data`. Every part carrying a file is uploaded; the part name is free, and the client uses `file0`, `file1`, and so on. Two optional parts hang off each file part by name: `<name>_description` and `<name>_isThumbnail` (the string `true`). A single `branchId` part applies to the whole request. Uploading a STEP or IGES file does not convert it — call POST /api/v1/files/:fileId/convert with the returned id.",
+        "description": "`multipart/form-data`. Every part carrying a file is uploaded; the part name is free, and the client uses `file0`, `file1`, and so on. Optional parts hang off each file part by name: `<name>_description`, `<name>_isThumbnail` (the string `true`), and `<name>_applicability` (JSON; omitted means common to every execution). A single `branchId` part applies to the whole request. Uploading a STEP or IGES file does not convert it — call POST /api/v1/files/:fileId/convert with the returned id.",
         "operationId": "postApiV1ItemsByItemIdFilesUpload",
         "parameters": [
           {
@@ -16556,6 +18032,10 @@
                     "format": "binary",
                     "type": "string"
                   },
+                  "file0_applicability": {
+                    "description": "JSON OptionApplicability for `file0`; omit for a common file. Repeat for file1, file2, …",
+                    "type": "string"
+                  },
                   "file0_description": {
                     "description": "Description stored against `file0`.",
                     "type": "string"
@@ -16592,6 +18072,63 @@
                           "items": {
                             "additionalProperties": {},
                             "properties": {
+                              "applicability": {
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "any": {
+                                        "items": {
+                                          "properties": {
+                                            "all": {
+                                              "items": {
+                                                "properties": {
+                                                  "family": {
+                                                    "maxLength": 50,
+                                                    "minLength": 1,
+                                                    "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                    "type": "string"
+                                                  },
+                                                  "values": {
+                                                    "items": {
+                                                      "maxLength": 50,
+                                                      "minLength": 1,
+                                                      "pattern": "^[a-z0-9][a-z0-9_-]*$",
+                                                      "type": "string"
+                                                    },
+                                                    "minItems": 1,
+                                                    "type": "array"
+                                                  }
+                                                },
+                                                "required": [
+                                                  "family",
+                                                  "values"
+                                                ],
+                                                "type": "object"
+                                              },
+                                              "minItems": 1,
+                                              "type": "array"
+                                            }
+                                          },
+                                          "required": [
+                                            "all"
+                                          ],
+                                          "type": "object"
+                                        },
+                                        "maxItems": 100,
+                                        "minItems": 1,
+                                        "type": "array"
+                                      }
+                                    },
+                                    "required": [
+                                      "any"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "branchId": {
                                 "anyOf": [
                                   {
@@ -16660,7 +18197,8 @@
                               "fileHash",
                               "fileVersion",
                               "isPrimaryModel",
-                              "isItemThumbnail"
+                              "isItemThumbnail",
+                              "applicability"
                             ],
                             "type": "object"
                           },
@@ -20801,6 +22339,9 @@
                               "family": {
                                 "type": "string"
                               },
+                              "fileId": {
+                                "type": "string"
+                              },
                               "makeCode": {
                                 "type": "string"
                               },
@@ -22488,6 +24029,290 @@
         ]
       }
     },
+    "/api/v1/programs/{id}/requirements-rollup": {
+      "get": {
+        "description": "Every design of the program at its released view: how many requirements each holds and how many are allocated, satisfied, verified or carry a suspect claim, with the open gaps across the program, most important first. The figures are the totals of each design's requirements traceability matrix (GET /api/v1/designs/{id}/rtm).",
+        "operationId": "getApiV1ProgramsByIdRequirementsRollup",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "designs": {
+                          "items": {
+                            "properties": {
+                              "allocated": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              },
+                              "designCode": {
+                                "type": "string"
+                              },
+                              "designId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "designName": {
+                                "type": "string"
+                              },
+                              "designType": {
+                                "type": "string"
+                              },
+                              "gaps": {
+                                "properties": {
+                                  "not_allocated": {
+                                    "maximum": 9007199254740991,
+                                    "minimum": -9007199254740991,
+                                    "type": "integer"
+                                  },
+                                  "not_satisfied": {
+                                    "maximum": 9007199254740991,
+                                    "minimum": -9007199254740991,
+                                    "type": "integer"
+                                  },
+                                  "not_verified": {
+                                    "maximum": 9007199254740991,
+                                    "minimum": -9007199254740991,
+                                    "type": "integer"
+                                  }
+                                },
+                                "required": [
+                                  "not_allocated",
+                                  "not_satisfied",
+                                  "not_verified"
+                                ],
+                                "type": "object"
+                              },
+                              "satisfied": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              },
+                              "suspect": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              },
+                              "total": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              },
+                              "verified": {
+                                "maximum": 9007199254740991,
+                                "minimum": -9007199254740991,
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "total",
+                              "allocated",
+                              "satisfied",
+                              "verified",
+                              "suspect",
+                              "gaps",
+                              "designId",
+                              "designCode",
+                              "designName",
+                              "designType"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "openGaps": {
+                          "items": {
+                            "properties": {
+                              "designCode": {
+                                "type": "string"
+                              },
+                              "designId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "gapType": {
+                                "enum": [
+                                  "not_allocated",
+                                  "not_satisfied",
+                                  "not_verified"
+                                ],
+                                "type": "string"
+                              },
+                              "itemNumber": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "priority": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "requirementId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "designId",
+                              "designCode",
+                              "requirementId",
+                              "itemNumber",
+                              "name",
+                              "priority",
+                              "gapType"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        },
+                        "openGapsTotal": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "programId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "totals": {
+                          "properties": {
+                            "allocated": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "gaps": {
+                              "properties": {
+                                "not_allocated": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                },
+                                "not_satisfied": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                },
+                                "not_verified": {
+                                  "maximum": 9007199254740991,
+                                  "minimum": -9007199254740991,
+                                  "type": "integer"
+                                }
+                              },
+                              "required": [
+                                "not_allocated",
+                                "not_satisfied",
+                                "not_verified"
+                              ],
+                              "type": "object"
+                            },
+                            "satisfied": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "suspect": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "total": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            },
+                            "verified": {
+                              "maximum": 9007199254740991,
+                              "minimum": -9007199254740991,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "total",
+                            "allocated",
+                            "satisfied",
+                            "verified",
+                            "suspect",
+                            "gaps"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "programId",
+                        "designs",
+                        "totals",
+                        "openGaps",
+                        "openGapsTotal"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Requirements coverage across a program",
+        "tags": [
+          "Programs"
+        ]
+      }
+    },
     "/api/v1/relationships": {
       "get": {
         "operationId": "getApiV1Relationships",
@@ -22508,6 +24333,126 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "tags": [
+          "Relationships"
+        ]
+      }
+    },
+    "/api/v1/relationships/affirm": {
+      "post": {
+        "description": "The bulk form of `POST /relationships/{relationshipId}/affirm`: records that each named claim still holds for the versions its ends currently name. Each id is charged on its own — `update` on the source item’s type, plus access to both ends — and reported on its own, so one link the caller may not affirm does not refuse the rest. At most 500 ids per call.",
+        "operationId": "postApiV1RelationshipsAffirm",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "relationshipIds": {
+                    "items": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "maxItems": 500,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "relationshipIds"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "affirmed": {
+                          "maximum": 9007199254740991,
+                          "minimum": -9007199254740991,
+                          "type": "integer"
+                        },
+                        "results": {
+                          "items": {
+                            "properties": {
+                              "outcome": {
+                                "enum": [
+                                  "affirmed",
+                                  "not_found",
+                                  "forbidden",
+                                  "not_suspectable"
+                                ],
+                                "type": "string"
+                              },
+                              "reasons": {
+                                "items": {
+                                  "enum": [
+                                    "source_revised",
+                                    "target_revised"
+                                  ],
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "relationshipId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "suspect": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "relationshipId",
+                              "outcome"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "affirmed",
+                        "results"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Affirm several trace links",
         "tags": [
           "Relationships"
         ]
@@ -22955,6 +24900,88 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "tags": [
+          "Relationships"
+        ]
+      }
+    },
+    "/api/v1/relationships/{relationshipId}/affirm": {
+      "post": {
+        "description": "Records that a traceability claim (`SATISFIES`, `ALLOCATED_TO`, `VERIFIED_BY`, `VALIDATES`) still holds for the versions its ends currently name, which clears its suspect flag. Affirming is a review record, not an edit of the link, so it needs no checkout; it charges `update` on the source item’s own type.",
+        "operationId": "postApiV1RelationshipsByRelationshipIdAffirm",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "relationshipId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "reasons": {
+                          "items": {
+                            "enum": [
+                              "source_revised",
+                              "target_revised"
+                            ],
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "relationshipId": {
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                          "type": "string"
+                        },
+                        "suspect": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "relationshipId",
+                        "suspect",
+                        "reasons"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Affirm a trace link",
         "tags": [
           "Relationships"
         ]
@@ -23989,10 +26016,10 @@
                     "anyOf": [
                       {
                         "enum": [
-                          "low",
-                          "medium",
-                          "high",
-                          "critical"
+                          "MustHave",
+                          "ShouldHave",
+                          "CouldHave",
+                          "WontHave"
                         ],
                         "type": "string"
                       },
@@ -24031,11 +26058,11 @@
                     "anyOf": [
                       {
                         "enum": [
-                          "inspection",
-                          "analysis",
-                          "demonstration",
-                          "test",
-                          "documentation"
+                          "Analysis",
+                          "Inspection",
+                          "Demonstration",
+                          "Test",
+                          "Documentation"
                         ],
                         "type": "string"
                       },
@@ -24814,6 +26841,184 @@
             "$ref": "#/components/responses/ServerError"
           }
         },
+        "tags": [
+          "Requirements"
+        ]
+      }
+    },
+    "/api/v1/requirements/{id}/waive": {
+      "delete": {
+        "description": "The derived status takes over again, recomputed from the verifying tests' executions.",
+        "operationId": "deleteApiV1RequirementsByIdWaive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "verificationStatus": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "verificationStatus"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Clear a requirement's verification waiver",
+        "tags": [
+          "Requirements"
+        ]
+      },
+      "post": {
+        "description": "A requirement's verification status is derived from the latest execution of every test case that verifies it. A waiver is the one manual exception: it records who waived verification, when and why, the status reads `Waived` until the waiver is cleared, and the rollup leaves the row alone meanwhile. A review record, not a design edit, so it needs no checkout or change order.",
+        "operationId": "postApiV1RequirementsByIdWaive",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "note": {
+                    "maxLength": 2000,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "note"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "verificationStatus": {
+                          "const": "Waived",
+                          "type": "string"
+                        },
+                        "verificationWaiver": {
+                          "properties": {
+                            "note": {
+                              "type": "string"
+                            },
+                            "waivedAt": {
+                              "type": "string"
+                            },
+                            "waivedBy": {
+                              "anyOf": [
+                                {
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "note",
+                            "waivedBy",
+                            "waivedAt"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      "required": [
+                        "verificationStatus",
+                        "verificationWaiver"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Waive a requirement's verification",
         "tags": [
           "Requirements"
         ]
@@ -26161,6 +28366,1028 @@
         },
         "tags": [
           "SysML"
+        ]
+      }
+    },
+    "/api/v1/system-elements/{id}": {
+      "delete": {
+        "operationId": "deleteApiV1SystemElementsById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "tags": [
+          "System Elements"
+        ]
+      },
+      "get": {
+        "operationId": "getApiV1SystemElementsById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "tags": [
+          "System Elements"
+        ]
+      },
+      "put": {
+        "operationId": "putApiV1SystemElementsById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "attributes": {
+                    "additionalProperties": {},
+                    "type": "object"
+                  },
+                  "commitMessage": {
+                    "maxLength": 500,
+                    "type": "string"
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "maxLength": 10000,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "elementKind": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "system",
+                          "segment",
+                          "subsystem",
+                          "module"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "anyOf": [
+                      {
+                        "maxLength": 500,
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "state": {
+                    "maxLength": 50,
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "tags": [
+          "System Elements"
+        ]
+      }
+    },
+    "/api/v1/system-elements/{id}/allocated-requirements": {
+      "get": {
+        "description": "The incoming ALLOCATED_TO links, inherited from the rows this element succeeded. Allocation is written from the requirement (POST /requirements/{id}/allocate).",
+        "operationId": "getApiV1SystemElementsByIdAllocatedRequirements",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "properties": {
+                              "id": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "itemNumber": {
+                                "type": "string"
+                              },
+                              "itemType": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "relationshipId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string"
+                              },
+                              "suspect": {
+                                "type": "boolean"
+                              },
+                              "suspectReasons": {
+                                "items": {
+                                  "enum": [
+                                    "source_revised",
+                                    "target_revised"
+                                  ],
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "itemNumber",
+                              "name",
+                              "itemType",
+                              "revision",
+                              "state",
+                              "relationshipId",
+                              "suspect",
+                              "suspectReasons"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "items"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "List the requirements allocated to a system element",
+        "tags": [
+          "System Elements"
+        ]
+      }
+    },
+    "/api/v1/system-elements/{id}/children": {
+      "delete": {
+        "operationId": "deleteApiV1SystemElementsByIdChildren",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "branchId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "itemId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "itemId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "success": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "success"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Remove a system element from under this one",
+        "tags": [
+          "System Elements"
+        ]
+      },
+      "get": {
+        "operationId": "getApiV1SystemElementsByIdChildren",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "properties": {
+                              "elementKind": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "id": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "itemNumber": {
+                                "type": "string"
+                              },
+                              "masterId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "name": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "relationshipId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "masterId",
+                              "itemNumber",
+                              "name",
+                              "revision",
+                              "state",
+                              "elementKind",
+                              "relationshipId"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "items"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "List the elements a system element decomposes into",
+        "tags": [
+          "System Elements"
+        ]
+      },
+      "post": {
+        "description": "Creates DECOMPOSES links from this element to each child. Both ends must be system elements of one design, and a link that would close a loop is refused. Pass branchId to write inside an ECO; without it the write lands on the rows named and is refused once the design has released items.",
+        "operationId": "postApiV1SystemElementsByIdChildren",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "branchId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "itemIds": {
+                    "items": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "itemIds"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "success": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "success"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Place system elements under this one",
+        "tags": [
+          "System Elements"
+        ]
+      }
+    },
+    "/api/v1/system-elements/{id}/parent": {
+      "get": {
+        "operationId": "getApiV1SystemElementsByIdParent",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "item": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "elementKind": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "id": {
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                  "type": "string"
+                                },
+                                "itemNumber": {
+                                  "type": "string"
+                                },
+                                "masterId": {
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                  "type": "string"
+                                },
+                                "name": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "relationshipId": {
+                                  "format": "uuid",
+                                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                  "type": "string"
+                                },
+                                "revision": {
+                                  "type": "string"
+                                },
+                                "state": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "id",
+                                "masterId",
+                                "itemNumber",
+                                "name",
+                                "revision",
+                                "state",
+                                "elementKind",
+                                "relationshipId"
+                              ],
+                              "type": "object"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "item"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "The system element this one sits under, if any",
+        "tags": [
+          "System Elements"
+        ]
+      }
+    },
+    "/api/v1/system-elements/{id}/realized-by": {
+      "delete": {
+        "operationId": "deleteApiV1SystemElementsByIdRealizedBy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "branchId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "itemId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "itemId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "success": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "success"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Remove a realization of a system element",
+        "tags": [
+          "System Elements"
+        ]
+      },
+      "get": {
+        "operationId": "getApiV1SystemElementsByIdRealizedBy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "items": {
+                          "items": {
+                            "properties": {
+                              "id": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "itemNumber": {
+                                "type": "string"
+                              },
+                              "itemType": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "relationshipId": {
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                                "type": "string"
+                              },
+                              "revision": {
+                                "type": "string"
+                              },
+                              "state": {
+                                "type": "string"
+                              },
+                              "suspect": {
+                                "type": "boolean"
+                              },
+                              "suspectReasons": {
+                                "items": {
+                                  "enum": [
+                                    "source_revised",
+                                    "target_revised"
+                                  ],
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "itemNumber",
+                              "name",
+                              "itemType",
+                              "revision",
+                              "state",
+                              "relationshipId",
+                              "suspect",
+                              "suspectReasons"
+                            ],
+                            "type": "object"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "required": [
+                        "items"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "List the items that realize a system element",
+        "tags": [
+          "System Elements"
+        ]
+      },
+      "post": {
+        "description": "Creates REALIZED_BY links from the element to each item — a part or software item. The link is a trace claim: it reads suspect once either end revises until it is affirmed again. Pass branchId to write inside an ECO.",
+        "operationId": "postApiV1SystemElementsByIdRealizedBy",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "branchId": {
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                    "type": "string"
+                  },
+                  "itemIds": {
+                    "items": {
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+                      "type": "string"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "itemIds"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "success": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "success"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "data"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        },
+        "summary": "Record the items that realize a system element",
+        "tags": [
+          "System Elements"
         ]
       }
     },

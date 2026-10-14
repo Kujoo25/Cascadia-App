@@ -7,6 +7,8 @@ import { gridParamsToSearchParams } from '../grid-params'
 import { entityQuery } from './entities'
 import type { GridParams, GridQuery } from '../grid-params'
 import type { Design } from '@cascadia/commons/types/design'
+import type { RequirementsMatrix } from '@cascadia/commons/services/types/requirements-matrix'
+import type { DesignArchitecture } from '@cascadia/commons/services/types/architecture'
 import { apiFetch } from '@/api/client'
 
 /**
@@ -213,6 +215,66 @@ export function designStructureQuery<TNode, TOrphan>(
         orphans: result.data.orphans,
         hasRestricted: result.data.hasRestricted,
       }
+    },
+    enabled: Boolean(designId),
+  })
+}
+
+/**
+ * The requirements traceability matrix at a version context. Keyed the way
+ * `designStructureQuery` is, on the three scalar context fields, and under
+ * the design so a write anywhere on the trace graph — a link, a test run, a
+ * waiver, a release — restages it through the resource dependents.
+ */
+export function designRtmQuery(
+  designId: string,
+  context: DesignStructureContext = {},
+) {
+  const { branchId, tagId, commitId } = context
+  return queryOptions({
+    queryKey: qk.sub('designs', designId, 'rtm', { branchId, tagId, commitId }),
+    queryFn: async (): Promise<RequirementsMatrix> => {
+      const qs = new URLSearchParams()
+      if (branchId) qs.set('branch', branchId)
+      if (tagId) qs.set('tag', tagId)
+      if (commitId) qs.set('commit', commitId)
+      const suffix = qs.size > 0 ? `?${qs}` : ''
+      const result = await apiFetch<{ data: RequirementsMatrix }>(
+        `/api/v1/designs/${designId}/rtm${suffix}`,
+      )
+      return result.data
+    },
+    enabled: Boolean(designId),
+  })
+}
+
+/**
+ * The design's system architecture at a context — the DECOMPOSES forest of
+ * its system elements, each with its realizations and allocations. Keyed
+ * beside the RTM so a write anywhere on the architecture restages it through
+ * the same resource dependents.
+ */
+export function designArchitectureQuery(
+  designId: string,
+  context: DesignStructureContext = {},
+) {
+  const { branchId, tagId, commitId } = context
+  return queryOptions({
+    queryKey: qk.sub('designs', designId, 'architecture', {
+      branchId,
+      tagId,
+      commitId,
+    }),
+    queryFn: async (): Promise<DesignArchitecture> => {
+      const qs = new URLSearchParams()
+      if (branchId) qs.set('branch', branchId)
+      if (tagId) qs.set('tag', tagId)
+      if (commitId) qs.set('commit', commitId)
+      const suffix = qs.size > 0 ? `?${qs}` : ''
+      const result = await apiFetch<{ data: DesignArchitecture }>(
+        `/api/v1/designs/${designId}/architecture${suffix}`,
+      )
+      return result.data
     },
     enabled: Boolean(designId),
   })

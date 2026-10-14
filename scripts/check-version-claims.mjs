@@ -116,11 +116,6 @@ const ALLOW = [
     'historical record: a released changelog entry describes the state at its release',
   ],
   [
-    'publish/CHANGELOG.md',
-    'pre-1\\.0',
-    'historical record, same as the private changelog',
-  ],
-  [
     'RELEASING.md',
     'pre-1\\.0',
     'live statement of the versioning policy, not a claim about a feature',
@@ -132,8 +127,12 @@ const ALLOW = [
   ],
 ]
 
+// By name, not only by path: an edition keeps its own copy of a file beside
+// its composition root, and the allowance follows the file.
 const allowed = (file, pattern) =>
-  ALLOW.some(([f, p]) => f === file && p === pattern.source)
+  ALLOW.some(
+    ([f, p]) => (f === file || file.endsWith(`/${f}`)) && p === pattern.source,
+  )
 
 const tracked = execFileSync('git', ['ls-files', '*.md'], {
   encoding: 'utf8',

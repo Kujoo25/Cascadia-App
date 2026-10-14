@@ -2,9 +2,9 @@
 
 Cascadia PLM manages engineering data through **item types** -- typed records that represent the artifacts of product development. Every item in the system is an instance of a registered item type, and all items share common base fields while carrying type-specific data in a companion table.
 
-This document covers all 13 registered item types -- purpose, database schema, lifecycle, relationships, API surface, and UI pages. The seven with the deepest UI surface get a numbered section each; the rest are grouped under [Additional Item Types](#additional-item-types).
+This document covers all 14 registered item types -- purpose, database schema, lifecycle, relationships, API surface, and UI pages. The seven with the deepest UI surface get a numbered section each; the rest are grouped under [Additional Item Types](#additional-item-types).
 
-**The 13 types:** Part, Document, ChangeOrder, Requirement, Task, WorkInstruction, Issue, TestPlan, TestCase, Software, Tool, PhysicalPart, WorkOrder. The canonical list lives in `cascadia-commons/src/items/item-type-definitions.ts`.
+**The 14 types:** Part, Document, ChangeOrder, Requirement, SystemElement, Task, WorkInstruction, Issue, TestPlan, TestCase, Software, Tool, PhysicalPart, WorkOrder. The canonical list lives in `cascadia-commons/src/items/item-type-definitions.ts`.
 
 ---
 
@@ -390,23 +390,23 @@ The Change Order has several supporting tables beyond the main `change_orders` t
 
 ### Type-Specific Fields
 
-| Column                  | Type                   | Description                                                                           |
-| ----------------------- | ---------------------- | ------------------------------------------------------------------------------------- |
-| `item_id`               | UUID (PK, FK to items) | Links to base item                                                                    |
-| `description`           | text                   | Requirement description                                                               |
-| `type`                  | varchar(50)            | `Functional`, `Non-Functional`, `Performance`, `Security`, `Usability`, or `Business` |
-| `priority`              | varchar(20)            | `MustHave`, `ShouldHave`, `CouldHave`, or `WontHave` (MoSCoW)                         |
-| `acceptance_criteria`   | text                   | Conditions for requirement satisfaction                                               |
-| `source`                | varchar(200)           | Origin of the requirement (e.g., customer, standard, regulation)                      |
-| `category`              | varchar(100)           | Grouping category                                                                     |
-| `verification_method`   | varchar(50)            | `Analysis`, `Inspection`, `Demonstration`, `Test`, or `Documentation`                 |
-| `verification_status`   | varchar(50)            | `NotStarted`, `InProgress`, `Passed`, `Failed`, or `Waived`                           |
-| `allocated_design_id`   | UUID (FK to designs)   | Design element this requirement is allocated to                                       |
-| `parent_requirement_id` | UUID (FK to items)     | Parent requirement (for derived requirements hierarchy)                               |
+| Column                  | Type                   | Description                                                                                                                                                                          |
+| ----------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `item_id`               | UUID (PK, FK to items) | Links to base item                                                                                                                                                                   |
+| `description`           | text                   | Requirement description                                                                                                                                                              |
+| `type`                  | varchar(50)            | `Functional`, `Non-Functional`, `Performance`, `Security`, `Usability`, or `Business`                                                                                                |
+| `priority`              | varchar(20)            | `MustHave`, `ShouldHave`, `CouldHave`, or `WontHave` (MoSCoW)                                                                                                                        |
+| `acceptance_criteria`   | text                   | Conditions for requirement satisfaction                                                                                                                                              |
+| `source`                | varchar(200)           | Origin of the requirement (e.g., customer, standard, regulation)                                                                                                                     |
+| `category`              | varchar(100)           | Grouping category                                                                                                                                                                    |
+| `verification_method`   | varchar(50)            | `Analysis`, `Inspection`, `Demonstration`, `Test`, or `Documentation`                                                                                                                |
+| `verification_status`   | varchar(50)            | Derived: `NotStarted`, `InProgress`, `Passed` or `Failed` from the latest execution of every verifying test case; `Waived` by hand (see [Verification status](#verification-status)) |
+| `verification_waiver`   | JSONB                  | `{ note, waivedBy, waivedAt }` while the status is `Waived`; cleared with the waiver                                                                                                 |
+| `parent_requirement_id` | UUID (FK to items)     | Parent requirement (for derived requirements hierarchy)                                                                                                                              |
 
 ### Lifecycle States
 
-Review progress is part of the lifecycle (default definition in `default-lifecycles.ts`; names are configuration): Draft -> Proposed -> Approved by manual transition, Rejected with Rework back to Draft, and release maps Approved -> Released (then Superseded/Obsolete through change orders). Verification outcome stays the measured `verification_status`.
+Review progress is part of the lifecycle (default definition in `default-lifecycles.ts`; names are configuration): Draft -> Proposed -> Approved by manual transition, Rejected with Rework back to Draft, and release maps Approved -> Released (then Superseded/Obsolete through change orders). Verification outcome is the derived `verification_status`, never a lifecycle state.
 
 ### Relationships
 
@@ -426,6 +426,31 @@ Requirements support formal verification tracking (common in aerospace and defen
 | **Inspection**    | Verified by visual examination                   |
 | **Demonstration** | Verified by operational demonstration            |
 | **Test**          | Verified by formal test procedure                |
+
+### Verification status
+
+`verification_status` is derived, never set by hand. Recording a test execution
+and every change to a `VERIFIED_BY` link recompute it, in the same transaction,
+for every requirement the test case verifies
+(`cascadia-api/src/services/verification-rollup.ts`):
+
+| Latest executions of the verifying test cases | Status       |
+| --------------------------------------------- | ------------ |
+| any `Failed`                                  | `Failed`     |
+| every one `Passed` (at least one test case)   | `Passed`     |
+| any execution at all, `Blocked` included      | `InProgress` |
+| no verifying test case, or none has run       | `NotStarted` |
+
+The one exception is manual: `POST /api/v1/requirements/{id}/waive` records a
+waiver (`{ note, waivedBy, waivedAt }`) and sets `Waived`, which wins over the
+derivation until `DELETE /api/v1/requirements/{id}/waive` clears it and
+recomputes. A status sent to `PUT /api/v1/requirements/{id}` is ignored. Every
+change of the status publishes `requirement.verification_changed`, with its
+cause.
+
+"Verified", wherever coverage reports it (`requirements-coverage`,
+`test-coverage`, the gap analysis), means `Passed` or `Waived` **and** no
+suspect `VERIFIED_BY` link -- a claim under review is not evidence.
 
 ### Deriving Child Requirements
 
@@ -466,6 +491,10 @@ out on one.
 | DELETE | `/api/v1/requirements/{id}/allocate`               | Remove an allocation                         |
 | POST   | `/api/v1/requirements/{id}/verify`                 | Link test cases that verify this requirement |
 | DELETE | `/api/v1/requirements/{id}/verify`                 | Remove a verification link                   |
+| POST   | `/api/v1/requirements/{id}/waive`                  | Waive verification, with a note              |
+| DELETE | `/api/v1/requirements/{id}/waive`                  | Clear the waiver and recompute the status    |
+| POST   | `/api/v1/import/requirements`                      | Bulk import from a sheet, hierarchy included |
+| GET    | `/api/v1/designs/{designId}/requirements-export`   | The requirements as an importable sheet      |
 | GET    | `/api/v1/requirements/{id}/verifying-tests`        | Get test cases that verify this requirement  |
 | GET    | `/api/v1/items/{id}/satisfied-requirements`        | Get requirements satisfied by an item        |
 | GET    | `/api/v1/designs/{designId}/requirements-coverage` | Requirements coverage report                 |
@@ -477,11 +506,12 @@ see [Traceability links and branch protection](#traceability-links-and-branch-pr
 
 ### UI Pages
 
-| Path                | Component          | Description                                         |
-| ------------------- | ------------------ | --------------------------------------------------- |
-| `/requirements`     | Requirements index | List/search all requirements                        |
-| `/requirements/new` | RequirementForm    | Create new requirement                              |
-| `/requirements/$id` | Requirement detail | View requirement, traceability, verification status |
+| Path                            | Component          | Description                                                                                                                                          |
+| ------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/requirements`                 | Requirements index | List/search all requirements                                                                                                                         |
+| `/requirements/new`             | RequirementForm    | Create new requirement                                                                                                                               |
+| `/requirements/$id`             | Requirement detail | View requirement, traceability, verification status                                                                                                  |
+| `/designs/$id?tab=requirements` | Requirements tab   | Coverage cards, the traceability matrix (RTM) and its VCRM view at the page's version context — see [Requirements and V&V](./requirements-and-vv.md) |
 
 ### Key Files
 
@@ -931,22 +961,22 @@ A Design is a version-controlled container for items within a program. Designs h
 
 **Lifecycle:** Free | **Default State:** Draft | **Numbering:** `TC-000001`
 
-| Field              | Type                   | Description                                     |
-| ------------------ | ---------------------- | ----------------------------------------------- |
-| `test_plan_id`     | UUID (FK)              | Parent test plan                                |
-| `test_type`        | varchar(50)            | `Unit`, `Integration`, `System`, `Acceptance`   |
-| `preconditions`    | text                   | Setup requirements                              |
-| `steps`            | JSONB (TestStep array) | Array of `{stepNumber, action, expectedResult}` |
-| `execution_status` | varchar(50)            | `NotRun`, `Passed`, `Failed`, `Blocked`         |
-| `last_executed_at` | timestamp              | Last execution date                             |
-| `last_executed_by` | UUID (FK)              | Last executor                                   |
-| `environment`      | varchar(100)           | Execution environment                           |
+| Field                 | Type                   | Description                                                                                                                          |
+| --------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `test_plan_master_id` | UUID (items.master_id) | Parent test plan, by master, so membership survives a plan revision; the API reads and writes `testPlanId` as the plan's current row |
+| `test_type`           | varchar(50)            | `Unit`, `Integration`, `System`, `Acceptance`                                                                                        |
+| `preconditions`       | text                   | Setup requirements                                                                                                                   |
+| `steps`               | JSONB (TestStep array) | Array of `{stepNumber, action, expectedResult}`                                                                                      |
+| `execution_status`    | varchar(50)            | `Passed`, `Failed` or `Blocked` from the latest run; null until the first                                                            |
+| `last_executed_at`    | timestamp              | Last execution date                                                                                                                  |
+| `last_executed_by`    | UUID (FK)              | Last executor                                                                                                                        |
+| `environment`         | varchar(100)           | Execution environment                                                                                                                |
 
-**States:** Draft, In Review, Approved, Released, Obsolete, NotRun, Passed, Failed, Blocked
+**States:** Draft, Active, Obsolete (default lifecycle). A result is never a state: it lives in `execution_status` and the execution history, and each run rolls up into the verified requirements' `verification_status` (see [Verification status](#verification-status)).
 
 **Relationships:** VERIFIED_BY -> Requirement, VALIDATES -> Part, TestPlan (parent), Document (references)
 
-**Test Executions** are stored in the `test_executions` table with status, duration, actual results, and notes.
+**Test Executions** are stored in the `test_executions` table with status, duration, actual results, and notes. Recording one publishes `test.executed`.
 
 **API:** `/api/v1/test-cases/{id}/executions`
 
@@ -1031,6 +1061,29 @@ See `docs/features/physical-parts-and-traceability.md` for the full design.
 
 See `docs/features/software-management.md` for the full design.
 
+### System Element
+
+**Purpose:** A logical element of the system architecture — the system, a segment, a subsystem or a module — that a requirement is allocated to before any part exists, and that parts and software later realize. The architecture is the `DECOMPOSES` tree, which is deliberately not the BOM: one tree serving two masters was rejected in the systems-engineering proposal. Versioned and ECO-controlled like a Part, so the architecture an ECO reshapes is isolated on its branch until the release.
+
+**Lifecycle:** Driven (the Part definition scoped to the type) | **Default State:** Draft | **Numbering:** `SE-000001`
+
+| Field          | Type        | Description                                                              |
+| -------------- | ----------- | ------------------------------------------------------------------------ |
+| `element_kind` | varchar(20) | `system`, `segment`, `subsystem` or `module` — a label, not a constraint |
+| `description`  | text        | What the element is for                                                  |
+
+**States:** Draft, Released, Superseded, Obsolete
+
+**Relationships:** `DECOMPOSES` -> SystemElement (the tree; a link that would close a loop is refused), `REALIZED_BY` -> Part, Software (the hop to the item that implements the element — a trace claim that reads suspect after either end revises until it is affirmed), and `ALLOCATED_TO` from Requirement (written from the requirement). The requirements matrix follows the two hops: requirement -> element -> realizing part.
+
+**Architecture at a context:** `GET /api/v1/designs/{id}/architecture?branch=|tag=|commit=` is the `DECOMPOSES` forest of a design with each element's realizations and allocated requirements, resolved and judged the way the RTM is; the design page's Architecture tab renders it as a tree and as a graph.
+
+**API:** `/api/v1/system-elements/{id}`, plus `/children`, `/parent`, `/realized-by`, `/allocated-requirements`
+
+**Permissions:** the `system_elements` resource. The shipped roles hold it the way they hold `requirements`, and the migration that adds the type grants it to existing roles by the same rule.
+
+See `docs/features/requirements-and-vv.md` for the trace rules the architecture shares.
+
 ### Tool
 
 **Purpose:** A piece of manufacturing, quality, or utility equipment — a 3D printer, CNC mill, laser cutter, CMM. Tools are the capability inventory the design engine's Toolset Establishment stage draws on to constrain BOM and CAD generation. Non-versioned (no `designId`, Free lifecycle).
@@ -1090,23 +1143,38 @@ hold permissions on those resources. See
 
 The `item_relationships` table stores typed, directed relationships between any two items. Key relationship types used across the system:
 
-| Relationship Type | Typical Source   | Typical Target     | Description                 |
-| ----------------- | ---------------- | ------------------ | --------------------------- |
-| `BOM`             | Part (parent)    | Part (child)       | Bill of Materials hierarchy |
-| `Document`        | Part             | Document           | Attached documentation      |
-| `Affects`         | ChangeOrder      | Part, Document     | ECO affected items          |
-| `SATISFIES`       | Part, Document   | Requirement        | Item satisfies requirement  |
-| `ALLOCATED_TO`    | Requirement      | Part, Document     | Requirement allocated to it |
-| `DERIVES_FROM`    | Requirement      | Requirement        | Child derived from parent   |
-| `VERIFIED_BY`     | TestCase         | Requirement        | Test verifies requirement   |
-| `VALIDATES`       | TestCase         | Part               | Test validates part         |
-| `Dependency`      | Requirement/Task | Requirement/Task   | Depends-on relationship     |
-| `Blocker`         | Task             | Task               | Blocking relationship       |
-| `AffectedItem`    | Issue            | Part, Document     | Items affected by issue     |
-| `CausedBy`        | Issue            | ChangeOrder, Issue | Root cause link             |
-| `ResolvedBy`      | Issue            | ChangeOrder        | Resolution link             |
+| Relationship Type | Typical Source           | Typical Target                          | Description                 |
+| ----------------- | ------------------------ | --------------------------------------- | --------------------------- |
+| `BOM`             | Part (parent)            | Part (child)                            | Bill of Materials hierarchy |
+| `Document`        | Part                     | Document                                | Attached documentation      |
+| `Affects`         | ChangeOrder              | Part, Document                          | ECO affected items          |
+| `SATISFIES`       | Part, Software, Document | Requirement                             | Item satisfies requirement  |
+| `ALLOCATED_TO`    | Requirement              | Part, Software, Document, SystemElement | Requirement allocated to it |
+| `DECOMPOSES`      | SystemElement            | SystemElement                           | The architecture tree       |
+| `REALIZED_BY`     | SystemElement            | Part, Software                          | Element realized by item    |
+| `DERIVES_FROM`    | Requirement              | Requirement                             | Child derived from parent   |
+| `VERIFIED_BY`     | TestCase                 | Requirement                             | Test verifies requirement   |
+| `VALIDATES`       | TestCase                 | Part                                    | Test validates part         |
+| `Dependency`      | Requirement/Task         | Requirement/Task                        | Depends-on relationship     |
+| `Blocker`         | Task                     | Task                                    | Blocking relationship       |
+| `AffectedItem`    | Issue                    | Part, Document                          | Items affected by issue     |
+| `CausedBy`        | Issue                    | ChangeOrder, Issue                      | Root cause link             |
+| `ResolvedBy`      | Issue                    | ChangeOrder                             | Resolution link             |
 
-Relationship records include optional fields for quantity, reference designator, find number, SysML composition/multiplicity, and cross-design traceability (source/target design, derivation method).
+Relationship records include optional fields for quantity, reference designator, find number, SysML composition/multiplicity, and cross-design traceability (source/target design, derivation method). Every copy of an edge -- the checkout's working copy and the release's rebuild -- carries those columns unchanged.
+
+The trace family (`SATISFIES`, `ALLOCATED_TO`, `VERIFIED_BY`, `VALIDATES`,
+`DERIVES_FROM`, `Evidences`) and the architecture family (`DECOMPOSES`,
+`REALIZED_BY`) are declared once, in the **relationship catalog**
+(`cascadia-commons/src/items/relationships/catalog.ts`): the stored string,
+the item types each end may be, which end answers for it under the edit lock,
+and whether its claim can go stale. The relationship service refuses a
+cataloged edge whose ends are the wrong types -- a `SATISFIES` stored
+requirement -> part is a claim no reader finds -- and the relationship pickers
+offer an item the cataloged types it may be the source of, with the target
+types fixed. A string the catalog does not name stays a user-defined edge and
+is not policed. `DERIVES_FROM` is written by `POST /requirements/{id}/derive`
+beside the `parent_requirement_id` column; the readers follow the column.
 
 **API:** `GET /api/v1/relationships`, `POST /api/v1/relationships/batch-create`, `PUT`/`DELETE /api/v1/relationships/{relationshipId}`
 
@@ -1119,15 +1187,16 @@ nothing. Once anything in the design is released, main is closed and the write
 is refused with `403 BRANCH_PROTECTED` and the ECO hint; a branch row nobody
 has checked out gives `409 ITEM_CHECKOUT_REQUIRED`.
 
-The four requirements-traceability types (`SATISFIES`, `ALLOCATED_TO`,
-`DERIVES_FROM`, `VERIFIED_BY`) carry one wrinkle. The rule normally falls on
-the **source**, but `VERIFIED_BY` runs TestCase -> Requirement and TestCase has
-a `Free` lifecycle, so the source guard was a no-op for branch protection: a
-V&V link could be written straight onto a Released requirement with no change
-order anywhere, while `SATISFIES` -- the same statement with a Part source --
-was refused. For these types the rule moves to the **requirement end** when the
-source is exempt. Every other relationship, `Affects` included, still answers
-to its source (see `items/traceability-relationships.ts`).
+The five traceability types (`SATISFIES`, `ALLOCATED_TO`, `DERIVES_FROM`,
+`VERIFIED_BY`, `VALIDATES`) carry one wrinkle. The rule normally falls on the
+**source**, but `VERIFIED_BY` and `VALIDATES` run from a TestCase, which has a
+`Free` lifecycle, so the source guard was a no-op for branch protection: a
+V&V link could be written straight onto a Released requirement or part with no
+change order anywhere, while `SATISFIES` -- the same statement with a Part
+source -- was refused. For these types the rule moves to the **other end**
+when the source is exempt. Every other relationship, `Affects` included, still
+answers to its source (the catalog's `guardEnd`, applied by
+`items/traceability-relationships.ts`).
 
 Reading these links is the mirror problem. A relationship names one item
 version, so once anything has been revised, matching a single `items.id` both
@@ -1137,6 +1206,15 @@ left behind. Every reader here -- `getVerifyingTests`, `getSatisfyingItems`,
 thread -- goes through `ItemRelationshipService.findIncomingLinks` /
 `findOutgoingLinks` instead. See
 [Reading relationships across a revision](./versioning.md#reading-relationships-across-a-revision).
+
+A link also knows when it has gone stale. Each of `SATISFIES`, `ALLOCATED_TO`,
+`VERIFIED_BY` and `VALIDATES` records, in the edge's `metadata`, which versions
+of its two ends it was last affirmed against, and every reader above reports it
+as `suspect` (with `suspectReasons`: `source_revised`, `target_revised`) once
+either end has revised past that. `POST /api/v1/relationships/{id}/affirm`
+records that the claim still holds; it needs no checkout and charges `update` on
+the source item's type. See
+[Suspect links](./versioning.md#suspect-links-affirmed-trace-claims).
 
 To record a link inside an ECO, check the governed item out
 (`POST /api/v1/change-orders/{id}/checkout`) and pass `branchId` on the link

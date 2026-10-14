@@ -27,13 +27,14 @@ export const PLM_SERVER_VERSION = '1.0.0'
 const SERVER_INSTRUCTIONS = `Cascadia PLM — Product Lifecycle Management tools.
 
 Read tools (search_items, get_item_details, get_bom, get_where_used,
-analyze_change_impact, search_programs, search_designs) answer questions
-about parts, documents, BOMs, requirements, and change orders. Results are
-scoped to what the authenticated user can access.
+analyze_change_impact, search_programs, search_designs, get_suspect_links)
+answer questions about parts, documents, BOMs, requirements, change orders,
+and the trace links between them. Results are scoped to what the
+authenticated user can access.
 
 Write tools (create_item, update_item, create_relationship,
-transition_item_state, create_change_order, create_program) use a two-step
-confirmation flow: the first call returns { requiresConfirmation: true }
+transition_item_state, create_change_order, create_program, affirm_link)
+use a two-step confirmation flow: the first call returns { requiresConfirmation: true }
 with a summary of what will happen and a single-use "confirmationToken".
 Show the summary to the user, and only after they approve, repeat the exact
 same call with that confirmationToken added. The token expires after a few

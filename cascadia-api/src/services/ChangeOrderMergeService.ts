@@ -33,11 +33,14 @@ import {
   publishDomainEvent,
 } from '../events'
 import { getTypeHandler } from '../items/type-handlers'
+import { affirmationOf, carryAffirmation } from '../items/trace-affirmation'
 import { copyTypeSpecificData } from '../items/type-handlers/copy'
 import '../items/type-handlers/init'
 import { ItemService } from '../items/services/ItemService'
+import { carriedEdgeColumns } from '../items/services/ItemRelationshipService'
 import { ChangeOrderService } from '../items/services/ChangeOrderService'
 import { FileService } from '../vault/services/FileService'
+import { ThreadCacheService } from './ThreadCacheService'
 import { BranchService } from './BranchService'
 import { CommitService } from './CommitService'
 import { CrossDesignReferenceService } from './CrossDesignReferenceService'
@@ -46,8 +49,10 @@ import { LifecycleService } from './LifecycleService'
 import { MbomService } from './MbomService'
 import { ReleaseHookRegistry } from './release-hooks'
 import { RevisionService } from './RevisionService'
+import { TraceImpactService } from './TraceImpactService'
 import { bomStructureOf } from './item-structure'
 import { releaseBranchLocks } from './checkout-locks'
+import type { TraceImpact } from './TraceImpactService'
 import type { DesignReleasedPayload } from '../events'
 import type { TransactionClient } from '../db'
 import type { ResolvedActionStates } from './LifecycleService'
@@ -124,6 +129,13 @@ export interface ReleasePreview {
    * than predicting its own release a second time.
    */
   alreadyReleased: boolean
+  /**
+   * The trace claims the release will leave suspect — the working copies'
+   * claims nobody affirmed on the branch, and every claim affirmed against a
+   * row the release supersedes. Computed by `TraceImpactService` with the
+   * live suspect rule, so the count here is the count read back afterwards.
+   */
+  traceImpact: TraceImpact
 }
 
 /**
@@ -1773,6 +1785,16 @@ export class ChangeOrderMergeService {
       await ChangeOrderService.getChangeOrderDesigns(changeOrderId)
     const designsWithBranches = ecoDesigns.filter((d) => d.branchId)
 
+    // Every row this release will move: the branches' working copies and
+    // the affected items, read before the merge re-homes their edges and
+    // mints the released rows. A cached thread of any of them is wrong the
+    // moment the release commits, and the mutators that normally keep the
+    // cache honest are not on this path.
+    const touchedItemIds = await this.rowsTouchedBy(
+      changeOrderId,
+      designsWithBranches,
+    )
+
     const branchesMerged = await this.mergeBranches(
       changeOrderId,
       userId,
@@ -1814,7 +1836,40 @@ export class ChangeOrderMergeService {
       changeOrderId,
     ))! as unknown as typeof items.$inferSelect
 
+    await ThreadCacheService.invalidateForItemsQuietly(touchedItemIds)
+
     return results
+  }
+
+  /**
+   * The item rows a release of `changeOrderId` will re-home or supersede:
+   * the affected items and every row its branches hold. Expanded to whole
+   * lineages by the cache itself, so the released rows minted later are
+   * covered too.
+   */
+  private static async rowsTouchedBy(
+    changeOrderId: string,
+    designsWithBranches: Array<{ branchId: string | null }>,
+  ): Promise<Array<string>> {
+    const ids = new Set<string>()
+    for (const affected of await ChangeOrderService.getAffectedItems(
+      changeOrderId,
+    )) {
+      if (affected.affectedItemId) ids.add(affected.affectedItemId)
+    }
+    const branchIds = designsWithBranches
+      .map((d) => d.branchId)
+      .filter((id): id is string => id !== null)
+    if (branchIds.length > 0) {
+      const rows = await db
+        .select({ currentItemId: branchItems.currentItemId })
+        .from(branchItems)
+        .where(inArray(branchItems.branchId, branchIds))
+      for (const row of rows) {
+        if (row.currentItemId) ids.add(row.currentItemId)
+      }
+    }
+    return [...ids]
   }
 
   /**
@@ -2346,11 +2401,18 @@ export class ChangeOrderMergeService {
               // Resolve every target's masterId in one query rather than one
               // per relationship — this loop runs inside the serializable
               // transaction, and each round trip here widens the window in
-              // which a concurrent release collides with this one.
+              // which a concurrent release collides with this one. A trace
+              // edge's affirmation names a target row of its own, which is
+              // re-pointed by the same rule as the edge's target.
               const unmappedTargetIds = [
                 ...new Set(
                   parentRelationships
-                    .map((rel) => rel.targetId)
+                    .flatMap((rel) => {
+                      const affirmed = affirmationOf(rel.metadata)
+                      return affirmed
+                        ? [rel.targetId, affirmed.targetId]
+                        : [rel.targetId]
+                    })
                     .filter((id) => !itemIdMapping.has(id)),
                 ),
               ]
@@ -2365,25 +2427,30 @@ export class ChangeOrderMergeService {
                   : [],
               )
 
+              // A target revised in this same ECO is named by its new released
+              // row: a direct mapping for the row, else a mapping for its master.
+              const resolveTarget = (targetId: string): string => {
+                const direct = itemIdMapping.get(targetId)
+                if (direct) return direct
+                const targetMasterId = targetMasterById.get(targetId)
+                return (
+                  (targetMasterId && masterIdToNewItemId.get(targetMasterId)) ||
+                  targetId
+                )
+              }
+
               // Copy each relationship, resolving child references to new revisions
               for (const rel of parentRelationships) {
-                // Check if the child (target) was also revised in this ECO
-                // If so, use the new released item ID instead of the old one
-                let resolvedTargetId = rel.targetId
+                const resolvedTargetId = resolveTarget(rel.targetId)
 
-                // First check if we have a direct mapping for this target ID
-                if (itemIdMapping.has(rel.targetId)) {
-                  resolvedTargetId = itemIdMapping.get(rel.targetId)!
-                } else {
-                  // Check if the target item's masterId was revised
-                  const targetMasterId = targetMasterById.get(rel.targetId)
-                  if (
-                    targetMasterId &&
-                    masterIdToNewItemId.has(targetMasterId)
-                  ) {
-                    resolvedTargetId = masterIdToNewItemId.get(targetMasterId)!
-                  }
-                }
+                // The edge's metadata is the working copy's — a trace claim's
+                // affirmation lives there, re-homed onto the released row when
+                // it was made on the branch (items/trace-affirmation.ts).
+                const metadata = carryAffirmation(rel.metadata, {
+                  fromSourceId: sourceItemId,
+                  toSourceId: releasedItemId,
+                  resolveTarget,
+                })
 
                 if (rel.relationshipType === 'BOM') {
                   nestedOnRelease.add(resolvedTargetId)
@@ -2393,10 +2460,13 @@ export class ChangeOrderMergeService {
                   // The working copy was released in place, so its rows already
                   // hang off the released item — only re-point a child that was
                   // revised in this same ECO.
-                  if (resolvedTargetId !== rel.targetId) {
+                  if (
+                    resolvedTargetId !== rel.targetId ||
+                    metadata !== rel.metadata
+                  ) {
                     await tx
                       .update(itemRelationships)
-                      .set({ targetId: resolvedTargetId })
+                      .set({ targetId: resolvedTargetId, metadata })
                       .where(eq(itemRelationships.id, rel.id))
                   }
                 } else {
@@ -2409,6 +2479,8 @@ export class ChangeOrderMergeService {
                       quantity: rel.quantity,
                       findNumber: rel.findNumber,
                       referenceDesignator: rel.referenceDesignator,
+                      metadata,
+                      ...carriedEdgeColumns(rel),
                       option: rel.option,
                       targetMakeCode: rel.targetMakeCode,
                       createdBy: userId,
@@ -3021,6 +3093,7 @@ export class ChangeOrderMergeService {
         ],
         allConflicts: [],
         alreadyReleased,
+        traceImpact: { suspectAfterRelease: 0, newlySuspect: 0, links: [] },
       }
     }
 
@@ -3267,6 +3340,10 @@ export class ChangeOrderMergeService {
       blockingConflicts.length === 0 &&
       unlisted.length === 0
 
+    // Reported, never blocking: a stale claim is something to affirm or fix
+    // after the release, and refusing the release would not make it truer.
+    const traceImpact = await TraceImpactService.forChangeOrder(changeOrderId)
+
     return {
       designs,
       totalItems,
@@ -3274,6 +3351,7 @@ export class ChangeOrderMergeService {
       validationIssues,
       allConflicts,
       alreadyReleased,
+      traceImpact,
     }
   }
 }

@@ -84,7 +84,7 @@ const members: Array<z.ZodObject> = CREATABLE_TYPES.map(([, def]) => {
   // this holds; `SharedItemTypeDef.schema` is typed as the general `ZodType`
   // only because the registry stores them uniformly.
   const shape = (def.schema as z.ZodObject).shape
-  // Rebuilt from the shape rather than `.omit()`ed: two of the thirteen
+  // Rebuilt from the shape rather than `.omit()`ed: two of the fourteen
   // schemas carry object-level refinements, and Zod refuses to omit from
   // those. Dropping the refinement costs nothing here — nothing validates
   // against this schema, the route still validates against the registered
@@ -97,7 +97,7 @@ const members: Array<z.ZodObject> = CREATABLE_TYPES.map(([, def]) => {
 
 // `z.discriminatedUnion` wants a non-empty tuple and `map` produces an array,
 // so the first member is bound out to make one. The guard is unreachable —
-// `ITEM_TYPE_DEFINITIONS` is a static module constant with thirteen entries —
+// `ITEM_TYPE_DEFINITIONS` is a static module constant with fourteen entries —
 // but binding beats asserting: a cast here would hide a genuinely empty
 // registry behind a runtime error from inside Zod.
 const [firstMember, ...restMembers] = members

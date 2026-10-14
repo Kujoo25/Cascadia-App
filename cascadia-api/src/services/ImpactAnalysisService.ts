@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { and, eq, inArray, or } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { z } from 'zod'
 import { db } from '../db'
+import { notDeleted } from '../db/filters'
 import { designs, itemRelationships, items } from '../db/schema'
 import { NotFoundError } from '../errors'
+import { ItemRelationshipService } from '../items/services/ItemRelationshipService'
 import { EBOM_SOURCE_RELATIONSHIP } from './MbomService'
 import {
   SATISFIES_RELATIONSHIP,
@@ -438,43 +440,54 @@ export class ImpactAnalysisService {
       VALIDATES_RELATIONSHIP,
     ]
 
-    // Find relationships in both directions based on the direction parameter
-    const rels = await db
-      .select({
-        id: itemRelationships.id,
-        sourceId: itemRelationships.sourceId,
-        targetId: itemRelationships.targetId,
-        relationshipType: itemRelationships.relationshipType,
-      })
-      .from(itemRelationships)
-      .where(
-        and(
-          or(
-            eq(itemRelationships.sourceId, itemId),
-            eq(itemRelationships.targetId, itemId),
-          ),
-          inArray(itemRelationships.relationshipType, crossDomainTypes),
-        ),
-      )
+    // The claims naming this item, and the ones it names, read through the
+    // version lineage rather than by exact id: a revision moves only the
+    // referring item's own side of an edge (items/version-lineage.ts), so a
+    // test case that verifies a requirement goes on naming the revision a
+    // release superseded, and a part a requirement is allocated to may have
+    // revised since the edge was made. Upstream — who names me — is what the
+    // current row inherited, without the claims a revision of the source left
+    // behind; downstream — what I name — follows a stale reference to the
+    // row that replaced it.
+    //   EBOM_SOURCE: source = EBOM (engineering), target = MBOM (manufacturing)
+    //   SATISFIES: source = Part, target = Requirement
+    //   VERIFIED_BY: source = TestCase, target = Requirement
+    //   VALIDATES: source = TestCase, target = Part
+    const found: Array<{ relatedItemId: string; relationshipType: string }> = []
+    for (const relationshipType of crossDomainTypes) {
+      if (direction !== 'downstream') {
+        const incoming =
+          (
+            await ItemRelationshipService.findIncomingLinks(
+              [itemId],
+              relationshipType,
+            )
+          ).get(itemId) ?? []
+        for (const rel of incoming) {
+          found.push({ relatedItemId: rel.sourceId, relationshipType })
+        }
+      }
+      if (direction !== 'upstream') {
+        const outgoing =
+          (
+            await ItemRelationshipService.findOutgoingLinks(
+              [itemId],
+              relationshipType,
+            )
+          ).get(itemId) ?? []
+        for (const rel of outgoing) {
+          found.push({ relatedItemId: rel.targetId, relationshipType })
+        }
+      }
+    }
 
-    for (const rel of rels) {
-      const isSource = rel.sourceId === itemId
-      const relatedItemId = isSource ? rel.targetId : rel.sourceId
-
-      // Determine if this relationship direction matches our analysis direction
-      // EBOM_SOURCE: source = EBOM (engineering), target = MBOM (manufacturing)
-      // SATISFIES: source = Part, target = Requirement
-      // VERIFIED_BY: source = TestCase, target = Requirement
-      // VALIDATES: source = TestCase, target = Part
-      const isUpstreamRel = !isSource
-      const isDownstreamRel = isSource
-
-      if (direction === 'upstream' && !isUpstreamRel) continue
-      if (direction === 'downstream' && !isDownstreamRel) continue
-
+    for (const rel of found) {
+      const { relatedItemId } = rel
       if (visitedIds.has(relatedItemId)) continue
 
-      // Get related item details
+      // The lineage reads above answer with the row that stands for the item
+      // now, so there is no `isCurrent` filter here: a working copy on the
+      // analysed item's own branch is a legitimate answer.
       const [relatedItem] = await db
         .select({
           id: items.id,
@@ -488,7 +501,7 @@ export class ImpactAnalysisService {
           isCurrent: items.isCurrent,
         })
         .from(items)
-        .where(and(eq(items.id, relatedItemId), eq(items.isCurrent, true)))
+        .where(and(eq(items.id, relatedItemId), notDeleted()))
         .limit(1)
 
       if (!relatedItem) continue

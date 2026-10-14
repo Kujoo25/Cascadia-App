@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, Check, Loader2 } from 'lucide-react'
+import { TraceImpactSummary } from './TraceImpactSummary'
 import type {
   AvailableTransition,
   LifecycleState,
@@ -302,6 +303,10 @@ export function TransitionDialog({
                       </div>
                     )
                   })}
+                  {releasePreview.traceImpact &&
+                    releasePreview.traceImpact.suspectAfterRelease > 0 && (
+                      <TraceImpactSummary impact={releasePreview.traceImpact} />
+                    )}
                 </div>
               ) : (
                 <div className="text-sm text-amber-700 dark:text-amber-300">

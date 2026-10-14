@@ -12,11 +12,12 @@ export interface ItemSearchParams {
   state?: string
   /**
    * Which designs to search, mirroring the endpoint's own `designScope`:
-   * `'current'` confines results to `contextDesignId`, `'library'` to the
-   * Standard Library. Omit to search every design.
+   * `'current'` confines results to `contextDesignId`, `'library'` to every
+   * library — the Standard Library and user-created ones alike. Omit to search
+   * every design.
    *
    * Structure a design owns — a BOM line, say — can only point at items that
-   * design (or the shared library) also owns, so the pickers that build it
+   * design (or a library) also owns, so the pickers that build it
    * scope the search rather than filter a global list.
    */
   designScope?: 'current' | 'library'

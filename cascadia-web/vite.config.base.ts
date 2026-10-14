@@ -165,7 +165,8 @@ export interface AppViteOptions {
    *
    * The one thing that genuinely differs between editions on the client: which
    * directories are scanned for route files. See "Client route composition" in
-   * `docs/architecture/loadable-modules-architecture.md`.
+   * the loadable-modules architecture document, kept with the edition that
+   * composes modules.
    */
   virtualRouteConfig: VirtualRootRoute
 }

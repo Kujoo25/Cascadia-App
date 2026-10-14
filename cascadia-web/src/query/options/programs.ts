@@ -7,6 +7,7 @@ import { gridParamsToSearchParams } from '../grid-params'
 import { entityQuery, entitySubQuery } from './entities'
 import type { GridParams, GridQuery } from '../grid-params'
 import type { Program, ProgramMember } from '@cascadia/commons/types/program'
+import type { RequirementsRollup } from '@cascadia/commons/services/types/requirements-matrix'
 import { apiFetch } from '@/api/client'
 
 export interface ProgramCounts {
@@ -107,6 +108,20 @@ export function programMembersQuery(id: string) {
  * graph. The endpoint takes no parameters — the graph view's item-type filter
  * shapes what a *design* expansion returns, not this response.
  */
+/** One line per design of the program, at main — see the program page's Requirements card. */
+export function programRequirementsRollupQuery(programId: string) {
+  return queryOptions({
+    queryKey: qk.sub('programs', programId, 'requirements-rollup'),
+    queryFn: async (): Promise<RequirementsRollup> => {
+      const result = await apiFetch<{ data: RequirementsRollup }>(
+        `/api/v1/programs/${programId}/requirements-rollup`,
+      )
+      return result.data
+    },
+    enabled: Boolean(programId),
+  })
+}
+
 export function programScopeGraphQuery<T>(programId: string, enabled = true) {
   return queryOptions({
     queryKey: qk.sub('programs', programId, 'scope-graph'),

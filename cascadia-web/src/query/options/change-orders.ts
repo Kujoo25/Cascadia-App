@@ -293,6 +293,35 @@ export interface ReleasePreviewItem {
   newRevision: string
 }
 
+/** One end of a trace claim the release preview names. */
+export interface ReleaseTraceImpactEnd {
+  itemId: string
+  itemNumber: string
+  name: string | null
+  itemType: string
+}
+
+/** A trace claim that will be suspect once the change order releases. */
+export interface ReleaseTraceImpactLink {
+  relationshipId: string
+  relationshipType: string
+  source: ReleaseTraceImpactEnd
+  target: ReleaseTraceImpactEnd
+  reasons: Array<'source_revised' | 'target_revised'>
+  /** Main already reads it as suspect; the release neither causes nor clears it. */
+  alreadySuspect: boolean
+}
+
+/**
+ * What the release does to the trace graph: the claims it leaves suspect.
+ * Mirrors the server's `TraceImpact` (`TraceImpactService`).
+ */
+export interface ReleaseTraceImpact {
+  suspectAfterRelease: number
+  newlySuspect: number
+  links?: Array<ReleaseTraceImpactLink>
+}
+
 export interface ReleasePreview {
   designs?: Array<{
     designId: string
@@ -304,6 +333,7 @@ export interface ReleasePreview {
   validationIssues?: Array<string>
   /** The change order already released; this preview describes nothing to come. */
   alreadyReleased?: boolean
+  traceImpact?: ReleaseTraceImpact
 }
 
 /**

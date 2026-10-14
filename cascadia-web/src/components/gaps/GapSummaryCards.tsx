@@ -105,6 +105,9 @@ export function GapSummaryCards({ result, className }: GapSummaryCardsProps) {
     reqTotal > 0
       ? Math.round((coverage.requirements.verified / reqTotal) * 100)
       : 100
+  const suspectCount = coverage.requirements.suspect
+  const suspectPercent =
+    reqTotal > 0 ? Math.round((suspectCount / reqTotal) * 100) : 0
   const testedPercent =
     coverage.engineering.total > 0
       ? Math.round(
@@ -268,6 +271,26 @@ export function GapSummaryCards({ result, className }: GapSummaryCardsProps) {
               <div
                 className="bg-green-600 h-2 rounded-full transition-all"
                 style={{ width: `${verifiedPercent}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Suspect links count against trust, not coverage: the claims are
+              still there, one end has moved on since they were affirmed. */}
+          <div>
+            <div className="flex justify-between mb-1">
+              <span className="text-sm font-medium">
+                Requirements with Suspect Links
+              </span>
+              <span className="text-sm text-slate-600 dark:text-slate-400">
+                {suspectCount}/{coverage.requirements.total} ({suspectPercent}
+                %)
+              </span>
+            </div>
+            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2">
+              <div
+                className="bg-amber-500 h-2 rounded-full transition-all"
+                style={{ width: `${suspectPercent}%` }}
               />
             </div>
           </div>

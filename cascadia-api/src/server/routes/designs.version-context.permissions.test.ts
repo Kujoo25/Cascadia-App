@@ -69,6 +69,8 @@ type ContextKind = 'branch' | 'tag' | 'commit'
 interface DraftContexts {
   ids: Record<ContextKind, string>
   draft: { itemNumber: string; name: string }
+  /** A requirement drafted on the same branch, for the reads that list only requirements. */
+  requirement: { itemNumber: string; name: string }
   branchName: string
   tagName: string
 }
@@ -172,6 +174,18 @@ describe('reading a design at a version context', () => {
       progAdmin.id,
       label,
     )
+    // Drafted first, so the commit the tag names holds both.
+    const requirement = {
+      itemNumber: `${label}-DRAFT-REQ`,
+      name: `${label} Draft Requirement`,
+    }
+    await ItemService.createOnBranch(
+      'Requirement',
+      { ...requirement, designId } as never,
+      branch.id,
+      'Drafted a requirement on workspace',
+      progAdmin.id,
+    )
     const draft = { itemNumber: `${label}-DRAFT`, name: `${label} Draft Part` }
     const { commit } = await ItemService.createOnBranch(
       'Part',
@@ -197,6 +211,7 @@ describe('reading a design at a version context', () => {
     return {
       ids: { branch: branch.id, tag: tag.id, commit: commit.id },
       draft,
+      requirement,
       branchName: branch.name,
       tagName,
     }
@@ -215,12 +230,21 @@ describe('reading a design at a version context', () => {
     label: string
     kinds: Array<ContextKind>
     path: (designId: string, kind: ContextKind, id: string) => string
+    /** What an own-context read must show: the draft part, or the draft requirement. */
+    shows?: 'draft' | 'requirement'
   }> = [
     {
       label: 'GET /designs/:id/structure',
       kinds: ['branch', 'tag', 'commit'],
       path: (designId, kind, id) =>
         `/api/v1/designs/${designId}/structure?${kind}=${id}`,
+    },
+    {
+      label: 'GET /designs/:id/rtm',
+      kinds: ['branch', 'tag', 'commit'],
+      path: (designId, kind, id) =>
+        `/api/v1/designs/${designId}/rtm?${kind}=${id}`,
+      shows: 'requirement',
     },
     {
       // Its `branch` parameter is accepted and never read.
@@ -250,6 +274,8 @@ describe('reading a design at a version context', () => {
           for (const echo of [
             foreign.draft.itemNumber,
             foreign.draft.name,
+            foreign.requirement.itemNumber,
+            foreign.requirement.name,
             foreign.branchName,
             foreign.tagName,
             foreignDesignCode,
@@ -272,6 +298,7 @@ describe('reading a design at a version context', () => {
           )
           expect(refused.status).toBe(404)
           expect(refused.text).not.toContain(foreign.draft.itemNumber)
+          expect(refused.text).not.toContain(foreign.requirement.itemNumber)
         })
 
         // The over-refusal guard. A gate that refused every context would
@@ -284,7 +311,11 @@ describe('reading a design at a version context', () => {
             route.path(homeDesignId, kind, home.ids[kind]),
           )
           expect(own.status).toBe(200)
-          expect(own.text).toContain(home.draft.itemNumber)
+          expect(own.text).toContain(
+            route.shows === 'requirement'
+              ? home.requirement.itemNumber
+              : home.draft.itemNumber,
+          )
         })
       }
     })

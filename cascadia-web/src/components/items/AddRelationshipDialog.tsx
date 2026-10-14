@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { useQueries } from '@tanstack/react-query'
 import { Check, Link2, X } from 'lucide-react'
+import { catalogEntry } from '@cascadia/commons/items/relationships/catalog'
 import type { Part } from '@cascadia/commons/items/types/part'
 import {
   Dialog,
@@ -94,11 +95,21 @@ export function AddRelationshipDialog({
   const { handleError } = useErrorHandler()
   const invalidate = useInvalidateResources()
   const [searchQuery, setSearchQuery] = useState('')
-  const [itemType, setItemType] = useState('Part')
+  // A cataloged type names what it may point at, so the picker starts on the
+  // first of those and offers no other.
+  const catalogedType = catalogEntry(relationshipType)
+  const [itemType, setItemType] = useState(
+    catalogedType?.targetTypes[0] ?? 'Part',
+  )
+  const targetTypeOptions = catalogedType
+    ? ITEM_TYPE_OPTIONS.filter((option) =>
+        catalogedType.targetTypes.includes(option.value),
+      )
+    : ITEM_TYPE_OPTIONS
   const [details, setDetails] = useState<Record<string, LineDetails>>({})
   const [loading, setLoading] = useState(false)
 
-  // Under BOM this is the source item's design plus the Standard Library;
+  // Under BOM this is the source item's design plus the libraries;
   // otherwise the plain by-type search
   const {
     scope: bomScope,
@@ -243,13 +254,20 @@ export function AddRelationshipDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ITEM_TYPE_OPTIONS.map((option) => (
+                  {targetTypeOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {catalogedType && (
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  {catalogedType.description}. Runs{' '}
+                  {catalogedType.sourceTypes.join(', ')} →{' '}
+                  {catalogedType.targetTypes.join(', ')}.
+                </p>
+              )}
             </div>
           )}
 

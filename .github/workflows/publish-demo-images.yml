@@ -61,6 +61,11 @@ jobs:
   # Decide which images need building. Emits a JSON matrix consumed by `publish`.
   # ---------------------------------------------------------------------------
   plan:
+    # Only this repository publishes images. A fork that carries this file —
+    # an edition that merges from here — must not push to the org packages
+    # backing the public demo; every other job needs this one, so skipping it
+    # skips the workflow.
+    if: github.repository == 'Cascadia-PLM/Cascadia-App'
     runs-on: ubuntu-latest
     outputs:
       images: ${{ steps.select.outputs.images }}
@@ -171,8 +176,12 @@ jobs:
           # `freeDisk` opts an image into reclaiming the runner's preinstalled
           # toolchains first - set it for images whose cold build would otherwise
           # run the runner out of disk.
+          # `stamp` passes the ref and short commit as BUILD_TAG / BUILD_SHA, for
+          # the build stamp in the sidebar footer. Only the app's Dockerfile
+          # declares them; passing them to an image that does not makes Buildx
+          # warn about unconsumed build args.
           catalog='[
-            {"name":"cascadia-app","context":".","dockerfile":"cascadia-app/Dockerfile","target":"production","filter":"app"},
+            {"name":"cascadia-app","context":".","dockerfile":"cascadia-app/Dockerfile","target":"production","filter":"app","stamp":true},
             {"name":"cascadia-jobs-worker","context":".","dockerfile":"cascadia-workers-job/Dockerfile","target":"production","filter":"jobs_worker"},
             {"name":"cascadia-cad-converter","context":".","dockerfile":"cascadia-workers-cad/Dockerfile","target":"","filter":"cad_converter","freeDisk":true}
           ]'
@@ -271,6 +280,28 @@ jobs:
         with:
           images: ghcr.io/cascadia-plm/${{ matrix.image.name }}
 
+      # What the sidebar footer shows: the ref being built (`v0.6.0` on a tag
+      # push, `main` on main) and its short commit. Vite inlines them into the
+      # client bundle, so they are build args, not runtime environment. Without
+      # them every published image read `dev` (Cascadia-App#121).
+      #
+      # Through env rather than interpolated into the script, so a ref name
+      # cannot inject shell.
+      - name: Compute build stamp
+        id: stamp
+        if: matrix.image.stamp
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          {
+            echo 'args<<EOF'
+            echo "BUILD_TAG=${REF_NAME}"
+            echo "BUILD_SHA=${SHA::7}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build
         id: build
         uses: docker/build-push-action@v5
@@ -280,6 +311,8 @@ jobs:
           target: ${{ matrix.image.target }}
           platforms: ${{ matrix.platform.name }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Empty for images without `stamp`, whose step above was skipped.
+          build-args: ${{ steps.stamp.outputs.args }}
           outputs: >-
             type=image,name=ghcr.io/cascadia-plm/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
           # Scope is per-arch: one cache per image would have the two arches

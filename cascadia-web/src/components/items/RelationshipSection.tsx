@@ -9,6 +9,10 @@ import { EditRelationshipDialog } from './EditRelationshipDialog'
 import { NewRelationshipTypeDialog } from './NewRelationshipTypeDialog'
 import type { DataGridColumn } from '@/components/ui/DataGrid'
 import type { Row } from '@tanstack/react-table'
+import type {
+  SuspectReason,
+  SuspectReasonLabels,
+} from '@/components/items/suspect-links'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -21,6 +25,12 @@ import { useInvalidateResources } from '@/query'
 import { itemRelationshipsQuery } from '@/query/options/relationships'
 import { StateBadge } from '@/components/items/StateBadge'
 import { ItemLink } from '@/components/items/ItemLink'
+import {
+  AffirmAllButton,
+  AffirmButton,
+  SuspectBadge,
+  useAffirmLinks,
+} from '@/components/items/suspect-links'
 import { getItemDetailPath } from '@/items/item-type-ui'
 
 interface Relationship {
@@ -39,6 +49,24 @@ interface Relationship {
     name: string
     state: string
   }
+  /**
+   * Present on a trace claim (`SATISFIES`, `VERIFIED_BY`, …) and absent on
+   * every other edge: the claim is stale when one end revised since it was
+   * last affirmed.
+   */
+  suspect?: boolean
+  suspectReasons?: Array<SuspectReason>
+}
+
+// On this panel the link runs this item → the target.
+const SUSPECT_REASON_LABELS: SuspectReasonLabels = {
+  source_revised: 'this item revised since the link was affirmed',
+  target_revised: 'the target revised since the link was affirmed',
+}
+
+/** Whether a group of edges carries trace flags at all. */
+function hasTraceFlags(rels: Array<Relationship>): boolean {
+  return rels.some((rel) => rel.suspect !== undefined)
 }
 
 interface RelationshipSectionProps {
@@ -55,6 +83,7 @@ interface RelationshipSectionProps {
 
 export function RelationshipSection({
   itemId,
+  itemType,
   readOnly = false,
 }: RelationshipSectionProps) {
   const { confirm } = useAlertDialog()
@@ -67,6 +96,11 @@ export function RelationshipSection({
   const [selectedType, setSelectedType] = useState<string | null>(null)
   const [editingRelationship, setEditingRelationship] =
     useState<Relationship | null>(null)
+  // Affirming is a review record, not an edit of the link, so it is offered
+  // whenever a trace claim is suspect — read-only views included.
+  const { affirm, pendingIds } = useAffirmLinks({
+    invalidates: ['relationships'],
+  })
 
   const { data: relationships = [], isPending: loading } = useQuery(
     itemRelationshipsQuery<Relationship>(itemId),
@@ -304,6 +338,33 @@ export function RelationshipSection({
         },
       },
       {
+        id: 'trace',
+        header: 'Trace',
+        accessorFn: (row) => (row.suspect ? 'suspect' : 'affirmed'),
+        enableSorting: true,
+        enableFiltering: false,
+        meta: { width: '170px' },
+        cell: ({ row }) => {
+          const { suspect, suspectReasons, id } = row.original
+          if (!suspect) return '-'
+          return (
+            <div className="flex items-center gap-2">
+              <SuspectBadge
+                reasons={suspectReasons}
+                labels={SUSPECT_REASON_LABELS}
+              />
+              <AffirmButton
+                relationshipId={id}
+                pendingIds={pendingIds}
+                onAffirm={affirm}
+                variant="ghost"
+                title="Record that this claim still holds for the versions its ends now name"
+              />
+            </div>
+          )
+        },
+      },
+      {
         id: 'actions',
         header: '',
         enableSorting: false,
@@ -334,7 +395,14 @@ export function RelationshipSection({
           ),
       },
     ],
-    [stateOptions, itemTypeOptions, readOnly],
+    [stateOptions, itemTypeOptions, readOnly, affirm, pendingIds],
+  )
+
+  // The trace column is for trace claims; a BOM or document group shows the
+  // columns without it.
+  const columnsWithoutTrace = useMemo(
+    () => columns.filter((column) => column.id !== 'trace'),
+    [columns],
   )
 
   if (loading) {
@@ -410,24 +478,36 @@ export function RelationshipSection({
                         {rels.length}
                       </Badge>
                     </button>
-                    {!readOnly && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleAddToExistingType(type)}
-                      >
-                        <Plus className="h-4 w-4 mr-1" />
-                        Add
-                      </Button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <AffirmAllButton
+                        relationshipIds={rels
+                          .filter((rel) => rel.suspect)
+                          .map((rel) => rel.id)}
+                        pendingIds={pendingIds}
+                        onAffirm={affirm}
+                        title="Record that every suspect claim of this type still holds"
+                      />
+                      {!readOnly && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleAddToExistingType(type)}
+                        >
+                          <Plus className="h-4 w-4 mr-1" />
+                          Add
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
                   {isTypeExpanded(type) && (
                     <div className="p-4 tree-expand-enter">
                       <DataGrid
                         data={rels}
-                        columns={columns}
+                        columns={
+                          hasTraceFlags(rels) ? columns : columnsWithoutTrace
+                        }
                         getRowId={(row) => row.id}
                         enablePagination={rels.length > 10}
                         defaultPageSize={10}
@@ -463,6 +543,7 @@ export function RelationshipSection({
           open={newTypeDialogOpen}
           onOpenChange={setNewTypeDialogOpen}
           itemId={itemId}
+          itemType={itemType}
           onSuccess={handleRelationshipAdded}
         />
       )}

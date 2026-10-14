@@ -577,6 +577,14 @@ change order does not list. `previewMerge()` reports the same finding as a `vali
 with `canRelease: false`, so `GET /api/v1/change-orders/:id/release` — and the release preview
 in the transition dialog — show it before anyone approves, rather than at the release itself.
 
+The preview also carries `traceImpact`: the trace claims the release will leave suspect — the
+working copies' claims nobody affirmed on the branch, released `source_revised`, and every claim
+affirmed against a row the release supersedes, `target_revised` the moment the new row is
+current. It is the live suspect rule applied to the edges as step 5b will write them
+(`TraceImpactService`), never a second rule, so the count a reviewer approves from is the count
+read back after the merge. It never blocks the release: a stale claim is something to affirm or
+fix afterwards. See [Suspect links](versioning.md#suspect-links-affirmed-trace-claims).
+
 ### Release Flow
 
 After the transition succeeds, `ChangeOrderService.close()` calls `ChangeOrderMergeService.merge()`:

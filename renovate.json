@@ -1,0 +1,41 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Dependency updates for Cascadia. Nothing here automerges, deliberately: a green build is not the same as a decision, and with two editions rebuilt on every bump the judgement of whether to take one belongs to a person. Every Renovate PR is read by a human.",
+    "Renovate autodetects the npm workspaces from package.json, so the top-level cascadia-* workspaces need no separate configuration."
+  ],
+  "extends": ["config:recommended"],
+  "timezone": "America/Los_Angeles",
+  "schedule": ["before 6am on monday"],
+  "labels": ["dependencies"],
+  "prConcurrentLimit": 2,
+  "dependencyDashboard": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "One PR a week for every non-major npm update. Each bump rebuilds both editions, so grouping holds that to a single CI run rather than one per dependency.",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "npm non-major"
+    },
+    {
+      "description": "Majors stay one per PR — each needs its own read of the changelog and its own CI verdict.",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "groupName": null
+    },
+    {
+      "description": "Keep the Docker base images pinned by digest, the way the Python worker bases are pinned by hand today.",
+      "matchManagers": ["dockerfile", "docker-compose"],
+      "pinDigests": true
+    },
+    {
+      "description": "Workflow actions move on the same weekly cadence, grouped.",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
+    }
+  ]
+}

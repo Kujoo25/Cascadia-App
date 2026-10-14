@@ -16,7 +16,7 @@ import { db, describeConnection } from '@cascadia/api/db'
 import { appDir, resolveApp } from './edition.mjs'
 
 // Resolved at runtime rather than imported by name: naming the enterprise app
-// outright breaks a core-only tree, which is what `npm run core:standalone`
+// outright breaks a core-only tree, which is what a core-only checkout
 // builds. This script serves whichever edition the tree actually contains.
 const app = resolveApp()
 const schema = (await import(

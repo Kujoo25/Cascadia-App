@@ -383,7 +383,7 @@ export function AddPartFromDesignDialog({
 
   const scopeOptions: Array<{ value: ImportDesignScope; label: string }> = [
     { value: 'all', label: 'All Designs' },
-    { value: 'library', label: 'Standard Library' },
+    { value: 'library', label: 'Libraries' },
   ]
 
   // Determine effective selected items for display

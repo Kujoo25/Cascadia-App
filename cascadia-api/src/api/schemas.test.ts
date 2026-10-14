@@ -19,7 +19,11 @@
 
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { baseItemUpdateSchema, itemUpdateSchemaFor } from './schemas'
+import {
+  baseItemUpdateSchema,
+  itemUpdateSchemaFor,
+  requirementUpdateSchema,
+} from './schemas'
 import { ITEM_TYPE_RESOURCES } from '@/items/item-type-resources'
 
 const ITEM_TYPES = Object.keys(ITEM_TYPE_RESOURCES)
@@ -29,6 +33,7 @@ const TYPE_INVALID_FIELD: Record<string, Record<string, unknown>> = {
   Part: { leadTimeDays: 'soon' },
   Document: { name: 123 },
   Requirement: { priority: 'urgent-est' },
+  SystemElement: { elementKind: 'component' },
   Task: { assignee: 'not-a-uuid' },
   ChangeOrder: { riskLevel: 'extreme' },
   TestPlan: { scope: 42 },
@@ -99,6 +104,38 @@ describe('itemUpdateSchemaFor', () => {
       expect(result.data).not.toHaveProperty('revision')
       expect(result.data.name).toBe('As read')
     }
+  })
+})
+
+/**
+ * The echo above fills only base columns, so it never reaches a type's own
+ * enums. Requirement's update schema once declared private lowercase copies of
+ * `priority` and `verificationMethod` that no stored requirement can hold, so
+ * the detail page's save 400'd on any requirement with either field set. It
+ * also had no `verificationStatus`, which the same page edits: an unknown key
+ * is stripped, not rejected, so that save succeeded and dropped the change.
+ * Success alone would not catch that, hence the check on what survives.
+ */
+describe('requirement update keeps the values the detail page saves', () => {
+  it('accepts and keeps priority and verification method, and strips the derived status', () => {
+    const result = requirementUpdateSchema.safeParse({
+      itemType: 'Requirement',
+      name: 'Holds 5 kg at full reach',
+      state: 'Draft',
+      type: 'Performance',
+      priority: 'MustHave',
+      verificationMethod: 'Analysis',
+      verificationStatus: 'Passed',
+    })
+    expect(result.success, JSON.stringify(result.error?.issues)).toBe(true)
+    expect(result.data).toMatchObject({
+      priority: 'MustHave',
+      verificationMethod: 'Analysis',
+    })
+    // The status is derived from the verifying tests' executions and a
+    // waiver is its own request; a page echoing the item it read sends the
+    // key, and it must go nowhere.
+    expect(result.data).not.toHaveProperty('verificationStatus')
   })
 })
 

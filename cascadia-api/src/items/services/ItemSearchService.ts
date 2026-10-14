@@ -27,6 +27,7 @@ import {
   programs,
   requirements,
   software,
+  systemElements,
   tasks,
   testCases,
   testPlans,
@@ -703,6 +704,7 @@ export class ItemSearchService {
       ],
       Document: ['description', 'fileName', 'mimeType'],
       Requirement: ['description', 'type', 'priority', 'category'],
+      SystemElement: ['description', 'elementKind'],
       Task: ['description', 'assignee', 'priority', 'dueDate'],
       ChangeOrder: ['changeType', 'priority', 'reasonForChange'],
       TestPlan: ['scope', 'environment'],
@@ -787,6 +789,10 @@ export class ItemSearchService {
         category: requirements.category,
         verificationMethod: requirements.verificationMethod,
         verificationStatus: requirements.verificationStatus,
+      },
+      SystemElement: {
+        description: systemElements.description,
+        elementKind: systemElements.elementKind,
       },
       Task: {
         description: tasks.description,
@@ -962,6 +968,10 @@ export class ItemSearchService {
         category: requirements.category,
         verificationMethod: requirements.verificationMethod,
         verificationStatus: requirements.verificationStatus,
+      },
+      SystemElement: {
+        description: systemElements.description,
+        elementKind: systemElements.elementKind,
       },
       Task: {
         description: tasks.description,

@@ -23,6 +23,7 @@ import { itemTypeConfigs, lifecycleDefinitions, users } from '@/db/schema'
 import {
   PART_LIFECYCLE_DEFINITION,
   REQUIREMENT_LIFECYCLE_DEFINITION,
+  SYSTEM_ELEMENT_LIFECYCLE_DEFINITION,
   WORK_ORDER_LIFECYCLE_DEFINITION,
 } from '@/items/default-lifecycles'
 import { ItemTypeRegistry } from '@/items/registry'
@@ -42,6 +43,7 @@ export const SYSTEM_USER_ID = '00000000-0000-4000-8000-000000000000'
 export {
   PART_LIFECYCLE_DEFINITION,
   REQUIREMENT_LIFECYCLE_DEFINITION,
+  SYSTEM_ELEMENT_LIFECYCLE_DEFINITION,
   WORK_ORDER_LIFECYCLE_DEFINITION,
 }
 
@@ -244,6 +246,49 @@ export async function seedRequirementLifecycle(
     })
   // Definitions written straight to the table bypass LifecycleDefinitionService, which is
   // where the lifecycle memo is normally dropped
+  ItemTypeRegistry.invalidateLifecycleCache()
+}
+
+/**
+ * Seed the SystemElement lifecycle + item-type link. beforeAll-safe like the
+ * Requirement helper. The definition is the Part one scoped to the type, so
+ * an element releases from Draft and revises on a branch as a part does.
+ */
+export async function seedSystemElementLifecycle(
+  db: TestDbInstance,
+  systemUserId: string = SYSTEM_USER_ID,
+): Promise<void> {
+  await seedSystemUser(db)
+  await db
+    .insert(lifecycleDefinitions)
+    .values({
+      id: LIFECYCLE_IDS.systemElement,
+      name: 'System Element - Test Lifecycle',
+      version: 1,
+      workflowType: 'strict',
+      definition: SYSTEM_ELEMENT_LIFECYCLE_DEFINITION,
+      isActive: true,
+      lifecycleType: 'Driven',
+    })
+    .onConflictDoNothing()
+
+  await db
+    .update(lifecycleDefinitions)
+    .set({ drivers: [] })
+    .where(eq(lifecycleDefinitions.id, LIFECYCLE_IDS.systemElement))
+
+  const config = { lifecycleDefinitionId: LIFECYCLE_IDS.systemElement }
+  await db
+    .insert(itemTypeConfigs)
+    .values({
+      itemType: 'SystemElement',
+      config,
+      modifiedBy: systemUserId,
+    })
+    .onConflictDoUpdate({
+      target: itemTypeConfigs.itemType,
+      set: { config, modifiedBy: systemUserId },
+    })
   ItemTypeRegistry.invalidateLifecycleCache()
 }
 

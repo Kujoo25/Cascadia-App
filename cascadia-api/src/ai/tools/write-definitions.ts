@@ -27,6 +27,7 @@
  * - transition_item_state: Transition items through workflow states
  * - create_change_order: Create a new ECO for managing changes
  * - create_program: Create a new program (top-level container)
+ * - affirm_link: Record that a trace claim still holds, clearing its suspect flag
  */
 
 import { toolDefinition } from '@tanstack/ai'
@@ -471,6 +472,42 @@ Requires user confirmation before creating.`,
 })
 
 // ============================================================================
+// affirm_link - Record that a trace claim still holds
+// ============================================================================
+
+export const affirmLinkDef = toolDefinition({
+  name: 'affirm_link',
+  description: `Affirm a trace link: record that the claim it makes (a part satisfies a requirement, a test verifies it, …) still holds for the versions its two ends currently name, which clears its suspect flag.
+Affirming is a review record, not an edit of the link — it changes nothing the link says and needs no change order, even on released items. Use get_suspect_links to find the links to look at first.
+Only affirm when the user has judged the claim still true; do not affirm to silence a flag. Requires user confirmation.`,
+  inputSchema: z.object({
+    relationshipId: z
+      .string()
+      .describe('ID (UUID) of the trace link, from get_suspect_links'),
+    // Confirmation plumbing
+    confirmationToken: z
+      .string()
+      .optional()
+      .describe(
+        'Single-use token from the preview response. After the user ' +
+          'approves, repeat the exact same call with this token to execute.',
+      ),
+    confirmed: z
+      .boolean()
+      .optional()
+      .describe(
+        'Deprecated — ignored. Confirmation requires the confirmationToken ' +
+          'issued by the preview response.',
+      ),
+  }),
+  outputSchema: confirmationResponseSchema.extend({
+    relationshipId: z.string().optional(),
+    suspect: z.boolean().optional(),
+    reasons: z.array(z.enum(['source_revised', 'target_revised'])).optional(),
+  }),
+})
+
+// ============================================================================
 // Export all write definitions
 // ============================================================================
 
@@ -481,6 +518,7 @@ export const allWriteToolDefinitions = [
   transitionItemStateDef,
   createChangeOrderDef,
   createProgramDef,
+  affirmLinkDef,
 ]
 
 // Export type helpers for handlers
@@ -496,6 +534,7 @@ export type CreateChangeOrderInput = z.infer<
   typeof createChangeOrderDef.inputSchema
 >
 export type CreateProgramInput = z.infer<typeof createProgramDef.inputSchema>
+export type AffirmLinkInput = z.infer<typeof affirmLinkDef.inputSchema>
 
 // Export confirmation response type
 export type WriteToolResponse = z.infer<typeof confirmationResponseSchema>

@@ -1,6 +1,6 @@
 # Import/Export
 
-Bulk data import from spreadsheets with intelligent column mapping and BOM structure parsing. Cascadia supports importing Parts, Documents, and Issues from Excel and CSV files through a multi-step wizard UI or direct API calls.
+Bulk data import from spreadsheets with intelligent column mapping and BOM structure parsing. Cascadia supports importing Parts, Documents, Issues and Requirements from Excel and CSV files through a multi-step wizard UI or direct API calls, and exports a design's requirements as a sheet the import reads back.
 
 ## Overview
 
@@ -16,8 +16,9 @@ The import system is designed for migrating data from other PLM systems, ERP exp
 - Branch-aware import: create items on ECO branches for post-release designs
 - Administrator-only migration of existing formal Part and Document revisions
 - Collect unmapped columns as custom attributes on the created items
+- Import a requirement hierarchy in one sheet, each row naming its parent by item number, and export it back the same way
 
-**Supported item types:** Part, Document, Issue
+**Supported item types:** Part, Document, Issue, Requirement
 
 ### Architecture
 
@@ -161,6 +162,24 @@ When a file is uploaded, headers are automatically matched to target fields usin
 | Reported Date | `reported date`, `date reported`, `opened`, `open date`, `created date`, `submitted date`        |
 | Resolution    | `resolution`, `fix`, `solution`, `action taken`                                                  |
 | Root Cause    | `root cause`, `cause`, `reason`, `rca`, `why`                                                    |
+
+### Requirement Field Aliases
+
+| Target Field        | Recognized Headers                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------------- |
+| Requirement Number  | `requirement number`, `req number`, `req id`, `requirement id`, `item number`, `number`, `id`, `key` |
+| Title               | `title`, `name`, `requirement`, `requirement name`, `statement`, `summary`, `short text`, `heading`  |
+| Revision            | `revision`, `rev`, `version`                                                                         |
+| Description         | `description`, `desc`, `text`, `requirement text`, `details`, `body`, `content`, `object text`       |
+| Type                | `type`, `requirement type`, `kind`, `class`, `classification`                                        |
+| Priority            | `priority`, `pri`, `moscow`, `importance`                                                            |
+| Category            | `category`, `group`, `area`, `section`, `discipline`, `subsystem`                                    |
+| Source              | `source`, `origin`, `reference`, `standard`, `stakeholder`, `customer`                               |
+| Acceptance Criteria | `acceptance criteria`, `acceptance`, `criteria`, `success criteria`, `verification criteria`         |
+| Verification Method | `verification method`, `method`, `verification`, `verify by`, `v&v method`                           |
+| Parent Requirement  | `parent requirement`, `parent`, `parent number`, `parent item number`, `parent id`, `derived from`   |
+
+An enum cell is matched by its letters alone, so `Must Have`, `must-have` and `MustHave` all land on `MustHave`, and `non functional` on `Non-Functional`.
 
 ### Manual Override
 
@@ -535,19 +554,78 @@ Creates issues in bulk. Issues use a free lifecycle and do not require a design 
 
 Issues are always created with state `Open` and revision `"-"`. They bypass branch protection automatically.
 
+### POST /api/v1/import/requirements
+
+Creates requirements in bulk, with their hierarchy. Requirements follow the same branch rules as parts and documents: direct creation on main while the design is pre-release, on a change-order or workspace branch after, and `importAsReleased` for an administrator migrating formal revisions.
+
+**Request body:**
+
+```json
+{
+  "designId": "uuid (required)",
+  "branchId": "uuid (required for post-release designs unless bypassing)",
+  "bypassBranchProtection": false,
+  "importAsReleased": false,
+  "rows": [
+    {
+      "itemNumber": "REQ-000001",
+      "name": "Rated payload 250 kg",
+      "description": "The cart shall carry a rated payload of 250 kg on the bed.",
+      "type": "Performance",
+      "priority": "MustHave",
+      "category": "Performance",
+      "source": "Product brief 2026-08",
+      "acceptanceCriteria": "Carries 250 kg with <= 5 mm deck deflection",
+      "verificationMethod": "Test"
+    },
+    {
+      "itemNumber": "REQ-000001-D1",
+      "name": "Chassis and bed carry 250 kg",
+      "parentItemNumber": "REQ-000001"
+    }
+  ]
+}
+```
+
+**Requirement row fields:**
+
+| Field                | Type               | Required | Notes                                                                                         |
+| -------------------- | ------------------ | -------- | --------------------------------------------------------------------------------------------- |
+| `name`               | string (1-500)     | Yes      |                                                                                               |
+| `itemNumber`         | string (max 100)   | No       | Auto-generated if omitted; a row without one cannot be named as a parent                      |
+| `revision`           | string (max 10)    | No       | Defaults to `-`; a formal revision needs `importAsReleased`                                   |
+| `description`        | string (max 10000) | No       |                                                                                               |
+| `type`               | enum               | No       | `Functional`, `Non-Functional`, `Performance`, `Security`, `Usability`, `Business`            |
+| `priority`           | enum               | No       | `MustHave`, `ShouldHave`, `CouldHave`, `WontHave`                                             |
+| `category`           | string (max 100)   | No       |                                                                                               |
+| `source`             | string (max 200)   | No       |                                                                                               |
+| `acceptanceCriteria` | string (max 10000) | No       |                                                                                               |
+| `verificationMethod` | enum               | No       | `Analysis`, `Inspection`, `Demonstration`, `Test`, `Documentation`                            |
+| `parentItemNumber`   | string (max 100)   | No       | The parent's item number: another row of the sheet, or a requirement the design already holds |
+| `attributes`         | object             | No       | Any JSON document                                                                             |
+
+**The hierarchy.** Rows import in any order: the server orders them so a parent is created before its children, matches parent numbers case-insensitively, and looks a parent the sheet does not define up among the design's current requirements. A row that is its own parent, a chain of parents that loops back on itself, a child whose parent row failed, or a parent nobody holds fails that row alone — named by number — and the rest of the sheet still imports. The wizard runs the same plan in its Review step, so a loop or a broken parent row shows before upload, and a parent that is not in the file is flagged as one the design must already hold. The result carries `parentsLinked` beside the usual counts, and the verification status of every imported requirement starts at `NotStarted` (it is derived, never imported).
+
 ### Template Download Endpoints
 
 CSV templates with headers and example rows can be downloaded:
 
-| Endpoint                                 | File                            |
-| ---------------------------------------- | ------------------------------- |
-| `GET /api/v1/import/templates/parts`     | `parts-import-template.csv`     |
-| `GET /api/v1/import/templates/documents` | `documents-import-template.csv` |
-| `GET /api/v1/import/templates/issues`    | `issues-import-template.csv`    |
+| Endpoint                                    | File                               |
+| ------------------------------------------- | ---------------------------------- |
+| `GET /api/v1/import/templates/parts`        | `parts-import-template.csv`        |
+| `GET /api/v1/import/templates/documents`    | `documents-import-template.csv`    |
+| `GET /api/v1/import/templates/issues`       | `issues-import-template.csv`       |
+| `GET /api/v1/import/templates/requirements` | `requirements-import-template.csv` |
 
 Templates include all field labels as headers and one example row.
 
 ---
+
+## Requirements Export
+
+`GET /api/v1/designs/{designId}/requirements-export?format=csv|xlsx` writes a design's current requirements as the sheet the requirements import reads back: one row per requirement, under the import's own headers — Requirement Number, Title, Description, Type, Priority, Category, Source, Acceptance Criteria, Verification Method, Parent Requirement — with the parent by item number so the hierarchy survives the round trip. The revision is not written: a sheet exported from one design imports into another as fresh drafts (a migration of formal revisions is `importAsReleased`'s business). The design page's Requirements tab has the button (_Export sheet_), beside _Import_; the grid's own _Export_ writes the traceability matrix instead, which is a report, not a sheet to import.
+
+Exporting a design and importing the sheet into another design reproduces it: the same numbers, fields and hierarchy, and an export of the new design is byte-for-byte the first.
 
 ## BOM Export
 

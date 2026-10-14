@@ -7,7 +7,12 @@
  *   node scripts/license-headers.mjs           # apply
  *   node scripts/license-headers.mjs --check   # verify, exit 1 on drift
  *
- * Every file gets `AGPL-3.0-or-later`, per `scripts/edition-manifest.mjs`.
+ * Core files get `AGPL-3.0-or-later`; a file under a proprietary root gets the
+ * proprietary header, both per `HEADERS` in `scripts/edition-manifest.mjs`.
+ * A file's text is the same in every tree that holds it — nothing rewrites a
+ * header on the way between editions — so the header has to be right where
+ * the file lives. The `--check` mode is the CI gate that keeps it that way,
+ * mirroring the `openapi:check` idiom.
  *
  * Markdown is classified by the manifest but not stamped: an HTML comment at
  * the top of a doc renders badly and buys nothing. Phase 3 reads the manifest

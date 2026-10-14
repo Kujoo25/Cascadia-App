@@ -4,27 +4,34 @@
 # =============================================================================
 # Stage 1: Workspace manifests
 # =============================================================================
-# The single copy of the manifest list. Two stages below install from it, and
-# each used to carry its own transcription of it — so a workspace that was
-# renamed or deleted had to be fixed in two places, and the deleted
-# `cad-generation` duly outlived its package in both. An empty base
-# image because nothing here runs: this stage is a file list the other stages
-# read, not a layer either of them inherits.
-FROM scratch AS manifests
+# The single copy of the manifest list, discovered rather than written: every
+# top-level `cascadia-*/package.json` the build context carries, whichever
+# edition this tree composes. Two stages below install from it. The list used
+# to be transcribed by hand, once per stage and then once per edition, and a
+# workspace that was renamed or deleted had to be fixed in every copy; the
+# deleted `cad-generation` outlived its package that way. Nothing here runs:
+# this stage is a file list the other stages read, not a layer either of them
+# inherits.
+#
+# `COPY . .` makes this stage re-run on any change to the context, which costs
+# seconds. The stages that install from it copy only `/manifests`, and BuildKit
+# keys that copy on the checksum of what it copies, so `npm ci` stays cached
+# until a manifest actually changes.
+FROM docker.io/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS manifests
 
-COPY package.json package-lock.json ./
+WORKDIR /src
+COPY . .
 
-# Workspace manifests, before the install: `npm ci` in a workspace root reads
-# them to know what each workspace depends on. Without them it succeeds and
-# quietly installs only the root's dependencies. Listed one per line rather than
-# globbed because `COPY cascadia-*/…` flattens the paths. A new workspace
-# belongs here too. (Every workspace is a top-level `cascadia-*` directory;
-# the two Python workers have no manifest and are not npm workspaces.)
-COPY cascadia-commons/package.json ./cascadia-commons/
-COPY cascadia-api/package.json ./cascadia-api/
-COPY cascadia-web/package.json ./cascadia-web/
-COPY cascadia-workers-job/package.json ./cascadia-workers-job/
-COPY cascadia-app/package.json ./cascadia-app/
+# Root manifests, then every workspace manifest under its own directory, before
+# the install: `npm ci` in a workspace root reads them to know what each
+# workspace depends on. Without them it succeeds and quietly installs only the
+# root's dependencies. (Every npm workspace is a top-level `cascadia-*`
+# directory with a package.json; the Python workers have none and are not npm
+# workspaces, so the glob leaves them out.)
+RUN mkdir /manifests && cp package.json package-lock.json /manifests/ && \
+    for f in cascadia-*/package.json; do \
+      mkdir -p "/manifests/${f%/*}" && cp "$f" "/manifests/$f"; \
+    done
 
 # =============================================================================
 # Stage 2: Dependencies
@@ -36,7 +43,7 @@ WORKDIR /app
 # Root manifests plus every workspace manifest, from the stage that owns the
 # list. Building this stage alone therefore proves the whole list resolves,
 # which is what CI's Docker Build Smoke job does on every run.
-COPY --from=manifests / ./
+COPY --from=manifests /manifests/ ./
 
 # Install all dependencies (including dev for build)
 RUN npm ci
@@ -54,9 +61,14 @@ COPY . .
 
 # Build the application (increase heap for large Vite builds)
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-# Which edition this image contains. This tree carries only the AGPL
-# community build.
-ARG APP=cascadia
+
+# Which app this image contains. Empty by default, and empty is the common
+# case: given no name, scripts/build-app.mjs resolves the edition this tree
+# composes (see scripts/edition.mjs), so one Dockerfile builds whichever
+# edition the context carries. `--build-arg APP=<name>` builds another app the
+# tree also contains. Unquoted on purpose: an empty value must expand to no
+# argument at all, not to an empty one.
+ARG APP=
 
 # Which build this is, for the stamp at the foot of the sidebar. Vite inlines
 # any VITE_-prefixed variable present at build time, so these have to be set
@@ -64,16 +76,43 @@ ARG APP=cascadia
 # written by then.
 #
 # Passed in rather than derived: `.git` is excluded from the build context (see
-# .dockerignore), so `git describe` cannot run in here. scripts/build-and-push.sh
-# in the plm-server repo computes them on the host.
-ARG BUILD_TAG=dev
+# .dockerignore), so `git describe` cannot run in here. The publish workflow
+# passes the ref and short commit it is building; a build by hand can pass its
+# own, e.g. --build-arg BUILD_TAG=v0.6.0 --build-arg BUILD_SHA=6f89879.
+#
+# BUILD_TAG defaults to empty, not `dev`: unstamped, a production build shows
+# the release version from package.json (see cascadia-web/src/build-info.ts),
+# and a non-empty default would hide that fallback behind a literal `dev`.
+ARG BUILD_TAG=""
 ARG BUILD_SHA=""
 ARG BUILD_DIRTY=false
 ENV VITE_BUILD_TAG=${BUILD_TAG}
 ENV VITE_BUILD_SHA=${BUILD_SHA}
 ENV VITE_BUILD_DIRTY=${BUILD_DIRTY}
 
-RUN npm run build:app -- "$APP"
+RUN npm run build:app -- $APP
+
+# Record which app was built, for the runtime: an ARG does not cross stages,
+# and the server resolves its static root as `dist/$APP`
+# (scripts/docker-entrypoint.sh exports it from this file).
+RUN echo "${APP:-$(node --input-type=module -e "import { resolveApp } from './scripts/edition.mjs'; console.log(resolveApp())")}" > .edition
+
+# The tree the production stage copies in one piece: the root tsconfigs, the
+# scripts, the edition marker and every npm workspace, whole. The admin scripts
+# (seed, migrate, reset) run via tsx and import from the workspace packages;
+# the server itself reads none of this at runtime — only `scripts/*.ts` do.
+# The catalog seed JSON under cascadia-api/test-data comes along with them: the
+# bundled server inlines it, but tsx-run scripts read it from disk.
+#
+# Assembled with a shell glob rather than a COPY list, because a COPY of
+# several directories flattens them into the destination and a list has to
+# name every workspace by hand — which is how an image once installed a
+# workspace it then never copied, and `scripts/edition.mjs`, which resolves the
+# edition by probing for directories, picked it and found it empty. tar rather
+# than cp because busybox cp has no --parents.
+RUN mkdir /runtime && tar cf - tsconfig.base.json tsconfig.json scripts .edition \
+      $(for d in cascadia-*/; do [ -f "$d/package.json" ] && printf '%s ' "$d"; done) \
+    | tar xf - -C /runtime
 
 # =============================================================================
 # Stage 4: Runtime dependencies
@@ -94,7 +133,7 @@ RUN apk add --no-cache dumb-init
 # The same manifest list the deps stage installed from — see stage 1. This
 # install differs only in its flags, never in what it is told the workspaces
 # are.
-COPY --from=manifests / ./
+COPY --from=manifests /manifests/ ./
 
 # Production deps only — the server is pre-bundled (see build-server.mjs) so
 # tsx and other devDeps aren't needed at runtime.
@@ -162,24 +201,9 @@ FROM runtime-deps AS production
 COPY --from=builder /app/.output ./.output
 COPY --from=builder /app/dist ./dist
 
-# Admin scripts (seed, migrate, reset) run via tsx and import from the
-# workspace packages. The server itself reads none of this at runtime — only
-# `scripts/*.ts` do. The catalog seed JSON under cascadia-api/test-data comes
-# along with them: the bundled server inlines it, but tsx-run scripts read it
-# from disk.
-#
-# Every workspace stage 1 lists is copied here whole. Its manifest alone
-# already leaves a directory behind, and `scripts/edition.mjs` resolves the
-# edition by probing for directories — so a workspace that is installed but
-# not copied is one the admin scripts pick and then find empty.
-COPY --from=builder /app/tsconfig.base.json ./
-COPY --from=builder /app/tsconfig.json ./
-COPY --from=builder /app/cascadia-commons ./cascadia-commons
-COPY --from=builder /app/cascadia-api ./cascadia-api
-COPY --from=builder /app/cascadia-web ./cascadia-web
-COPY --from=builder /app/cascadia-workers-job ./cascadia-workers-job
-COPY --from=builder /app/cascadia-app ./cascadia-app
-COPY --from=builder /app/scripts ./scripts
+# The runtime tree the builder assembled — see stage 3 for what it holds and
+# why it is one copy rather than a list.
+COPY --from=builder /runtime/ ./
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -202,21 +226,19 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
 # Labels for container identification. VERSION/REVISION come from build args
 # so `docker inspect` can answer "which release is this image?":
 #   docker build --build-arg VERSION=0.5.0 --build-arg REVISION=$(git rev-parse HEAD) ...
+# SOURCE_URL defaults to the repository core is developed in; a build from
+# another tree passes its own.
 ARG VERSION=dev
 ARG REVISION=unknown
+ARG SOURCE_URL=https://github.com/Cascadia-PLM/Cascadia-App
 LABEL org.opencontainers.image.title="Cascadia PLM - Core App"
 LABEL org.opencontainers.image.description="Core web application for Cascadia PLM"
-LABEL org.opencontainers.image.source="https://github.com/Cascadia-PLM/Cascadia-App"
+LABEL org.opencontainers.image.source="${SOURCE_URL}"
 LABEL org.opencontainers.image.version="${VERSION}"
 LABEL org.opencontainers.image.revision="${REVISION}"
 
-# Use dumb-init to handle signals properly
-ENTRYPOINT ["dumb-init", "--"]
-
-# Re-declared: an ARG from an earlier stage is not in scope here. Carried into
-# the environment so the CMD below can name the edition's output directory.
-ARG APP=cascadia
-ENV APP=${APP}
-
-# Shell form deliberately — the exec form does not expand ${APP}.
-CMD node .output/${APP}/server/index.mjs
+# The entrypoint exports APP from the builder's `.edition` marker unless the
+# caller set it, then hands off to dumb-init so signals are forwarded. Shell
+# form for the command deliberately — the exec form expands nothing.
+ENTRYPOINT ["sh", "/app/scripts/docker-entrypoint.sh"]
+CMD node ".output/${APP}/server/index.mjs"

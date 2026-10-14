@@ -17,6 +17,8 @@ import { UpstreamChangesBanner } from '@/components/mbom/UpstreamChangesBanner'
 import { HistoricalViewBanner } from '@/components/designs/HistoricalViewBanner'
 import { InitialReleaseHelper } from '@/components/versioning/InitialReleaseHelper'
 import { StructureTab } from '@/components/designs/StructureTab'
+import { RequirementsTab } from '@/components/designs/RequirementsTab'
+import { ArchitectureTab } from '@/components/designs/ArchitectureTab'
 import { DesignModelViewer } from '@/components/designs/DesignModelViewer'
 import { LibraryItemsTab } from '@/components/designs/LibraryItemsTab'
 import { HistoryTab } from '@/components/designs/HistoryTab'
@@ -48,6 +50,8 @@ import { apiFetch } from '@/api/client'
 /** The tabs the design page renders; the search schema derives from this list. */
 const DESIGN_DETAIL_TABS = [
   'structure',
+  'requirements',
+  'architecture',
   'items',
   'graph',
   'history',
@@ -369,8 +373,10 @@ function DesignDetailPage() {
           onValueChange={(value) => handleTabChange(value as DesignDetailTab)}
           className="w-full"
         >
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-7">
             <TabsTrigger value="structure">Structure</TabsTrigger>
+            <TabsTrigger value="requirements">Requirements</TabsTrigger>
+            <TabsTrigger value="architecture">Architecture</TabsTrigger>
             <TabsTrigger value="graph">Graph</TabsTrigger>
             <TabsTrigger value="history">History</TabsTrigger>
             <TabsTrigger value="ecos">Change Orders</TabsTrigger>
@@ -392,6 +398,25 @@ function DesignDetailPage() {
               versionContext={context}
               mainBranchId={design.defaultBranchId ?? undefined}
               hideWhenEmpty
+            />
+          </TabsContent>
+
+          <TabsContent value="requirements" className="mt-6">
+            <RequirementsTab
+              designId={design.id}
+              designCode={design.code}
+              programId={design.programId}
+              versionContext={context}
+              isHistoricalView={isHistoricalView}
+            />
+          </TabsContent>
+
+          <TabsContent value="architecture" className="mt-6">
+            <ArchitectureTab
+              designId={design.id}
+              designCode={design.code}
+              versionContext={context}
+              isHistoricalView={isHistoricalView}
             />
           </TabsContent>
 

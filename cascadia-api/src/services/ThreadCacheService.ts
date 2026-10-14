@@ -18,6 +18,7 @@ import { items, threadPathCache } from '../db/schema'
 import type { ThreadPathCacheSelect } from '../db/schema'
 import type { ThreadRequest, ThreadResponse } from './ThreadService'
 import type { VersionContext } from './VersionResolver'
+import { serviceLogger } from '@/logging/logger'
 
 /**
  * Cache statistics for monitoring
@@ -68,7 +69,9 @@ const INVALIDATED_RETENTION_MS = 60 * 60 * 1000 // 1 hour
  * Caching rules by context:
  * - Live (no context): Cache with invalidation on relationship changes
  * - Tag/Commit context: Cache indefinitely (immutable snapshots)
- * - Branch context: Cache with invalidation (like live)
+ * - Branch and released context: Cache with invalidation (like live). A
+ *   `released` thread reads main's head, which every release moves, so it
+ *   is invalidated with the live entries rather than left to expire.
  */
 export class ThreadCacheService {
   /**
@@ -205,9 +208,37 @@ export class ThreadCacheService {
   }
 
   /**
+   * `invalidateForItems` as a side effect: not awaited, and a failure is
+   * logged rather than failing the write it follows. A stale cache entry
+   * costs a wrong thread until it expires; failing a release or a checkout
+   * over the cache would cost far more.
+   */
+  static invalidateForItemsSoon(itemIds: Array<string>): void {
+    void this.invalidateForItemsQuietly(itemIds)
+  }
+
+  /** `invalidateForItemsSoon`, awaited: for a caller with time to wait. */
+  static async invalidateForItemsQuietly(
+    itemIds: Array<string>,
+  ): Promise<void> {
+    try {
+      await this.invalidateForItems(itemIds)
+    } catch (err: unknown) {
+      serviceLogger.warn({ err }, 'Failed to invalidate thread cache')
+    }
+  }
+
+  /**
    * Invalidate cache entries that contain any of the specified items.
    * Uses PostgreSQL array overlap operator (&&) for efficient querying.
-   * Only invalidates live and branch caches, not immutable tag/commit caches.
+   * Invalidates the live, branch and released caches; a tag or commit cache
+   * is an immutable snapshot and is left alone.
+   *
+   * Called by every path that writes an edge or mints a version row — the
+   * relationship mutators, the checkout and rebase copies, the merge, usage
+   * copies, cross-design pull-ins and the MBOM derivation. A thread is read
+   * through the lineage, so a path that moves an edge between versions
+   * without passing through here serves a cached thread missing the link.
    */
   static async invalidateForItems(itemIds: Array<string>): Promise<number> {
     if (itemIds.length === 0) return 0
@@ -220,11 +251,12 @@ export class ThreadCacheService {
       .where(
         and(
           isNull(threadPathCache.invalidatedAt),
-          // Only invalidate live (null context) or branch caches
-          // Tag and commit caches are immutable snapshots
+          // Tag and commit caches are immutable snapshots; everything else
+          // reads a head that moves.
           or(
             isNull(threadPathCache.contextType),
             eq(threadPathCache.contextType, 'branch'),
+            eq(threadPathCache.contextType, 'released'),
           ),
           // Array overlap: entries containing any of the affected items
           // Use PostgreSQL array literal format {id1,id2} for proper casting

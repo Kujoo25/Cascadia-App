@@ -5,6 +5,7 @@ import { Hono } from 'hono'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import { tagged } from '../adapter'
+import { rtmGapSchema, rtmTotalsSchema } from './designs'
 import type { ScopeGraphEdge, ScopeGraphNode } from '@/api/scope-graph'
 import {
   ProgramService,
@@ -15,6 +16,7 @@ import {
 } from '@/services/ProgramService'
 import { CommitGraphService } from '@/services/CommitGraphService'
 import { DesignService } from '@/services/DesignService'
+import { RequirementsMatrixService } from '@/services/RequirementsMatrixService'
 import { AccessControlService } from '@/auth/AccessControlService'
 import { requirePermission } from '@/auth/server'
 import { NotFoundError, PermissionDeniedError } from '@/errors'
@@ -252,6 +254,67 @@ app.get(
             : []
 
         return { nodes, edges, availableItemTypes: typeCounts }
+      },
+    ),
+  ),
+)
+
+// GET /api/programs/:id/requirements-rollup — one line per design, at main
+app.get(
+  '/:id/requirements-rollup',
+  adapt(
+    apiHandler<{ id: string }>(
+      {
+        openapi: {
+          summary: 'Requirements coverage across a program',
+          description:
+            "Every design of the program at its released view: how many requirements each holds and how many are allocated, satisfied, verified or carry a suspect claim, with the open gaps across the program, most important first. The figures are the totals of each design's requirements traceability matrix (GET /api/v1/designs/{id}/rtm).",
+          request: {
+            params: z.object({ id: z.string().uuid() }),
+          },
+          responses: {
+            200: {
+              schema: z.object({
+                programId: z.string().uuid(),
+                designs: z.array(
+                  rtmTotalsSchema.extend({
+                    designId: z.string().uuid(),
+                    designCode: z.string(),
+                    designName: z.string(),
+                    designType: z.string(),
+                  }),
+                ),
+                totals: rtmTotalsSchema,
+                openGaps: z.array(
+                  z.object({
+                    designId: z.string().uuid(),
+                    designCode: z.string(),
+                    requirementId: z.string().uuid(),
+                    itemNumber: z.string(),
+                    name: z.string().nullable(),
+                    priority: z.string().nullable(),
+                    gapType: rtmGapSchema,
+                  }),
+                ),
+                openGapsTotal: z.number().int(),
+              }),
+            },
+          },
+        },
+      },
+      async ({ params, request, user }) => {
+        // Same access rule as GET /api/programs/:id
+        const canAccess = await AccessControlService.canAccessProgram(
+          user.id,
+          params.id,
+        )
+        if (!canAccess) {
+          await requirePermission(request, 'programs', 'update')
+        }
+        const program = await ProgramService.getById(params.id)
+        if (!program) throw new NotFoundError('Program', params.id)
+
+        return RequirementsMatrixService.forProgram(params.id)
       },
     ),
   ),

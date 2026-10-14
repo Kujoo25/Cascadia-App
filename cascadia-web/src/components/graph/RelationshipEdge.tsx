@@ -9,6 +9,7 @@ import {
   useReactFlow,
 } from '@xyflow/react'
 import { ArrowRight, GripVertical } from 'lucide-react'
+import { graphEdgeKind } from './edgeStyles'
 import type { Edge, EdgeProps } from '@xyflow/react'
 
 export interface RelationshipEdgeData extends Record<string, unknown> {
@@ -71,6 +72,9 @@ function RelationshipEdgeComponent({
   const isUsage = data?.isUsageRelationship === true
   const isPhysical = data?.isPhysicalRelationship === true
   const isFile = data?.isFileRelationship === true
+  // The architecture family (DECOMPOSES, REALIZED_BY) carries no flag; it is
+  // told by its stored type, the way the stroke colour is.
+  const isArchitecture = graphEdgeKind(data ?? {}) === 'architecture'
 
   // Compute default smooth step path
   const [defaultPath, defaultLabelX, defaultLabelY] = getSmoothStepPath({
@@ -211,7 +215,9 @@ function RelationshipEdgeComponent({
                       ? 'border-emerald-300 dark:border-emerald-700 text-emerald-600 dark:text-emerald-400'
                       : isFile
                         ? 'border-sky-300 dark:border-sky-700 text-sky-600 dark:text-sky-400'
-                        : 'border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300'
+                        : isArchitecture
+                          ? 'border-teal-300 dark:border-teal-700 text-teal-600 dark:text-teal-400'
+                          : 'border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300'
                 }
               `}
               title={tooltip || undefined}

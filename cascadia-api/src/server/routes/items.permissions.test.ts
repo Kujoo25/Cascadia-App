@@ -439,7 +439,7 @@ describe('items routes — authorization gates', () => {
 
     it('the eight item-detail reads dispatch on the item type too', async () => {
       // The same claim as the thumbnail test, over the rest of the file:
-      // /items/:id/* serves all 13 types, so the tuple has to be charged on
+      // /items/:id/* serves all 14 types, so the tuple has to be charged on
       // the row rather than fixed at parts:read. partsOnly and docsOnly
       // differ ONLY in which item resource holds `read`, and the pair of
       // mirrored refusals is what distinguishes a dispatch from a hardcoded

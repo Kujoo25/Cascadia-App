@@ -16,6 +16,10 @@ import { relations } from 'drizzle-orm'
 import { users } from './users'
 import { programs } from './programs'
 import { designs } from './designs'
+import type {
+  ChatDialogKind,
+  ChatDialogPayload,
+} from '@cascadia/commons/ai/dialogs'
 
 // Types for AI configuration
 export type ProviderType = 'openai' | 'anthropic' | 'gemini' | 'ollama'
@@ -206,6 +210,45 @@ export const aiUsageLogs = pgTable(
   ],
 )
 
+// AI chat dialogs — the payload behind a "View results" / "Fill in details"
+// button in the chat panel.
+//
+// A tool with more to show than a message can hold (a full search result set,
+// a BOM graph, a form the model wants filled in) stores it here and puts only
+// a descriptor — id, kind, title — in its tool result. The model reads the
+// descriptor; the browser fetches the row when the button is clicked. Stored
+// rather than streamed so the model never carries the payload through its
+// context, and so a reopened conversation can still open its dialogs.
+//
+// Owned by the user through `user_id` rather than only through the session:
+// the read route checks that column directly, so a dialog can never be read
+// across users even if session ownership were ever to change hands.
+export const aiChatDialogs = pgTable(
+  'ai_chat_dialogs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => aiChatSessions.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+
+    // Which tool produced it, for the audit trail and the UI's icon choice
+    toolName: varchar('tool_name', { length: 100 }).notNull(),
+
+    kind: varchar('kind', { length: 20 }).$type<ChatDialogKind>().notNull(),
+    title: varchar('title', { length: 200 }).notNull(),
+    payload: jsonb('payload').$type<ChatDialogPayload>().notNull(),
+
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+  },
+  (table) => [index('ai_chat_dialogs_session_id_idx').on(table.sessionId)],
+)
+
 // AI write confirmations — server-issued single-use tokens (AI-3).
 //
 // A write tool's preview response carries an opaque token; executing the
@@ -257,6 +300,7 @@ export const aiChatSessionsRelations = relations(
     }),
     messages: many(aiChatMessages),
     usageLogs: many(aiUsageLogs),
+    dialogs: many(aiChatDialogs),
   }),
 )
 
@@ -281,6 +325,17 @@ export const aiUsageLogsRelations = relations(aiUsageLogs, ({ one }) => ({
   }),
   user: one(users, {
     fields: [aiUsageLogs.userId],
+    references: [users.id],
+  }),
+}))
+
+export const aiChatDialogsRelations = relations(aiChatDialogs, ({ one }) => ({
+  session: one(aiChatSessions, {
+    fields: [aiChatDialogs.sessionId],
+    references: [aiChatSessions.id],
+  }),
+  user: one(users, {
+    fields: [aiChatDialogs.userId],
     references: [users.id],
   }),
 }))

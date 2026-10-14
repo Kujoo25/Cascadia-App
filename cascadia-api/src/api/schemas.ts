@@ -19,7 +19,13 @@ import {
   variantCodeSchema,
 } from '@cascadia/commons/types/variants'
 import { changeOrderTypeSchema } from '@cascadia/commons/items/types/change-order'
+import {
+  requirementPrioritySchema,
+  verificationMethodSchema,
+  verificationStatusSchema,
+} from '@cascadia/commons/items/types/requirement'
 import { jsonValueSchema } from '@cascadia/commons/items/types/base'
+import { systemElementKindSchema } from '@cascadia/commons/items/types/system-element'
 import { testStepSchema } from '@cascadia/commons/items/types/testcase'
 import {
   issueCategories,
@@ -187,19 +193,15 @@ export type DocumentUpdate = z.infer<typeof documentUpdateSchema>
 // Requirement Schemas
 // =============================================================================
 
-export const requirementPrioritySchema = z.enum([
-  'low',
-  'medium',
-  'high',
-  'critical',
-])
-export const verificationMethodSchema = z.enum([
-  'inspection',
-  'analysis',
-  'demonstration',
-  'test',
-  'documentation',
-])
+// The shared enums, never copies. This file once declared its own lowercase
+// `priority` and `verificationMethod` sets, which no stored requirement can
+// hold: the column, the create path and the detail page all use the commons
+// values, so saving any requirement that had either field set answered 400.
+export {
+  requirementPrioritySchema,
+  verificationMethodSchema,
+  verificationStatusSchema,
+}
 
 /**
  * Schema for creating a new requirement.
@@ -237,6 +239,10 @@ export const requirementUpdateSchema = z.object({
   description: z.string().max(10000).nullable().optional(),
   priority: requirementPrioritySchema.nullable().optional(),
   verificationMethod: verificationMethodSchema.nullable().optional(),
+  // No `verificationStatus`: it is derived from the verifying tests'
+  // executions (services/verification-rollup.ts) and a waiver is its own
+  // request (`POST /requirements/:id/waive`). A page that echoes the item it
+  // read sends the key; it is stripped here, which is the intent.
   acceptanceCriteria: z.string().max(10000).nullable().optional(),
 })
 
@@ -366,6 +372,17 @@ export type ChangeOrderUpdate = z.infer<typeof changeOrderUpdateSchema>
  */
 export const baseItemUpdateSchema = z.object({ ...itemUpdateBaseFields })
 
+/**
+ * SystemElement: the two fields of its own. Its tree and its realizing items
+ * are edges, written through `/system-elements/:id/children` and
+ * `/system-elements/:id/realized-by`, not fields of the row.
+ */
+export const systemElementUpdateSchema = z.object({
+  ...itemUpdateBaseFields,
+  elementKind: systemElementKindSchema.nullable().optional(),
+  description: z.string().max(10000).nullable().optional(),
+})
+
 export const testPlanUpdateSchema = z.object({
   ...itemUpdateBaseFields,
   scope: z.string().max(5000).nullable().optional(),
@@ -479,6 +496,7 @@ const ITEM_UPDATE_SCHEMAS: Record<string, z.ZodType> = {
   Part: partUpdateSchema,
   Document: documentUpdateSchema,
   Requirement: requirementUpdateSchema,
+  SystemElement: systemElementUpdateSchema,
   Task: taskUpdateSchema,
   ChangeOrder: changeOrderUpdateSchema,
   TestPlan: testPlanUpdateSchema,

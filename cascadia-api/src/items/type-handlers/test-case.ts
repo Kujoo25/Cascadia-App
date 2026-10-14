@@ -1,10 +1,55 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
-import { eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { registerTypeHandler } from './index'
+import type { TransactionClient } from '@/db'
 import { db } from '@/db'
-import { testCases } from '@/db/schema'
+import { items, testCases } from '@/db/schema'
+
+type Run = TransactionClient | typeof db
+
+/**
+ * The master behind the test plan a caller names. Callers name plans by the
+ * row id they hold (the page's link, the picker's value); what is stored is
+ * the master, so membership survives whatever revises either side.
+ */
+async function planMasterIdOf(
+  run: Run,
+  data: { testPlanMasterId?: unknown; testPlanId?: unknown },
+): Promise<string | null | undefined> {
+  if (typeof data.testPlanMasterId === 'string' && data.testPlanMasterId) {
+    return data.testPlanMasterId
+  }
+  if (data.testPlanId === undefined && data.testPlanMasterId === undefined) {
+    return undefined
+  }
+  if (typeof data.testPlanId !== 'string' || !data.testPlanId) return null
+  const [plan] = await run
+    .select({ masterId: items.masterId })
+    .from(items)
+    .where(eq(items.id, data.testPlanId))
+    .limit(1)
+  return plan?.masterId ?? null
+}
+
+/** The row that currently answers for a plan master, for the page's link. */
+async function currentPlanRowId(
+  run: Run,
+  masterId: string,
+): Promise<string | null> {
+  const rows = await run
+    .select({ id: items.id, isCurrent: items.isCurrent })
+    .from(items)
+    .where(
+      and(
+        inArray(items.masterId, [masterId]),
+        eq(items.itemType, 'TestPlan'),
+        eq(items.isDeleted, false),
+      ),
+    )
+  return (rows.find((row) => row.isCurrent) ?? rows[0])?.id ?? null
+}
 
 registerTypeHandler('TestCase', {
   table: testCases,
@@ -13,7 +58,7 @@ registerTypeHandler('TestCase', {
     const run = tx ?? db
     await run.insert(testCases).values({
       itemId,
-      testPlanId: data.testPlanId || null,
+      testPlanMasterId: (await planMasterIdOf(run, data)) ?? null,
       testType: data.testType || null,
       preconditions: data.preconditions || null,
       steps: data.steps || null,
@@ -31,15 +76,22 @@ registerTypeHandler('TestCase', {
       .from(testCases)
       .where(eq(testCases.itemId, itemId))
       .limit(1)
-    return tc
+    if (!tc) return tc
+    // The stored pointer is the master; the page links to a row.
+    return {
+      ...tc,
+      testPlanId: tc.testPlanMasterId
+        ? await currentPlanRowId(run, tc.testPlanMasterId)
+        : null,
+    }
   },
 
   async update(itemId, data, tx) {
     const run = tx ?? db
     const updateData: Record<string, unknown> = {}
 
-    if (data.testPlanId !== undefined)
-      updateData.testPlanId = data.testPlanId || null
+    const planMasterId = await planMasterIdOf(run, data)
+    if (planMasterId !== undefined) updateData.testPlanMasterId = planMasterId
     if (data.testType !== undefined) updateData.testType = data.testType || null
     if (data.preconditions !== undefined)
       updateData.preconditions = data.preconditions || null

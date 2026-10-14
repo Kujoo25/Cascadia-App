@@ -19,9 +19,23 @@ import { ImpactAssessmentService } from '@/items/services/ImpactAssessmentServic
 import { ItemService } from '@/items/services/ItemService'
 import { DesignService } from '@/services/DesignService'
 import { ProgramService } from '@/services/ProgramService'
+import { TraceLinkService } from '@/services/TraceLinkService'
 import { AccessControlService } from '@/auth/AccessControlService'
-import { requireItemAccess } from '@/auth/access'
+import { requireDesignAccess, requireItemAccess } from '@/auth/access'
 import { ValidationError } from '@/errors'
+import {
+  DIALOG_ROW_CAP,
+  GRAPH_MIN_NODES,
+  GRID_MIN_ROWS,
+  bomGraph,
+  designGrid,
+  impactGraph,
+  itemGrid,
+  itemTypeLabel,
+  programGrid,
+  whereUsedGraph,
+} from '@/ai/dialogs/builders'
+import { chatPanelListening, presentDialog } from '@/ai/dialogs/DialogService'
 
 /**
  * A canonical UUID, in either case. Shared by the id-or-code resolvers below
@@ -112,6 +126,14 @@ interface AnalyzeChangeImpactInput {
   includeRelatedChanges?: boolean
 }
 
+interface GetSuspectLinksInput {
+  designId?: string
+  itemId?: string
+  relationshipType?: string
+  includeAffirmed?: boolean
+  limit?: number
+}
+
 interface OfferNavigationInput {
   itemId: string
   itemNumber: string
@@ -142,6 +164,108 @@ interface SearchDesignsInput {
 }
 
 // ============================================================================
+// Dialogs
+// ============================================================================
+
+/**
+ * How many rows to fetch for a search on this surface.
+ *
+ * With a chat panel listening, the full result set goes into a data-grid
+ * dialog the panel opens on demand, so one query fetches up to the dialog
+ * cap and the model is handed only the `limit` it asked for. Anywhere else
+ * there is no dialog, and the fetch stays what was requested.
+ */
+function fetchLimitFor(context: ToolContext, limit: number): number {
+  return chatPanelListening(context) ? Math.max(limit, DIALOG_ROW_CAP) : limit
+}
+
+/** "View all 42 results", or "View 500 of 1,204 results" past the cap. */
+function resultsLabel(shown: number, total: number): string {
+  const fmt = (n: number) => n.toLocaleString('en-US')
+  return shown < total
+    ? `View ${fmt(shown)} of ${fmt(total)} results`
+    : `View all ${fmt(total)} results`
+}
+
+/** The model-facing note on a data-grid dialog. */
+function gridSummary(total: number): string {
+  return (
+    `${total} matches in total. The chat panel shows a button that opens all of ` +
+    'them in a sortable, filterable table, so summarise only the most relevant ' +
+    'few here and tell the user the button has the rest.'
+  )
+}
+
+/** The model-facing note on a graph dialog. */
+function graphSummary(what: string): string {
+  return (
+    `The chat panel shows a button that opens ${what} as a graph and a table, ` +
+    'so describe the structure here rather than listing every node.'
+  )
+}
+
+/**
+ * A search hit in the shape both the model result and the grid use. The
+ * return type is spelled out rather than named because an interface has no
+ * implicit index signature, and a consumer of this tool's result reads the
+ * items as `Record<string, unknown>`.
+ */
+function toItemRow(item: {
+  id?: string
+  itemNumber?: string
+  name?: string | null
+  revision?: string
+  state?: string
+  itemType: string
+  designId?: string | null
+}): {
+  id: string
+  itemNumber: string
+  name: string | null
+  revision: string
+  state: string
+  itemType: string
+  designId: string | null
+} {
+  return {
+    id: item.id ?? '',
+    itemNumber: item.itemNumber ?? '',
+    name: item.name ?? null,
+    revision: item.revision ?? '',
+    state: item.state ?? '',
+    itemType: item.itemType,
+    designId: item.designId ?? null,
+  }
+}
+
+/** "Parts matching \"bracket\" in state Released" — the dialog's title. */
+function describeItemSearch(input: SearchItemsInput): string {
+  const parts = [itemTypeLabel(input.itemType)]
+  if (input.query) parts.push(`matching "${input.query}"`)
+  if (input.state) parts.push(`in state ${input.state}`)
+  if (input.designId) parts.push(`in design ${input.designId}`)
+  return parts.join(' ')
+}
+
+/** The full `search_items` result set as a dialog, once it is worth one. */
+async function presentItemGrid(
+  context: ToolContext,
+  input: SearchItemsInput,
+  rows: Array<ReturnType<typeof toItemRow>>,
+  total: number,
+) {
+  if (rows.length < GRID_MIN_ROWS) return undefined
+  const payload = itemGrid(rows, total)
+  return presentDialog(context, 'search_items', {
+    kind: 'data-grid',
+    title: describeItemSearch(input),
+    payload,
+    label: resultsLabel(payload.rows.length, total),
+    summary: gridSummary(total),
+  })
+}
+
+// ============================================================================
 // search_items handler
 // ============================================================================
 
@@ -151,6 +275,7 @@ export const searchItemsHandler = withPermissionAndAudit(
   async (input: SearchItemsInput, context: ToolContext) => {
     // Apply defaults
     const limit = input.limit ?? 20
+    const fetchLimit = fetchLimitFor(context, limit)
 
     // Resolve designId - accepts either UUID or design code (e.g., "PC-PROTO")
     const resolvedDesignId = await resolveDesignId(input.designId)
@@ -198,31 +323,24 @@ export const searchItemsHandler = withPermissionAndAudit(
     // (ItemService.search doesn't implement text search yet)
     if (input.query && input.query.length >= 2) {
       const items = await ItemService.searchByItemNumber(input.query, {
-        limit: limit * 2, // Fetch more to account for filtering
+        // Over-fetch when a state filter will drop rows afterwards
+        limit: stateFilter ? fetchLimit * 2 : fetchLimit,
         currentOnly: true,
         itemTypes: input.itemType ? [input.itemType] : undefined,
         designIds: resolvedDesignId ? [resolvedDesignId] : accessibleDesignIds,
       })
 
-      // Filter by state if specified
-      let filtered = stateFilter
-        ? items.filter((item) => item.state === stateFilter)
-        : items
-
-      // Apply limit after filtering
-      filtered = filtered.slice(0, limit)
+      // Filter by state if specified, then cap at what this surface fetches
+      const rows = (
+        stateFilter ? items.filter((item) => item.state === stateFilter) : items
+      )
+        .slice(0, fetchLimit)
+        .map(toItemRow)
 
       return {
-        items: filtered.map((item) => ({
-          id: item.id,
-          itemNumber: item.itemNumber,
-          name: item.name ?? null,
-          revision: item.revision,
-          state: item.state,
-          itemType: item.itemType,
-          designId: item.designId ?? null,
-        })),
-        total: filtered.length,
+        items: rows.slice(0, limit),
+        total: rows.length,
+        dialog: await presentItemGrid(context, input, rows, rows.length),
       }
     }
 
@@ -232,20 +350,14 @@ export const searchItemsHandler = withPermissionAndAudit(
         state: stateFilter,
         designId: resolvedDesignId,
         designIds: !resolvedDesignId ? accessibleDesignIds : undefined,
-        limit,
+        limit: fetchLimit,
       })
+      const rows = result.items.map(toItemRow)
 
       return {
-        items: result.items.map((item) => ({
-          id: item.id,
-          itemNumber: item.itemNumber,
-          name: item.name ?? null,
-          revision: item.revision,
-          state: item.state,
-          itemType: item.itemType,
-          designId: item.designId ?? null,
-        })),
+        items: rows.slice(0, limit),
         total: result.total,
+        dialog: await presentItemGrid(context, input, rows, result.total),
       }
     }
 
@@ -489,11 +601,36 @@ export const getBomHandler = withPermissionAndAudit(
       return count
     }
 
+    const totalComponents = countComponents(bomTree)
+    const dialog =
+      totalComponents >= GRAPH_MIN_NODES
+        ? await presentDialog(context, 'get_bom', {
+            kind: 'graph',
+            title: `BOM of ${parentItem.itemNumber}${
+              parentItem.name ? ` — ${parentItem.name}` : ''
+            }`,
+            payload: bomGraph(
+              {
+                id: parentItem.id,
+                itemNumber: parentItem.itemNumber,
+                name: parentItem.name ?? null,
+                state: parentItem.state,
+                itemType: parentItem.itemType,
+              },
+              bomTree,
+              totalComponents,
+            ),
+            label: 'View BOM graph',
+            summary: graphSummary('this BOM'),
+          })
+        : undefined
+
     return {
       parentItemNumber: parentItem.itemNumber,
       parentName: parentItem.name ?? null,
       children: bomTree,
-      totalComponents: countComponents(bomTree),
+      totalComponents,
+      dialog,
     }
   },
 )
@@ -525,6 +662,27 @@ export const getWhereUsedHandler = withPermissionAndAudit(
       },
     )
 
+    const dialog =
+      whereUsed.length >= GRAPH_MIN_NODES
+        ? await presentDialog(context, 'get_where_used', {
+            kind: 'graph',
+            title: `Where ${targetItem.itemNumber} is used`,
+            payload: whereUsedGraph(
+              {
+                id: targetItem.id,
+                masterId: targetItem.masterId,
+                itemNumber: targetItem.itemNumber,
+                name: targetItem.name ?? null,
+                state: targetItem.state,
+                itemType: targetItem.itemType,
+              },
+              whereUsed,
+            ),
+            label: 'View where-used graph',
+            summary: graphSummary('the where-used tree'),
+          })
+        : undefined
+
     return {
       itemNumber: targetItem.itemNumber,
       itemName: targetItem.name ?? null,
@@ -543,6 +701,7 @@ export const getWhereUsedHandler = withPermissionAndAudit(
         designName: node.designName ?? null,
       })),
       totalUsages: whereUsed.length,
+      dialog,
     }
   },
 )
@@ -685,6 +844,33 @@ export const analyzeChangeImpactHandler = withPermissionAndAudit(
           ? 'medium'
           : 'low'
 
+    const relatedCount =
+      (relatedDocuments?.length ?? 0) + (relatedChangeOrders?.length ?? 0)
+    const dialog =
+      whereUsed.length + relatedCount >= GRAPH_MIN_NODES
+        ? await presentDialog(context, 'analyze_change_impact', {
+            kind: 'graph',
+            title: `Impact of changing ${item.itemNumber}`,
+            payload: impactGraph(
+              {
+                id: item.id,
+                masterId: item.masterId,
+                itemNumber: item.itemNumber,
+                name: item.name ?? null,
+                state: item.state,
+                itemType: item.itemType,
+              },
+              whereUsed,
+              {
+                documents: relatedDocuments ?? [],
+                changeOrders: relatedChangeOrders ?? [],
+              },
+            ),
+            label: 'View impact graph',
+            summary: graphSummary('the full impact'),
+          })
+        : undefined
+
     return {
       item: {
         itemNumber: item.itemNumber,
@@ -705,6 +891,7 @@ export const analyzeChangeImpactHandler = withPermissionAndAudit(
       relatedChangeOrders,
       risks,
       riskLevel,
+      dialog,
     }
   },
 )
@@ -789,6 +976,7 @@ export const searchProgramsHandler = withPermissionAndAudit(
   { resource: 'programs', action: 'read' },
   async (input: SearchProgramsInput, context: ToolContext) => {
     const limit = input.limit ?? 20
+    const fetchLimit = fetchLimitFor(context, limit)
 
     // Get accessible program IDs for the current user
     const programIds = await AccessControlService.getAccessibleProgramIds(
@@ -800,19 +988,38 @@ export const searchProgramsHandler = withPermissionAndAudit(
       globalSearch: input.query,
       columnFilters: input.status ? { status: input.status } : undefined,
       programIds,
-      limit,
+      limit: fetchLimit,
     })
 
+    const rows = result.items.map((program) => ({
+      id: program.id,
+      name: program.name,
+      code: program.code,
+      status: program.status,
+      customer: program.customer ?? null,
+      description: program.description ?? null,
+    }))
+
+    const dialog =
+      rows.length >= GRID_MIN_ROWS
+        ? await presentDialog(context, 'search_programs', {
+            kind: 'data-grid',
+            title: input.query
+              ? `Programs matching "${input.query}"`
+              : 'Programs',
+            payload: programGrid(rows, result.total),
+            label: resultsLabel(
+              Math.min(rows.length, DIALOG_ROW_CAP),
+              result.total,
+            ),
+            summary: gridSummary(result.total),
+          })
+        : undefined
+
     return {
-      programs: result.items.map((program) => ({
-        id: program.id,
-        name: program.name,
-        code: program.code,
-        status: program.status,
-        customer: program.customer ?? null,
-        description: program.description ?? null,
-      })),
+      programs: rows.slice(0, limit),
       total: result.total,
+      dialog,
     }
   },
 )
@@ -826,6 +1033,7 @@ export const searchDesignsHandler = withPermissionAndAudit(
   { resource: 'designs', action: 'read' },
   async (input: SearchDesignsInput, context: ToolContext) => {
     const limit = input.limit ?? 20
+    const fetchLimit = fetchLimitFor(context, limit)
 
     // Get accessible program IDs for the current user
     const programIds = await AccessControlService.getAccessibleProgramIds(
@@ -853,7 +1061,7 @@ export const searchDesignsHandler = withPermissionAndAudit(
         Object.keys(columnFilters).length > 0 ? columnFilters : undefined,
       programIds: scopedProgramIds,
       includeArchived: false,
-      limit,
+      limit: fetchLimit,
     })
 
     // Look up program names for the results
@@ -867,19 +1075,93 @@ export const searchDesignsHandler = withPermissionAndAudit(
       }
     }
 
+    const rows = result.items.map((design) => ({
+      id: design.id,
+      name: design.name,
+      code: design.code,
+      designType: design.designType,
+      programId: design.programId ?? null,
+      programName: design.programId
+        ? (programNameCache.get(design.programId) ?? null)
+        : null,
+      description: design.description ?? null,
+    }))
+
+    const dialog =
+      rows.length >= GRID_MIN_ROWS
+        ? await presentDialog(context, 'search_designs', {
+            kind: 'data-grid',
+            title: input.query
+              ? `Designs matching "${input.query}"`
+              : 'Designs',
+            payload: designGrid(rows, result.total),
+            label: resultsLabel(
+              Math.min(rows.length, DIALOG_ROW_CAP),
+              result.total,
+            ),
+            summary: gridSummary(result.total),
+          })
+        : undefined
+
     return {
-      designs: result.items.map((design) => ({
-        id: design.id,
-        name: design.name,
-        code: design.code,
-        designType: design.designType,
-        programId: design.programId ?? null,
-        programName: design.programId
-          ? (programNameCache.get(design.programId) ?? null)
-          : null,
-        description: design.description ?? null,
-      })),
+      designs: rows.slice(0, limit),
       total: result.total,
+      dialog,
+    }
+  },
+)
+
+// ============================================================================
+// get_suspect_links handler
+// ============================================================================
+
+export const getSuspectLinksHandler = withPermissionAndAudit(
+  'get_suspect_links',
+  { resource: 'parts', action: 'read' },
+  async (input: GetSuspectLinksInput, context: ToolContext) => {
+    const limit = input.limit ?? 50
+    const options = {
+      relationshipType: input.relationshipType,
+      suspectOnly: !(input.includeAffirmed ?? false),
+      limit,
+    }
+
+    // Instance-level gate, the one the wrapper's type-level check cannot
+    // supply: the design, or the item, must be one the caller can reach —
+    // the same rule as get_item_details and the trace panels' own routes.
+    if (input.itemId) {
+      const item = await ItemService.findById(input.itemId)
+      if (!item) {
+        throw new Error(`Item with ID ${input.itemId} not found`)
+      }
+      await requireItemAccess(context.userId, item.id)
+      const result = await TraceLinkService.list({ itemId: item.id }, options)
+      return {
+        scope: { itemId: item.id, itemNumber: item.itemNumber },
+        links: result.links,
+        total: result.total,
+        suspectTotal: result.links.filter((link) => link.suspect).length,
+      }
+    }
+
+    const designId = await resolveDesignId(input.designId)
+    if (!designId) {
+      throw new ValidationError('One of designId or itemId is required')
+    }
+    await requireDesignAccess(context.userId, designId)
+    const design = await DesignService.getById(designId)
+    const result = await TraceLinkService.list({ designId }, options)
+    return {
+      scope: {
+        designId,
+        designCode: design?.code,
+        designName: design?.name,
+      },
+      links: result.links,
+      total: result.total,
+      suspectTotal: options.suspectOnly
+        ? result.total
+        : result.links.filter((link) => link.suspect).length,
     }
   },
 )

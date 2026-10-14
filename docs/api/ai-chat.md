@@ -108,6 +108,7 @@ The chat endpoint builds a system prompt that includes:
 | `offer_navigation`      | Present a clickable navigation button to the user for an item page.                                                                                                                          |
 | `search_programs`       | Search programs by name, code, status, or customer.                                                                                                                                          |
 | `search_designs`        | Search designs by name, code, type, or program.                                                                                                                                              |
+| `get_suspect_links`     | List the trace links in a design or on an item with their suspect state -- which end revised since the claim was last affirmed.                                                              |
 
 ### Write tools
 
@@ -127,6 +128,7 @@ Write tools use a two-step confirmation flow:
 | `create_relationship`   | Create BOM or Document reference relationships |
 | `transition_item_state` | Move items through workflow states             |
 | `create_change_order`   | Create a new Engineering Change Order          |
+| `affirm_link`           | Affirm a trace link, clearing its suspect flag |
 
 ### Design engine tool
 

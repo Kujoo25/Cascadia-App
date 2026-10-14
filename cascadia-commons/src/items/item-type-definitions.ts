@@ -38,6 +38,10 @@ import {
 } from './types/physical-part'
 import { workOrderItemSchema, workOrderRelationships } from './types/work-order'
 import { softwareRelationships, softwareSchema } from './types/software'
+import {
+  systemElementRelationships,
+  systemElementSchema,
+} from './types/system-element'
 import type { RelationshipConfig } from './types/base'
 import type { ResourceType } from '../auth/permissions'
 import type { z } from 'zod'
@@ -121,6 +125,20 @@ export const ITEM_TYPE_DEFINITIONS: Record<string, SharedItemTypeDef> = {
       'category',
       'source',
     ],
+    displayField: 'itemNumber',
+  },
+
+  SystemElement: {
+    name: 'SystemElement',
+    resource: 'system_elements',
+    detailPath: '/system-elements',
+    label: 'System Element',
+    pluralLabel: 'System Elements',
+    icon: 'Network',
+    schema: systemElementSchema,
+    lifecycleDefinitionId: LIFECYCLE_IDS.systemElement,
+    relationships: systemElementRelationships,
+    searchableFields: ['itemNumber', 'name', 'description'],
     displayField: 'itemNumber',
   },
 

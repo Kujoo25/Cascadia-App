@@ -46,7 +46,8 @@ import {
 } from './edition-manifest.mjs'
 
 // Both lists derive from the edition manifest so a new module package is
-// covered the day its cascadia-<name>/** pattern lands in PROPRIETARY.
+// covered the day its manifest declares it UNLICENSED and the edition
+// manifest discovers it.
 // The old hardcoded copies here had already drifted: they omitted the
 // odoo-integration package entirely, so a core import under it — or its
 // quoted package id — passed this check silently. (No quoted ids in this
@@ -100,8 +101,8 @@ const ENTRY_POINTS = [
  * with instructions to delete the entry, so the list cannot rot into a
  * permanent amnesty.
  *
- * Every entry names an open item from Phase 1 of
- * `docs/architecture/loadable-modules-architecture.md`.
+ * Every entry names an open item from Phase 1 of the loadable-modules
+ * architecture document, kept with the edition that composes modules.
  */
 const KNOWN_PENDING = new Map([
   // Empty as of 2026-08-10, when Phase 1 closed. Core reaches nothing
@@ -457,7 +458,7 @@ if (fresh.length > 0) {
   }
   console.error(
     'Core must not reach a module. Invert the dependency through a registry —\n' +
-      'see docs/architecture/loadable-modules-architecture.md, "Phase 1 — Seams".',
+      'see "Phase 1 — Seams" in the loadable-modules architecture document.',
   )
   process.exit(1)
 }

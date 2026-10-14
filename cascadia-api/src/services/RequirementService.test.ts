@@ -26,6 +26,7 @@ import { BranchService } from './BranchService'
 import { DesignService } from './DesignService'
 import { CheckoutService } from './CheckoutService'
 import { RevisionService } from './RevisionService'
+import { VerificationService } from './VerificationService'
 import type { TestUser } from '@/__tests__/fixtures/users'
 import type { Requirement } from '@cascadia/commons/items/types/requirement'
 import type { Part } from '@cascadia/commons/items/types/part'
@@ -974,25 +975,35 @@ describe('RequirementService', () => {
       expect(gap!.gapType).toBe('not_verified')
     })
 
-    it('should count requirement as verified when verificationStatus is Passed', async () => {
+    it('counts a requirement as verified once its verifying test has passed, and not before', async () => {
       const req = await createRequirement({ priority: 'MustHave' })
       const part = await createPart()
+      const tc = await createTestCase()
 
       await RequirementService.allocateToDesign(req.id!, part.id!, user.id)
       await RequirementService.linkSatisfaction(req.id!, [part.id!], user.id)
-      await RequirementService.updateVerificationStatus(
-        req.id!,
-        'Passed',
+      await RequirementService.linkVerification(req.id!, [tc.id!], user.id)
+
+      // A linked test that has never run is a plan, not evidence.
+      let coverage = await RequirementService.getCoverage(designId)
+      expect(coverage.verified).toBe(0)
+      expect(coverage.gaps.find((g) => g.id === req.id)?.gapType).toBe(
+        'not_verified',
+      )
+
+      await VerificationService.recordExecution(
+        tc.id!,
+        { status: 'Passed' },
         user.id,
       )
 
-      const coverage = await RequirementService.getCoverage(designId)
+      coverage = await RequirementService.getCoverage(designId)
       expect(coverage.verified).toBe(1)
-      // No not_verified gap for this requirement
-      const gap = coverage.gaps.find(
-        (g) => g.id === req.id && g.gapType === 'not_verified',
-      )
-      expect(gap).toBeUndefined()
+      expect(
+        coverage.gaps.find(
+          (g) => g.id === req.id && g.gapType === 'not_verified',
+        ),
+      ).toBeUndefined()
     })
 
     it('should throw NotFoundError for non-existent design', async () => {
@@ -1022,23 +1033,46 @@ describe('RequirementService', () => {
   })
 
   // ================================================================
-  // updateVerificationStatus() and updateVerificationMethod()
+  // waiveVerification() / clearVerificationWaiver() and updateVerificationMethod()
   // ================================================================
 
-  describe('updateVerificationStatus()', () => {
-    it('should update the verification status of a requirement', async () => {
-      const req = await createRequirement()
+  describe('waiveVerification()', () => {
+    it('waives with a note, counts as verified, and clearing restores the derived status', async () => {
+      const req = await createRequirement({ priority: 'MustHave' })
+      const part = await createPart()
+      await RequirementService.allocateToDesign(req.id!, part.id!, user.id)
+      await RequirementService.linkSatisfaction(req.id!, [part.id!], user.id)
 
-      await RequirementService.updateVerificationStatus(
+      const { waiver } = await RequirementService.waiveVerification(
         req.id!,
-        'InProgress',
+        'Verified by analysis in report AN-12',
         user.id,
       )
+      expect(waiver).toMatchObject({
+        note: 'Verified by analysis in report AN-12',
+        waivedBy: user.id,
+      })
+      const waived = (await ItemService.findById(req.id!)) as Requirement
+      expect(waived.verificationStatus).toBe('Waived')
+      expect(waived.verificationWaiver).toMatchObject({ waivedBy: user.id })
+      expect((await RequirementService.getCoverage(designId)).verified).toBe(1)
 
-      const updated = (await ItemService.findById(req.id!)) as any
-      expect(updated).toBeDefined()
-      // The status should be updated in the requirement-specific table
-      // Verify by checking coverage side-effect or re-fetching
+      const { status } = await RequirementService.clearVerificationWaiver(
+        req.id!,
+        user.id,
+      )
+      expect(status).toBe('NotStarted')
+      const cleared = (await ItemService.findById(req.id!)) as Requirement
+      expect(cleared.verificationStatus).toBe('NotStarted')
+      expect(cleared.verificationWaiver).toBeNull()
+      expect((await RequirementService.getCoverage(designId)).verified).toBe(0)
+    })
+
+    it('refuses a waiver without a note', async () => {
+      const req = await createRequirement()
+      await expect(
+        RequirementService.waiveVerification(req.id!, '   ', user.id),
+      ).rejects.toThrow(ValidationError)
     })
   })
 

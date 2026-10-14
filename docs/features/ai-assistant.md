@@ -58,6 +58,7 @@ The panel is resizable by dragging the left edge. Width is persisted to `localSt
 - **Tool calls**: Shown as small monospace labels below the message text (e.g., `search_items`, `get_bom`). A "Running..." indicator appears while the tool is executing.
 - **Navigation offers**: Rendered as clickable buttons below the message (e.g., "View P-1001"). Internal links navigate within the app; external links open in a new tab.
 - **Design workspace offers**: Rendered as a "Open Design Workspace" button that navigates to the collaborative design workspace.
+- **Dialog buttons**: Any tool result carrying a `dialog` descriptor renders a button ("View all 312 results", "View BOM graph", "Fill in details", "See suggested actions") that opens a modal. See [Chat Dialogs](#chat-dialogs).
 - **System messages**: Hidden from the UI.
 - **Streaming**: A pulsing cursor animation appears at the end of the assistant's message while content is still streaming.
 
@@ -69,6 +70,47 @@ The `ChatInput` component provides two ways to send messages:
 | ---------- | --------------------------- | --------------------------------------------------------------------------------- |
 | **Chat**   | Enter key or Send button    | Full conversational mode with all tools (read + write)                            |
 | **Search** | Ctrl+Enter or Search button | Lightweight search mode -- uses a concise prompt and only search/navigation tools |
+
+---
+
+## Chat Dialogs
+
+A chat message is the wrong place for three hundred search hits, a BOM graph, or a form. When a tool has more to show than a message holds, it stores the payload as a **dialog** and puts only a small descriptor — `{ id, kind, title, label, summary }` — in its result. The model reads the descriptor and knows a button exists; the chat panel renders the button under the message; the payload is fetched only when the button is clicked. The model never carries the payload through its context, and because the row outlives the stream, a reopened conversation can still open its dialogs.
+
+| Kind        | Built by                                                         | Opens                                                                                                                                                      |
+| ----------- | ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `data-grid` | `search_items`, `search_programs`, `search_designs` (6+ matches) | The full result set (up to 500 rows) in the standard `DataGrid` — search, sort, per-column filters, CSV export; link cells navigate                        |
+| `graph`     | `get_bom`, `get_where_used`, `analyze_change_impact` (2+ nodes)  | A React Flow graph laid out with dagre, the item in question highlighted, with a Table tab holding the same data                                           |
+| `form`      | The model, via `request_user_input`                              | A form built from the model's field list; submitting sends the answers back into the chat as the user's next message                                       |
+| `actions`   | The model, via `suggest_actions`                                 | Suggested next steps — each sends a chat message on the user's behalf or opens an app page — plus optional input boxes (a link to create a tool from, say) |
+
+### How a result becomes a dialog
+
+- When a chat panel is listening — the tool context the chat route builds carries a `sessionId` and `surface: 'chat' | 'search'` — the read tools fetch up to the dialog cap in one query, hand the model only the `limit` it asked for, and store the rest. Anywhere else the tools behave exactly as before: the MCP surface has no session, and the design engine passes a chat session id purely for audit attribution and never sets a surface.
+- `presentDialog()` in `cascadia-api/src/ai/dialogs/DialogService.ts` is the one seam: it returns `undefined` unless a panel is listening, so a tool never has to know who called it.
+- Payload builders live in `cascadia-api/src/ai/dialogs/builders.ts`; the shared types and schemas (client-safe, zod only) in `cascadia-commons/src/ai/dialogs.ts`.
+- Rows live in `ai_chat_dialogs`, owned by the session (cascade-deleted with it) and by the user. `GET /api/v1/ai/dialogs/:id` answers only to that user; any other caller gets the same 404 a missing id gets.
+- The system prompt tells the model what a `dialog` field means: summarise the top few results and point the user to the button rather than pasting the list.
+
+### Model-authored dialogs
+
+`request_user_input` and `suggest_actions` are chat-only tools — never listed over MCP, and not part of search mode. Their inputs are validated against the stored payload schema inside the handler (TanStack AI does not validate tool arguments), so what the model may send and what the browser will render are one definition. An action's `href` must be an app-relative path — the same rule as `toAppRelativeUrl`, the markdown egress gate — and anything else is rejected before it is stored.
+
+A submitted form arrives as the user's next message, one field per line:
+
+```
+Submitted form "New Part":
+- Name: Motor bracket
+- Part type: Manufacture
+- Design: Widget Prototype (PC-PROTO) (id: 6f1c…)
+Left blank: Description
+```
+
+The model then calls the write tool with those values; the write tool's own confirmation card still applies, because the server-issued token is what proves the preview happened.
+
+### In the panel
+
+`ChatMessage` extracts dialog descriptors from tool results (`cascadia-web/src/components/ai/message-parts.ts`, which also does the matching for navigation offers and confirmation cards) and renders a button per dialog. `ChatPanel` hosts one `ChatDialog` modal at a time. Grids and graphs get a near-full-viewport shell; forms and actions the standard centred one. Navigation from inside a dialog closes it first. Forms and action inputs send their message through the same `sendMessage` the input box uses, so the answer lands in the transcript like anything the user typed.
 
 ---
 
@@ -110,7 +152,7 @@ Three tables support AI chat persistence (defined in `cascadia-api/src/db/schema
 1. **Auto-creation**: A session is created on the first message if none exists. The UI calls `POST /api/v1/ai/sessions` before sending the first message.
 2. **Title generation**: The `SessionService` auto-generates a title from the first user message. It extracts the first sentence (up to 50 characters) or truncates at a word boundary.
 3. **Message persistence**: Each user message is saved before sending to the LLM. The assistant's response is saved after the stream completes.
-4. **History loading**: When switching sessions, the UI fetches message history via `GET /api/v1/ai/sessions/:id/messages` and reconstructs the message list.
+4. **History loading**: When switching sessions, the UI fetches message history via `GET /api/v1/ai/sessions/:id/messages` and reconstructs the message list. Tool calls and their results are restored as message parts, so navigation and dialog buttons come back with the conversation; write-tool confirmation previews are the one result left out, since their tokens expired minutes after they were minted.
 5. **Ownership**: Sessions are scoped to the creating user. The `verifySessionOwnership` check prevents accessing other users' sessions.
 6. **Cleanup**: `SessionService.cleanupOldSessions()` retains the 50 most recent sessions per user. Messages cascade-delete with their session.
 
@@ -215,6 +257,20 @@ Search programs by name, code, customer, or status. Results are scoped to progra
 
 Search designs by name, code, type, or program. Accepts program ID or code for filtering. Excludes archived designs by default.
 
+### get_suspect_links
+
+List the trace links in a design or on one item, with their suspect state. A trace link (`SATISFIES`, `ALLOCATED_TO`, `VERIFIED_BY`, `VALIDATES`) is a claim one item version makes about another, and it is **suspect** once either end has revised since someone last affirmed it -- see [Suspect links](versioning.md#suspect-links-affirmed-trace-claims).
+
+| Parameter          | Type    | Description                                                      |
+| ------------------ | ------- | ---------------------------------------------------------------- |
+| `designId`         | string  | Design ID or code (one of `designId` or `itemId` is required)    |
+| `itemId`           | string  | One item -- a requirement, part, software, document or test case |
+| `relationshipType` | enum    | One of the four trace types; all of them when omitted            |
+| `includeAffirmed`  | boolean | Also list the links that are not suspect (default false)         |
+| `limit`            | number  | Max results (1-200, default 50)                                  |
+
+Returns each link with both ends (the target resolved to its current row), `suspect`, `suspectReasons` (`source_revised`, `target_revised`), and who last affirmed it. Reads the same way the trace panels do, so it agrees with them to the row; a design's listing covers its released items only.
+
 ---
 
 ## Write Tools
@@ -266,6 +322,10 @@ Create a new Engineering Change Order. Change types come from
 2. Auto-starts the workflow
 3. Adds specified designs (creating ECO branches)
 4. Adds specified affected items with appropriate change actions (`revise` for Released items, `release` for Draft items)
+
+### affirm_link
+
+Record that a trace link's claim still holds for the versions its two ends currently name, which clears its suspect flag. Affirming is a review record, not an edit of the link: it changes nothing the link says and needs no change order, even on released items. Charges `update` on the source item's own type, like `POST /api/v1/relationships/{id}/affirm`. The preview names the claim and why it is suspect; the assistant is told to affirm only once the user has judged the claim still true, never to silence a flag.
 
 ### initiate_collaborative_design
 
@@ -424,29 +484,33 @@ Each tool definition includes:
 
 Tools are assembled in `cascadia-api/src/ai/tools/index.ts`:
 
-- **`createServerTools(context)`** -- Returns all 14 tools (8 read + 5 write + 1 design engine) bound to a user context
+- **`createServerTools(context)`** -- Returns all 17 tools (8 read + 2 dialog + 6 write + 1 design engine) bound to a user context
 - **`createSearchTools(context)`** -- Returns 5 lightweight tools (search_items, get_item_details, offer_navigation, search_programs, search_designs) for search mode
 
 The `context` object carries `userId`, `sessionId`, `programId`, and `designId` through to every handler.
 
 ### Complete Tool Reference
 
-| #   | Tool                            | Category | Permission             | Description                                   |
-| --- | ------------------------------- | -------- | ---------------------- | --------------------------------------------- |
-| 1   | `search_items`                  | Read     | `parts:read`           | Search items by type, query, state, design    |
-| 2   | `get_item_details`              | Read     | `parts:read`           | Get full item details by ID or item number    |
-| 3   | `get_bom`                       | Read     | `parts:read`           | Get BOM children for a part                   |
-| 4   | `get_where_used`                | Read     | `parts:read`           | Find parent assemblies using an item          |
-| 5   | `analyze_change_impact`         | Read     | `parts:read`           | Analyze change impact with risk assessment    |
-| 6   | `offer_navigation`              | Read     | None                   | Generate navigation URL for UI button         |
-| 7   | `search_programs`               | Read     | `programs:read`        | Search programs by name, code, customer       |
-| 8   | `search_designs`                | Read     | `designs:read`         | Search designs by name, code, program         |
-| 9   | `create_item`                   | Write    | `<type>:create`        | Create any item type except ChangeOrder       |
-| 10  | `update_item`                   | Write    | `<type>:update`        | Update item properties                        |
-| 11  | `create_relationship`           | Write    | `<source type>:update` | Create BOM, Document, or Affects relationship |
-| 12  | `transition_item_state`         | Write    | `<type>:update`        | Transition workflow state                     |
-| 13  | `create_change_order`           | Write    | `change_orders:create` | Create ECO with branches and affected items   |
-| 14  | `initiate_collaborative_design` | Design   | `parts:create`         | Launch collaborative design workspace         |
+| #   | Tool                            | Category | Permission             | Description                                    |
+| --- | ------------------------------- | -------- | ---------------------- | ---------------------------------------------- |
+| 1   | `search_items`                  | Read     | `parts:read`           | Search items by type, query, state, design     |
+| 2   | `get_item_details`              | Read     | `parts:read`           | Get full item details by ID or item number     |
+| 3   | `get_bom`                       | Read     | `parts:read`           | Get BOM children for a part                    |
+| 4   | `get_where_used`                | Read     | `parts:read`           | Find parent assemblies using an item           |
+| 5   | `analyze_change_impact`         | Read     | `parts:read`           | Analyze change impact with risk assessment     |
+| 6   | `offer_navigation`              | Read     | None                   | Generate navigation URL for UI button          |
+| 7   | `search_programs`               | Read     | `programs:read`        | Search programs by name, code, customer        |
+| 8   | `search_designs`                | Read     | `designs:read`         | Search designs by name, code, program          |
+| 9   | `create_item`                   | Write    | `<type>:create`        | Create any item type except ChangeOrder        |
+| 10  | `update_item`                   | Write    | `<type>:update`        | Update item properties                         |
+| 11  | `create_relationship`           | Write    | `<source type>:update` | Create BOM, Document, or Affects relationship  |
+| 12  | `transition_item_state`         | Write    | `<type>:update`        | Transition workflow state                      |
+| 13  | `create_change_order`           | Write    | `change_orders:create` | Create ECO with branches and affected items    |
+| 14  | `initiate_collaborative_design` | Design   | `parts:create`         | Launch collaborative design workspace          |
+| 15  | `request_user_input`            | Dialog   | `parts:read`           | Collect details through a form dialog          |
+| 16  | `suggest_actions`               | Dialog   | `parts:read`           | Offer next steps as clickable actions          |
+| 17  | `get_suspect_links`             | Read     | `parts:read`           | List trace links with their suspect state      |
+| 18  | `affirm_link`                   | Write    | `<source type>:update` | Affirm a trace link, clearing its suspect flag |
 
 `<type>` is the target item's own RBAC resource — `documents` for a Document,
 `tasks` for a Task, `change_orders` for a ChangeOrder — resolved through the
@@ -618,6 +682,7 @@ Server code lives in `cascadia-api/src/items/enrichment/` (`enrich-item.ts`, `fe
 | `/api/v1/ai/sessions/:id`          | GET    | Authenticated (owner)                               | Get session details                                                                          |
 | `/api/v1/ai/sessions/:id`          | DELETE | Authenticated (owner)                               | Delete session and messages                                                                  |
 | `/api/v1/ai/sessions/:id/messages` | GET    | Authenticated (owner)                               | Get message history                                                                          |
+| `/api/v1/ai/dialogs/:id`           | GET    | Authenticated (owner)                               | Get the payload behind a dialog button                                                       |
 | `/api/v1/ai/settings`              | GET    | Authenticated                                       | Get AI settings                                                                              |
 | `/api/v1/ai/settings`              | POST   | `ai_settings:create`                                | Create AI settings                                                                           |
 | `/api/v1/ai/settings`              | PUT    | `ai_settings:update`                                | Update AI settings                                                                           |
@@ -628,22 +693,29 @@ Server code lives in `cascadia-api/src/items/enrichment/` (`enrich-item.ts`, `fe
 
 ## Key Source Files
 
-| File                                                  | Purpose                                                      |
-| ----------------------------------------------------- | ------------------------------------------------------------ |
-| `cascadia-api/src/ai/adapters.ts`                     | Provider adapter factory and config loading                  |
-| `cascadia-api/src/ai/SessionService.ts`               | Session and message persistence                              |
-| `cascadia-api/src/ai/KnowledgeService.ts`             | Schema introspection and system prompt generation            |
-| `cascadia-web/src/ai/chat-context.tsx`                | React context for panel state management                     |
-| `cascadia-api/src/ai/tools/definitions.ts`            | Read-only tool definitions (Zod schemas)                     |
-| `cascadia-api/src/ai/tools/write-definitions.ts`      | Write tool definitions with confirmation schemas             |
-| `cascadia-api/src/ai/tools/handlers.ts`               | Read-only tool handler implementations                       |
-| `cascadia-api/src/ai/tools/write-handlers.ts`         | Write tool handler implementations                           |
-| `cascadia-api/src/ai/tools/permission-wrapper.ts`     | Permission checking and audit logging wrapper                |
-| `cascadia-api/src/ai/tools/index.ts`                  | Tool assembly and exports                                    |
-| `cascadia-api/src/db/schema/ai.ts`                    | Database schema for sessions, messages, settings, usage logs |
-| `cascadia-web/src/components/ai/ChatPanel.tsx`        | Main chat sidebar component                                  |
-| `cascadia-web/src/components/ai/ChatMessage.tsx`      | Message rendering with Markdown and tool results             |
-| `cascadia-web/src/components/ai/ChatInput.tsx`        | Input component with Send/Search modes                       |
-| `cascadia-web/src/components/ai/ChatPanelButton.tsx`  | Edge button to open the panel                                |
-| `cascadia-web/src/components/ai/ConfirmationCard.tsx` | Confirmation UI for write operations                         |
-| `cascadia-api/src/server/routes/ai.ts`                | Chat, session, message history, and settings endpoints       |
+| File                                                    | Purpose                                                                 |
+| ------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `cascadia-api/src/ai/adapters.ts`                       | Provider adapter factory and config loading                             |
+| `cascadia-api/src/ai/SessionService.ts`                 | Session and message persistence                                         |
+| `cascadia-api/src/ai/KnowledgeService.ts`               | Schema introspection and system prompt generation                       |
+| `cascadia-web/src/ai/chat-context.tsx`                  | React context for panel state management                                |
+| `cascadia-api/src/ai/tools/definitions.ts`              | Read-only tool definitions (Zod schemas)                                |
+| `cascadia-api/src/ai/tools/write-definitions.ts`        | Write tool definitions with confirmation schemas                        |
+| `cascadia-api/src/ai/tools/handlers.ts`                 | Read-only tool handler implementations                                  |
+| `cascadia-api/src/ai/tools/write-handlers.ts`           | Write tool handler implementations                                      |
+| `cascadia-api/src/ai/tools/permission-wrapper.ts`       | Permission checking and audit logging wrapper                           |
+| `cascadia-api/src/ai/tools/index.ts`                    | Tool assembly and exports                                               |
+| `cascadia-api/src/db/schema/ai.ts`                      | Database schema for sessions, messages, settings, usage logs            |
+| `cascadia-web/src/components/ai/ChatPanel.tsx`          | Main chat sidebar component                                             |
+| `cascadia-web/src/components/ai/ChatMessage.tsx`        | Message rendering with Markdown and tool results                        |
+| `cascadia-web/src/components/ai/ChatInput.tsx`          | Input component with Send/Search modes                                  |
+| `cascadia-web/src/components/ai/ChatPanelButton.tsx`    | Edge button to open the panel                                           |
+| `cascadia-web/src/components/ai/ConfirmationCard.tsx`   | Confirmation UI for write operations                                    |
+| `cascadia-api/src/server/routes/ai.ts`                  | Chat, session, message history, and settings endpoints                  |
+| `cascadia-api/src/ai/tools/dialog-definitions.ts`       | `request_user_input` and `suggest_actions` definitions                  |
+| `cascadia-api/src/ai/tools/dialog-handlers.ts`          | Dialog tool handlers (validate, store, return descriptor)               |
+| `cascadia-commons/src/ai/dialogs.ts`                    | Dialog kinds, payloads, and model-input schemas (shared by api and web) |
+| `cascadia-api/src/ai/dialogs/DialogService.ts`          | Dialog storage and the `presentDialog()` seam                           |
+| `cascadia-api/src/ai/dialogs/builders.ts`               | Grid and graph payloads built from read-tool results                    |
+| `cascadia-web/src/components/ai/message-parts.ts`       | Matches tool results back to calls: offers, cards, dialogs              |
+| `cascadia-web/src/components/ai/dialogs/ChatDialog.tsx` | The dialog modal, with grid, graph, form, and actions views             |

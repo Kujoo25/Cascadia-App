@@ -13,6 +13,10 @@ import {
   XCircle,
 } from 'lucide-react'
 import type { TestCase } from '@cascadia/commons/items/types/testcase'
+import type {
+  SuspectReason,
+  SuspectReasonLabels,
+} from '@/components/items/suspect-links'
 import { apiFetch } from '@/api/client'
 import {
   entitySubQuery,
@@ -21,6 +25,12 @@ import {
 } from '@/query'
 import { useDebouncedValue } from '@/hooks/useDebouncedValue'
 import { useErrorHandler } from '@/hooks/useErrorHandler'
+import {
+  AffirmAllButton,
+  AffirmButton,
+  SuspectBadge,
+  useAffirmLinks,
+} from '@/components/items/suspect-links'
 import {
   Badge,
   Button,
@@ -34,6 +44,16 @@ import {
 
 interface VerifyingTest extends TestCase {
   executionStatus?: 'NotRun' | 'Passed' | 'Failed' | 'Blocked'
+  relationshipId?: string
+  /** The claim is stale: one end revised since it was last affirmed. */
+  suspect?: boolean
+  suspectReasons?: Array<SuspectReason>
+}
+
+// On this panel the link runs test case → requirement.
+const SUSPECT_REASON_LABELS: SuspectReasonLabels = {
+  source_revised: 'the test case changed since this link was affirmed',
+  target_revised: 'the requirement revised since this link was affirmed',
 }
 
 interface RequirementVerificationPanelProps {
@@ -53,6 +73,11 @@ export function RequirementVerificationPanel({
   const [linking, setLinking] = useState<string | null>(null)
   const [unlinking, setUnlinking] = useState<string | null>(null)
   const invalidate = useInvalidateResources()
+  // Affirming is a review record, not an edit of the link, so it is offered
+  // whenever the link is suspect — no checkout, no version context.
+  const { affirm, pendingIds } = useAffirmLinks({
+    invalidates: ['requirements'],
+  })
 
   // The tests that verify this requirement
   const { data: verifyingTests = [], isPending: loading } = useQuery(
@@ -113,6 +138,10 @@ export function RequirementVerificationPanel({
     }
   }
 
+  const suspectIds = verifyingTests.flatMap((t) =>
+    t.suspect && t.relationshipId ? [t.relationshipId] : [],
+  )
+
   const getStatusIcon = (status?: string) => {
     switch (status) {
       case 'Passed':
@@ -163,16 +192,24 @@ export function RequirementVerificationPanel({
               Test cases that verify this requirement
             </CardDescription>
           </div>
-          {isEditable && !showSearch && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowSearch(true)}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Link Test
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            <AffirmAllButton
+              relationshipIds={suspectIds}
+              pendingIds={pendingIds}
+              onAffirm={affirm}
+              title="Record that every suspect test still verifies the requirement as it now stands"
+            />
+            {isEditable && !showSearch && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowSearch(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Link Test
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -300,7 +337,21 @@ export function RequirementVerificationPanel({
                   >
                     {test.executionStatus || 'Not Run'}
                   </Badge>
+                  {test.suspect && (
+                    <SuspectBadge
+                      reasons={test.suspectReasons}
+                      labels={SUSPECT_REASON_LABELS}
+                    />
+                  )}
                 </Link>
+                {test.suspect && test.relationshipId && (
+                  <AffirmButton
+                    relationshipId={test.relationshipId}
+                    pendingIds={pendingIds}
+                    onAffirm={affirm}
+                    title="Record that this test still verifies the requirement as it now stands"
+                  />
+                )}
                 {isEditable && (
                   <Button
                     variant="ghost"

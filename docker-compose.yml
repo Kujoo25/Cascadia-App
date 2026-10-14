@@ -89,7 +89,7 @@ services:
     # no-op on every boot after the first, so a separate service would
     # duplicate the whole image/env block for no concurrency this stack can
     # have.
-    command: sh -c "tsx scripts/boot-migrate.ts && npm run serve"
+    command: sh -c "node scripts/app-tsx.mjs scripts/boot-migrate.ts && npm run serve"
 
   # RabbitMQ for background jobs
   rabbitmq:
@@ -207,7 +207,7 @@ services:
 
   # Optional: pgAdmin for database management
   pgadmin:
-    image: docker.io/dpage/pgadmin4:latest@sha256:2f4ce946ddf8360680d7eff4eaba1d91859eb6b4003e6623bad5c63a322c2f4d
+    image: docker.io/dpage/pgadmin4:latest@sha256:c332c5f6dfba995d9ebc4af261d93506d6876085d712eaaa3defc8dd1a3f26de
     container_name: cascadia-pgadmin
     restart: unless-stopped
     profiles:

@@ -2,41 +2,31 @@
 // Copyright (c) 2026 Cascadia PLM LLC
 
 //
-// Generate or verify the committed OpenAPI v1 snapshot. The snapshot is the
-// frozen contract for v1 of the Cascadia API; any drift surfaces in PR review.
+// Generate or verify the committed OpenAPI v1 snapshots.
+//
+// `docs/api/openapi.v1.json` is the frozen v1 contract of the community
+// edition. It is the same file in every tree, whichever edition the tree
+// composes: a tree that composes an edition with licensed modules carries that
+// edition's contract as well, beside its composition root
+// (`<app directory>/openapi.v1.json`) — the community contract plus the
+// endpoints the modules contribute. `openapi:check` verifies every snapshot
+// the tree has an app for, so a route change lands with both regenerated.
 //
 // Usage:
-//   npm run openapi:snapshot          # writes docs/api/openapi.v1.json
-//   npm run openapi:check             # fails on a stale snapshot
-//   tsx scripts/snapshot-openapi.ts --print | jq '.info'   # debug
+//   npm run openapi:snapshot                              # writes every snapshot this tree has an app for
+//   npm run openapi:check                                 # fails on a stale snapshot, any of them
+//   tsx scripts/snapshot-openapi.ts --print | jq '.info'  # the community spec, to stdout
+//   tsx scripts/snapshot-openapi.ts --app <name> --out <path> [--check|--print]
 //
-// One committed snapshot, describing whichever edition this tree builds. This
-// file ships to the published repository, where it means exactly the same
-// thing — so it must not reference the publishing machinery. The check that
-// the *derived* community contract matches a real community build lives in
-// `publish/check-derived-openapi.mjs`, which is dropped from the artefact.
+// Registering an app's modules is additive and global, and contributed routes
+// mount while the server is being built, so one process can describe exactly
+// one edition. Asked for every snapshot, this script runs itself once per app,
+// community first.
 
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
-import { appDir, resolveApp } from './edition.mjs'
-
-// Silence the application's pino logger so it doesn't interleave with the
-// generated JSON on stdout. Must precede the dynamic import below.
-process.env.LOG_LEVEL = process.env.LOG_LEVEL ?? 'silent'
-
-// Attach licensed modules before the app is imported, so their contributed
-// routes appear in the spec. The order is load-bearing — route contributions
-// mount while the routers are being built. See the note in `src/server/dev.ts`.
-//
-// This makes the snapshot edition-specific by construction: it describes what
-// *this* build serves. The published core repo, having no modules to register,
-// generates a spec without them, which is exactly right.
-//
-// The app is resolved at runtime rather than named: naming the enterprise one
-// outright would break a core-only tree, where this must still describe the
-// community edition. `--app <name>` overrides it, so this tree can also build
-// the community spec for `--check-derived`. A flag rather than an env var:
-// setting one cross-platform in an npm script needs a dependency.
+import { appDir, appTsconfig, resolveApp } from './edition.mjs'
 
 /** The value after `name`, or undefined. Bind, then guard — see CLAUDE.md. */
 function flagValue(name: string): string | undefined {
@@ -44,21 +34,75 @@ function flagValue(name: string): string | undefined {
   return at === -1 ? undefined : process.argv[at + 1]
 }
 
-const edition = flagValue('--app') ?? resolveApp()
+const args = new Set(process.argv.slice(2))
+const REPO = resolve(import.meta.dirname, '..')
+const COMMUNITY_APP = 'cascadia'
+
+/** Where an app's contract is committed. */
+function snapshotPathFor(app: string): string {
+  return app === COMMUNITY_APP
+    ? resolve(REPO, 'docs', 'api', 'openapi.v1.json')
+    : resolve(REPO, appDir(app), 'openapi.v1.json')
+}
+
+const explicitApp = flagValue('--app')
+
+// No app named: do every snapshot this tree has an app for, one child per
+// app. The community app exists in every tree; the composed edition is a
+// second app only where one is present (`CASCADIA_APP` overrides, as it does
+// for every other edition-aware script). Each child runs under its app's
+// tsconfig, which is what resolves `@/` inside the modules that app composes.
+if (explicitApp === undefined) {
+  const composed = resolveApp()
+  const mode = args.has('--check')
+    ? '--check'
+    : args.has('--print')
+      ? '--print'
+      : null
+  const apps =
+    mode === '--print' || composed === COMMUNITY_APP
+      ? [COMMUNITY_APP]
+      : [COMMUNITY_APP, composed]
+  for (const app of apps) {
+    execFileSync(
+      'npx',
+      [
+        'tsx',
+        '--tsconfig',
+        appTsconfig(app),
+        'scripts/snapshot-openapi.ts',
+        '--app',
+        app,
+        '--out',
+        snapshotPathFor(app),
+        ...(mode ? [mode] : []),
+      ],
+      { cwd: REPO, stdio: 'inherit', shell: process.platform === 'win32' },
+    )
+  }
+  process.exit(0)
+}
+
+// Silence the application's pino logger so it doesn't interleave with the
+// generated JSON on stdout. Must precede the dynamic import below.
+process.env.LOG_LEVEL = process.env.LOG_LEVEL ?? 'silent'
+
+// Attach the app's modules before the server is imported, so their contributed
+// routes appear in the spec. The order is load-bearing — route contributions
+// mount while the routers are being built. See the note in `src/server/dev.ts`.
+// The community app registers nothing, which is what makes its spec the
+// community contract in a tree that also composes modules.
 const { registerModules } = (await import(
-  `../${appDir(edition)}/src/modules.server`
+  `../${appDir(explicitApp)}/src/modules.server`
 )) as { registerModules: () => void }
 registerModules()
 
 const { default: app } = await import('@cascadia/api/server')
 
-// `--out <path>` overrides the destination, for generating the community
-// snapshot from this tree. Default is the canonical path, which is also what
-// the published tree checks against.
 const outPath = flagValue('--out')
 const SNAPSHOT_PATH = outPath
   ? resolve(process.cwd(), outPath)
-  : resolve(import.meta.dirname, '..', 'docs', 'api', 'openapi.v1.json')
+  : snapshotPathFor(explicitApp)
 
 /**
  * Recursively sort object keys so the serialized snapshot is order-stable
@@ -85,8 +129,6 @@ async function generate(): Promise<string> {
   return JSON.stringify(sortKeys(spec), null, 2) + '\n'
 }
 
-const args = new Set(process.argv.slice(2))
-
 const generated = await generate()
 
 if (args.has('--print')) {
@@ -110,7 +152,7 @@ if (args.has('--check')) {
     )
     process.exit(1)
   }
-  console.log('OpenAPI snapshot is up to date.')
+  console.log(`OpenAPI snapshot is up to date: ${SNAPSHOT_PATH}`)
   process.exit(0)
 }
 

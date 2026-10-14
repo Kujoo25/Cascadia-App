@@ -85,6 +85,14 @@ export {
   type WorkOrderSignOffSubmittedPayload,
 } from './definitions/work-orders'
 export {
+  REQUIREMENT_VERIFICATION_CHANGED,
+  TEST_EXECUTED,
+  requirementVerificationChangedPayloadSchema,
+  testExecutedPayloadSchema,
+  type RequirementVerificationChangedPayload,
+  type TestExecutedPayload,
+} from './definitions/verification'
+export {
   DESIGN_CREATED,
   PROGRAM_CREATED,
   designCreatedPayloadSchema,

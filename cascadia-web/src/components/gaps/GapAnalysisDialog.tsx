@@ -66,6 +66,12 @@ const gapTypeOptions: Array<{
     description: 'Requirements without test cases',
   },
   {
+    value: 'suspect_requirement',
+    label: 'Suspect Trace Links',
+    description:
+      'Requirements with a claim whose end revised since it was affirmed',
+  },
+  {
     value: 'untested_part',
     label: 'Untested Parts',
     description: 'Parts without validation test cases',
@@ -121,6 +127,7 @@ export function GapAnalysisDialog({
     'unallocated_requirement',
     'unsatisfied_requirement',
     'unverified_requirement',
+    'suspect_requirement',
     'untested_part',
     'unmapped_ebom_item',
     'orphan_mbom_item',

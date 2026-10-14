@@ -15,9 +15,13 @@ import { ItemService } from '@/items/services/ItemService'
 import { getResourceType } from '@/items/item-type-resources'
 import { ItemRelationshipService } from '@/items/services/ItemRelationshipService'
 import { ImpactAssessmentService } from '@/items/services/ImpactAssessmentService'
+import { isSuspectable } from '@/items/trace-affirmation'
 import { BranchService } from '@/services/BranchService'
 import { VersionResolver } from '@/services/VersionResolver'
-import { RequirementService } from '@/services/RequirementService'
+import {
+  RequirementService,
+  suspectFields,
+} from '@/services/RequirementService'
 import {
   ImpactAnalysisService,
   impactAnalysisRequestSchema,
@@ -100,7 +104,7 @@ const syncPropertiesSchema = z.object({
 //
 // The RBAC tuple below — and on the seven other reads in this file, which
 // point back at this note — cannot be declared statically in `apiHandler`
-// options: /items/:id/* serves all 13 item types, so a fixed
+// options: /items/:id/* serves all 14 item types, so a fixed
 // ['parts', 'read'] would charge the wrong resource for a Document and let a
 // parts-only key read one. Dispatch on the row `requireItemAccess` already
 // returned, the way GET /api/v1/items/:id and GET /:id/thumbnail do;
@@ -111,7 +115,7 @@ const syncPropertiesSchema = z.object({
 // RBAC block on `if (options.permission)`, so role permissions were never
 // consulted and a scoped API key had nothing to intersect against. No seeded
 // role moves — Administrator, Power User, Approver, User and View Only each
-// hold `read` on all thirteen item resources — so what the tuple constrains
+// hold `read` on all fourteen item resources — so what the tuple constrains
 // is scoped API keys and customer-defined roles. On a WorkOrder or
 // PhysicalPart id it is more than that: it is the only check these routes
 // have, because `requireItemAccess` has no arm for either type.
@@ -494,7 +498,7 @@ app.post(
     apiHandler<{ id: string }, z.infer<typeof lockBodySchema>>(
       // The tuple for this route — and for the three writes below it,
       // /:id/relationships, /:id/sync-properties and /:id/unlock — cannot be
-      // declared statically: /items/:id/* serves all 13 item types, so a
+      // declared statically: /items/:id/* serves all 14 item types, so a
       // fixed ['parts','update'] would charge the wrong resource for a
       // Document and let a parts-only key rewrite one. Dispatch on the row
       // `requireItemAccess` already returns, the way GET /api/v1/items/:id
@@ -616,7 +620,22 @@ app.get(
             relationshipType,
           )
 
-      return { relationships }
+      // A trace claim among them carries its suspect flag, as every
+      // dedicated trace reader does; the lookup is confined to the types
+      // whose claims can go stale, so a BOM read pays nothing for it.
+      const states = await ItemRelationshipService.suspectStatesFor(
+        relationships
+          .filter((rel) => isSuspectable(rel.relationshipType))
+          .map((rel) => rel.id),
+      )
+
+      return {
+        relationships: relationships.map((rel) =>
+          isSuspectable(rel.relationshipType)
+            ? { ...rel, ...suspectFields(states, rel.id) }
+            : rel,
+        ),
+      }
     }),
   ),
 )

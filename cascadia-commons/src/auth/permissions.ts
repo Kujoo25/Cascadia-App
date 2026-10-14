@@ -19,6 +19,7 @@ export type ResourceType =
   | 'change_orders'
   | 'designs'
   | 'requirements'
+  | 'system_elements'
   | 'tasks'
   | 'tools'
   | 'software'
@@ -55,6 +56,7 @@ const RESOURCE_TYPE_MAP: Record<ResourceType, true> = {
   change_orders: true,
   designs: true,
   requirements: true,
+  system_elements: true,
   tasks: true,
   tools: true,
   software: true,
@@ -149,6 +151,10 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
         resource: 'requirements',
         actions: ['create', 'read', 'update', 'delete', 'approve'],
       },
+      {
+        resource: 'system_elements',
+        actions: ['create', 'read', 'update', 'delete', 'approve'],
+      },
       { resource: 'tasks', actions: ['create', 'read', 'update', 'delete'] },
       { resource: 'tools', actions: ['create', 'read', 'update', 'delete'] },
       {
@@ -221,6 +227,10 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
         resource: 'requirements',
         actions: ['create', 'read', 'update', 'delete'],
       },
+      {
+        resource: 'system_elements',
+        actions: ['create', 'read', 'update', 'delete'],
+      },
       { resource: 'tasks', actions: ['create', 'read', 'update', 'delete'] },
       { resource: 'tools', actions: ['create', 'read', 'update', 'delete'] },
       { resource: 'software', actions: ['create', 'read', 'update', 'delete'] },
@@ -263,6 +273,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
       { resource: 'change_orders', actions: ['read', 'update'] },
       { resource: 'designs', actions: ['read', 'update'] },
       { resource: 'requirements', actions: ['read', 'update', 'approve'] },
+      { resource: 'system_elements', actions: ['read', 'update', 'approve'] },
       { resource: 'tasks', actions: ['read', 'update'] },
       { resource: 'tools', actions: ['read', 'update'] },
       { resource: 'software', actions: ['read', 'update', 'approve'] },
@@ -288,6 +299,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
       { resource: 'change_orders', actions: ['create', 'read'] },
       { resource: 'designs', actions: ['create', 'read', 'update'] },
       { resource: 'requirements', actions: ['create', 'read', 'update'] },
+      { resource: 'system_elements', actions: ['create', 'read', 'update'] },
       { resource: 'tasks', actions: ['create', 'read', 'update'] },
       { resource: 'tools', actions: ['create', 'read', 'update'] },
       { resource: 'software', actions: ['create', 'read', 'update'] },
@@ -313,6 +325,7 @@ export const ROLE_DEFINITIONS: Record<RoleName, RoleDefinition> = {
       { resource: 'change_orders', actions: ['read'] },
       { resource: 'designs', actions: ['read'] },
       { resource: 'requirements', actions: ['read'] },
+      { resource: 'system_elements', actions: ['read'] },
       { resource: 'tasks', actions: ['read'] },
       { resource: 'tools', actions: ['read'] },
       { resource: 'software', actions: ['read'] },

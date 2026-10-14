@@ -66,7 +66,7 @@ function isJsonValue(value: unknown): boolean {
  *
  * Hand-written rather than the obvious `z.lazy` union over `JsonValue`: a
  * recursive type here propagates into `BaseItem.attributes`, which the
- * thirteen item type schemas `.extend()` and several hundred assignments
+ * fourteen item type schemas `.extend()` and several hundred assignments
  * check against. Measured, that exhausts a 10 GB `tsc` heap - so the static
  * type stays flat and the JSON-ness is enforced at runtime instead. `unknown`
  * is the honest static type for arbitrary JSON anyway: it forces every reader

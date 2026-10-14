@@ -7,9 +7,12 @@ import {
   ISSUE_FIELDS,
   MAX_IMPORT_ROWS,
   PART_FIELDS,
+  REQUIREMENT_FIELDS,
   importDocumentsRequestSchema,
   importIssuesRequestSchema,
   importPartsWithBomRequestSchema,
+  importRequirementsRequestSchema,
+  planRequirementHierarchy,
 } from '@cascadia/commons/import'
 import {
   optionConditionKey,
@@ -19,6 +22,7 @@ import { tagged } from '../adapter'
 import type { BaseItem } from '@cascadia/commons/items/types/base'
 import type {
   BomImportResult,
+  ImportRequirementsResult,
   ImportResult,
   ItemFieldConfig,
 } from '@cascadia/commons/import'
@@ -622,8 +626,203 @@ app.post(
   ),
 )
 
+// POST /api/import/requirements
+app.post(
+  '/requirements',
+  adapt(
+    apiHandler(
+      {
+        permission: ['requirements', 'create'],
+        body: importRequirementsRequestSchema,
+      },
+      async ({ body, request, user }) => {
+        const userId = user.id
+        const {
+          designId,
+          branchId,
+          rows,
+          bypassBranchProtection,
+          importAsReleased,
+        } = body
+
+        if (importAsReleased && branchId) {
+          throw new ValidationError(
+            'Existing formal releases must be imported directly to main; do not provide a branch ID',
+          )
+        }
+
+        await requireDesignAccess(user.id, designId)
+        if (branchId) {
+          await requireBranchAccess(user.id, branchId)
+        }
+        if (bypassBranchProtection || importAsReleased) {
+          await requireRole(request, 'Administrator')
+        }
+        if (rows.length > MAX_IMPORT_ROWS) {
+          throw new ValidationError(
+            `Maximum ${MAX_IMPORT_ROWS} rows per import`,
+          )
+        }
+
+        const designStatus = await DesignService.getProtectionStatus(designId)
+        const isPostRelease = designStatus.phase === 'post-release'
+        if (
+          isPostRelease &&
+          !bypassBranchProtection &&
+          !importAsReleased &&
+          !branchId
+        ) {
+          throw new ValidationError(
+            'Branch ID is required for post-release designs',
+          )
+        }
+
+        const result: ImportRequirementsResult = {
+          totalRows: rows.length,
+          successCount: 0,
+          errorCount: 0,
+          createdItems: [],
+          failedRows: [],
+          parentsLinked: 0,
+        }
+        const failedRowNumbers = new Set<number>()
+        const fail = (rowNumber: number, message: string) => {
+          result.errorCount++
+          result.failedRows.push({ rowNumber, errors: [message] })
+          failedRowNumbers.add(rowNumber)
+        }
+
+        // Parents first. The plan orders the sheet so a parent is created
+        // before its children, and names the rows no order can satisfy — a
+        // row that is its own parent, a chain of parents that loops.
+        const plan = planRequirementHierarchy(
+          rows.map((row, i) => ({
+            rowNumber: i + 2,
+            itemNumber: row.itemNumber,
+            parentItemNumber: row.parentItemNumber,
+          })),
+        )
+        for (const [rowNumber, message] of plan.errors) fail(rowNumber, message)
+
+        // A parent the sheet names but does not define is one the design
+        // already holds — looked up by exact item number, current rows only,
+        // the way the BOM import resolves an external parent.
+        const existingByNumber =
+          plan.externalParents.length > 0
+            ? await ItemService.findIdsByItemNumbers(plan.externalParents, {
+                designIds: [designId],
+                currentOnly: true,
+              })
+            : new Map<string, string>()
+        const createdByNumber = new Map<string, string>()
+
+        for (const rowNumber of plan.order) {
+          const row = rows[rowNumber - 2]!
+          let parentRequirementId: string | undefined
+          if (row.parentItemNumber) {
+            const key = row.parentItemNumber.trim().toLowerCase()
+            const parentRow = plan.parentRow.get(rowNumber)
+            if (parentRow !== undefined) {
+              if (failedRowNumbers.has(parentRow)) {
+                fail(
+                  rowNumber,
+                  `Parent requirement ${row.parentItemNumber} (row ${parentRow}) was not imported`,
+                )
+                continue
+              }
+              parentRequirementId = createdByNumber.get(key)
+            } else {
+              parentRequirementId = existingByNumber.get(key)
+            }
+            if (!parentRequirementId) {
+              fail(
+                rowNumber,
+                `Parent requirement not found: ${row.parentItemNumber}`,
+              )
+              continue
+            }
+          }
+
+          try {
+            const requirementData = {
+              itemType: 'Requirement' as const,
+              designId,
+              name: row.name,
+              revision: row.revision || '-',
+              itemNumber: row.itemNumber,
+              description: row.description,
+              type: row.type,
+              priority: row.priority,
+              category: row.category,
+              source: row.source,
+              acceptanceCriteria: row.acceptanceCriteria,
+              verificationMethod: row.verificationMethod,
+              parentRequirementId,
+              attributes: row.attributes,
+            }
+
+            let createdItem: BaseItem
+            if (branchId && !bypassBranchProtection && !importAsReleased) {
+              const branchResult = await ItemService.createOnBranch(
+                'Requirement',
+                requirementData,
+                branchId,
+                `Imported requirement: ${row.name}`,
+                userId,
+              )
+              createdItem = branchResult.item
+            } else {
+              createdItem = await ItemService.create(
+                'Requirement',
+                requirementData,
+                userId,
+                {
+                  bypassBranchProtection:
+                    bypassBranchProtection || importAsReleased,
+                  importAsReleased,
+                },
+              )
+            }
+
+            result.successCount++
+            result.createdItems.push({
+              rowNumber,
+              itemId: createdItem.id!,
+              itemNumber: createdItem.itemNumber!,
+            })
+            if (parentRequirementId) result.parentsLinked++
+            if (createdItem.itemNumber) {
+              createdByNumber.set(
+                createdItem.itemNumber.trim().toLowerCase(),
+                createdItem.id!,
+              )
+            }
+          } catch (error) {
+            console.error(`Import row ${rowNumber} failed:`, error)
+            fail(
+              rowNumber,
+              importErrorMessage(error, 'Failed to create requirement'),
+            )
+          }
+        }
+
+        // The sheet's order back, so a caller reads failures top to bottom.
+        result.failedRows.sort((a, b) => a.rowNumber - b.rowNumber)
+
+        let status = 201
+        if (result.errorCount > 0 && result.successCount > 0) {
+          status = 207
+        } else if (result.errorCount > 0 && result.successCount === 0) {
+          status = 400
+        }
+        return jsonResponse({ result }, status)
+      },
+    ),
+  ),
+)
+
 /**
- * One template response for all three item-type endpoints: a header row plus
+ * One template response for all four item-type endpoints: a header row plus
  * an example row built from the field config, as CSV (default) or a real
  * XLSX workbook. `format=xlsx` used to silently return CSV; the parameter
  * now means what it says, and an unknown format is a 400 rather than a
@@ -688,6 +887,18 @@ app.get(
       const url = new URL(request.url)
       const format = url.searchParams.get('format') || 'csv'
       return templateResponse(ISSUE_FIELDS, 'issues', format)
+    }),
+  ),
+)
+
+// GET /api/import/templates/requirements
+app.get(
+  '/templates/requirements',
+  adapt(
+    apiHandler({ public: true }, async ({ request }) => {
+      const url = new URL(request.url)
+      const format = url.searchParams.get('format') || 'csv'
+      return templateResponse(REQUIREMENT_FIELDS, 'requirements', format)
     }),
   ),
 )

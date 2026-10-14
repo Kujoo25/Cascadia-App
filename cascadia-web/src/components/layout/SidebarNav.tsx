@@ -23,6 +23,7 @@ import {
   KeyRound,
   Layers,
   ListChecks,
+  Network,
   Package,
   Radio,
   RotateCcw,
@@ -178,6 +179,15 @@ export function SidebarNav({
         to="/requirements"
         icon={ListChecks}
         label="Requirements"
+        isOpen={isOpen}
+        iconSize={iconSize}
+        onClick={onNavClick}
+      />
+
+      <SidebarNavItem
+        to="/system-elements"
+        icon={Network}
+        label="System Elements"
         isOpen={isOpen}
         iconSize={iconSize}
         onClick={onNavClick}

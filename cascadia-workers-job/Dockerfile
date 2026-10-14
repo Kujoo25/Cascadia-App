@@ -4,27 +4,30 @@
 # =============================================================================
 # Stage 1: Workspace manifests
 # =============================================================================
-# The single copy of the manifest list. Two stages below install from it, and
-# each used to carry its own transcription of it — so a workspace that was
-# renamed or deleted had to be fixed in two places, and the deleted
-# `cad-generation` duly outlived its package in both. An empty base
-# image because nothing here runs: this stage is a file list the other stages
-# read, not a layer either of them inherits.
-FROM scratch AS manifests
+# The single copy of the manifest list, discovered rather than written: every
+# top-level `cascadia-*/package.json` the build context carries, whichever
+# edition this tree composes. Two stages below install from it. The list used
+# to be transcribed by hand, once per stage and then once per edition, and a
+# workspace that was renamed or deleted had to be fixed in every copy; the
+# deleted `cad-generation` outlived its package that way. Nothing here runs:
+# this stage is a file list the other stages read, not a layer either of them
+# inherits. See cascadia-app/Dockerfile for the caching note; the two files
+# keep this stage instruction-identical so the builds share its layers.
+FROM docker.io/library/node:22-alpine@sha256:c610fcdfb1d5b4740dd70c284ed3cb16bb857e0f7166196e36a5501df7a3aa32 AS manifests
 
-COPY package.json package-lock.json ./
+WORKDIR /src
+COPY . .
 
-# Workspace manifests, before the install: `npm ci` in a workspace root reads
-# them to know what each workspace depends on. Without them it succeeds and
-# quietly installs only the root's dependencies. Listed one per line rather than
-# globbed because `COPY cascadia-*/…` flattens the paths. A new workspace
-# belongs here too. (Every workspace is a top-level `cascadia-*` directory;
-# the two Python workers have no manifest and are not npm workspaces.)
-COPY cascadia-commons/package.json ./cascadia-commons/
-COPY cascadia-api/package.json ./cascadia-api/
-COPY cascadia-web/package.json ./cascadia-web/
-COPY cascadia-workers-job/package.json ./cascadia-workers-job/
-COPY cascadia-app/package.json ./cascadia-app/
+# Root manifests, then every workspace manifest under its own directory, before
+# the install: `npm ci` in a workspace root reads them to know what each
+# workspace depends on. Without them it succeeds and quietly installs only the
+# root's dependencies. (Every npm workspace is a top-level `cascadia-*`
+# directory with a package.json; the Python workers have none and are not npm
+# workspaces, so the glob leaves them out.)
+RUN mkdir /manifests && cp package.json package-lock.json /manifests/ && \
+    for f in cascadia-*/package.json; do \
+      mkdir -p "/manifests/${f%/*}" && cp "$f" "/manifests/$f"; \
+    done
 
 # =============================================================================
 # Stage 2: Dependencies
@@ -36,7 +39,7 @@ WORKDIR /app
 # Root manifests plus every workspace manifest, from the stage that owns the
 # list. Building this stage alone therefore proves the whole list resolves,
 # which is what CI's Docker Build Smoke job does on every run.
-COPY --from=manifests / ./
+COPY --from=manifests /manifests/ ./
 
 # Install all dependencies
 RUN npm ci
@@ -54,9 +57,17 @@ COPY . .
 
 # Build application (increase heap for large TanStack Start builds)
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-# Which edition's job handlers this worker carries. See cascadia-app/Dockerfile.
-ARG APP=cascadia
-RUN npm run build:app -- "$APP"
+# Which edition's job handlers this worker carries. Empty by default: given no
+# name, scripts/build-app.mjs resolves the edition this tree composes, so one
+# Dockerfile builds whichever edition the context carries. See
+# cascadia-app/Dockerfile. Unquoted on purpose: an empty value must expand to
+# no argument at all, not to an empty one.
+ARG APP=
+RUN npm run build:app -- $APP
+
+# Record which app was built, for the runtime command: an ARG does not cross
+# stages (scripts/docker-entrypoint.sh exports it from this file).
+RUN echo "${APP:-$(node --input-type=module -e "import { resolveApp } from './scripts/edition.mjs'; console.log(resolveApp())")}" > .edition
 
 # =============================================================================
 # Stage 4: Runtime dependencies
@@ -81,7 +92,7 @@ RUN apk add --no-cache \
 # The same manifest list the deps stage installed from — see stage 1. This
 # install differs only in its flags, never in what it is told the workspaces
 # are.
-COPY --from=manifests / ./
+COPY --from=manifests /manifests/ ./
 
 # Production deps only, lifecycle scripts off — the same policy as
 # cascadia-app/Dockerfile. Nothing in the runtime tree needs a postinstall:
@@ -102,6 +113,10 @@ COPY --from=builder /app/.output ./.output
 
 # Copy job-related code
 COPY --from=builder /app/cascadia-api/src/db ./cascadia-api/src/db
+
+# The edition marker and the entrypoint that reads it
+COPY --from=builder /app/.edition ./.edition
+COPY --from=builder /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -128,11 +143,8 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=20s --retries=3 \
 LABEL org.opencontainers.image.title="Cascadia PLM - Jobs Server"
 LABEL org.opencontainers.image.description="Background job workers for Cascadia PLM"
 
-ENTRYPOINT ["dumb-init", "--"]
-
-# Start jobs worker
-# Re-declared: an ARG from an earlier stage is not in scope here. Shell form so
+# The entrypoint exports APP from the builder's `.edition` marker unless the
+# caller set it, then hands off to dumb-init. Shell form for the command so
 # ${APP} expands — the exec form would pass it literally.
-ARG APP=cascadia
-ENV APP=${APP}
-CMD node .output/${APP}/server/jobs-worker.mjs
+ENTRYPOINT ["sh", "/app/scripts/docker-entrypoint.sh"]
+CMD node ".output/${APP}/server/jobs-worker.mjs"

@@ -9,7 +9,7 @@ import { MAX_IMPORT_RELATIONSHIPS } from './constants'
 /**
  * Supported item types for import
  */
-export type ImportItemType = 'Part' | 'Document' | 'Issue'
+export type ImportItemType = 'Part' | 'Document' | 'Issue' | 'Requirement'
 
 /**
  * Context for import operations

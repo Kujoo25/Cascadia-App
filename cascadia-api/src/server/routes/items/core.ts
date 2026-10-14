@@ -123,7 +123,7 @@ const itemSearchQuerySchema = z.object({
  * empty, and an empty list matches nothing downstream. "No designs matched"
  * must not fall through to "search every design" — that is how
  * `designScope=library` used to return the whole catalogue on an instance with
- * no Standard Library.
+ * no library at all.
  */
 async function resolveDesignScope(
   scope: DesignScope | null,
@@ -137,10 +137,10 @@ async function resolveDesignScope(
   switch (scope) {
     case 'current':
       return contextDesignId ? [contextDesignId] : []
-    case 'library': {
-      const stdLib = await DesignService.getStandardLibrary()
-      return stdLib ? [stdLib.id] : []
-    }
+    // Every library, not only STD-LIB: BOM writes accept a target in any
+    // Library design, so the pickers must be able to offer one.
+    case 'library':
+      return DesignService.listLibraryIds()
     // 'all' asks for no narrowing at all; the access scope still applies.
     case 'all':
       return undefined

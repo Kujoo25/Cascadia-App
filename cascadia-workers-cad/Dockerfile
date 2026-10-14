@@ -1,7 +1,7 @@
 # Stage 1: Build conda environment with pythonocc-core
 # Base digests pinned (resolved 2026-08-27) so the fragile conda solve builds
 # from a known image; bump via `docker buildx imagetools inspect <image>`.
-FROM docker.io/condaforge/miniforge3:latest@sha256:3a41fcca7d6740df102951d9f122bf1a5f81170fdba234243060f72eb4891901 AS build
+FROM docker.io/condaforge/miniforge3:latest@sha256:f752860f77bd417aa4db35be3d2e906fdb740fb80f40755ed651fff9e8873aad AS build
 
 # Build context is the repo root (not this directory): the image also carries
 # the shared cascadia-workers-commons package alongside the worker source

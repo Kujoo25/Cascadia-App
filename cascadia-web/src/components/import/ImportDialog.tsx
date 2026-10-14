@@ -18,6 +18,7 @@ import {
   extractBomRelationships,
   getImportConfig,
   getValidRows,
+  validateRequirementHierarchy,
   validateRows,
 } from '@cascadia/commons/import'
 import { ContextSelectStep } from './steps/ContextSelectStep'
@@ -258,7 +259,14 @@ export function ImportDialog({
               importAsReleased: context?.importAsReleased,
             },
           )
-          setValidatedRows(validated)
+          // A requirement sheet carries its hierarchy; the plan that orders
+          // the import runs here too, so a loop or a parent row with errors
+          // shows in the preview rather than as a failed row afterwards.
+          setValidatedRows(
+            itemType === 'Requirement'
+              ? validateRequirementHierarchy(validated)
+              : validated,
+          )
 
           // Detect BOM format and extract relationships (only for Parts)
           if (config.supportsBom) {

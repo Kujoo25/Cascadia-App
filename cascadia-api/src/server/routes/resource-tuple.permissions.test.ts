@@ -10,7 +10,7 @@
  * route names: a Task route declaring `['parts', 'read']` passes both of its
  * legs. It did, for as long as the tuple was wrong.
  *
- * This suite measures the other axis. For each of the 13 item types it builds
+ * This suite measures the other axis. For each of the 14 item types it builds
  * two program members who differ only in RBAC:
  *
  *   ONLY-OWN     — every verb on that type's own resource, and nothing else.
@@ -49,7 +49,7 @@
  * `/physical-parts` (GET and PATCH, no DELETE) is covered for what it has.
  *
  * The type map is asserted exhaustive against `ITEM_TYPE_RESOURCES`, so a
- * fourteenth item type fails here until it is covered.
+ * fifteenth item type fails here until it is covered.
  *
  * Run: npx vitest run cascadia-api/src/server/routes/resource-tuple.permissions.test.ts
  */
@@ -71,6 +71,7 @@ import partsRoutes from './parts'
 import documentsRoutes from './documents'
 import changeOrdersRoutes from './change-orders'
 import requirementsRoutes from './requirements'
+import systemElementsRoutes from './system-elements'
 import tasksRoutes from './tasks'
 import testPlansRoutes from './test-plans'
 import testCasesRoutes from './test-cases'
@@ -134,6 +135,10 @@ describe('typed by-id routes declare their own RBAC resource', () => {
     Document: { mount: '/api/v1/documents', router: documentsRoutes },
     ChangeOrder: { mount: '/api/v1/change-orders', router: changeOrdersRoutes },
     Requirement: { mount: '/api/v1/requirements', router: requirementsRoutes },
+    SystemElement: {
+      mount: '/api/v1/system-elements',
+      router: systemElementsRoutes,
+    },
     Task: { mount: '/api/v1/tasks', router: tasksRoutes },
     TestPlan: { mount: '/api/v1/test-plans', router: testPlansRoutes },
     TestCase: { mount: '/api/v1/test-cases', router: testCasesRoutes },
@@ -256,6 +261,7 @@ describe('typed by-id routes declare their own RBAC resource', () => {
       Part: partId,
       Document: await make('Document'),
       Requirement: await make('Requirement'),
+      SystemElement: await make('SystemElement'),
       Task: await make('Task'),
       TestPlan: await make('TestPlan'),
       TestCase: await make('TestCase'),
@@ -295,7 +301,7 @@ describe('typed by-id routes declare their own RBAC resource', () => {
       ).physicalPart.id,
     }
 
-    // A fourteenth item type has to be given a fixture and a mount here before
+    // A fifteenth item type has to be given a fixture and a mount here before
     // it can ship ungated.
     expect(Object.keys(idForType).sort()).toEqual(
       Object.keys(ITEM_TYPE_RESOURCES).sort(),

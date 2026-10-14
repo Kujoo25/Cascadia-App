@@ -18,9 +18,10 @@ cascadia-web/src/api/openapi-types.gen.ts
 # JSON.stringify(spec, null, 2). Prettier collapses short arrays onto one
 # line, so formatting these files makes `npm run openapi:check` fail.
 #
-# Two of them: the API contract is edition-specific, and the second is the
-# community spec the overlay publishes in place of this tree's.
+# The first is the community contract, the same file in every tree; an
+# edition that composes modules commits its own beside its app.
 docs/api/openapi.v1.json
+cascadia-app*/openapi.v1.json
 
 # Claude Code worktrees under the primary checkout. Git hides them via
 # .git/info/exclude, which Prettier does not read — so a format:check run in

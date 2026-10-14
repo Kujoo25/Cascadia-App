@@ -37,8 +37,11 @@ registerTypeHandler('Requirement', {
       source: data.source || null,
       category: data.category || null,
       verificationMethod: data.verificationMethod || null,
-      verificationStatus: data.verificationStatus || null,
-      allocatedDesignId: data.allocatedDesignId || null,
+      // Derived, never taken from the caller: a new requirement verifies
+      // nothing yet (services/verification-rollup.ts recomputes it as links
+      // and executions arrive), and a waiver is its own request.
+      verificationStatus: 'NotStarted',
+      verificationWaiver: null,
       parentRequirementId: data.parentRequirementId || null,
     })
   },
@@ -68,10 +71,8 @@ registerTypeHandler('Requirement', {
     if (data.category !== undefined) updateData.category = data.category || null
     if (data.verificationMethod !== undefined)
       updateData.verificationMethod = data.verificationMethod || null
-    if (data.verificationStatus !== undefined)
-      updateData.verificationStatus = data.verificationStatus || null
-    if (data.allocatedDesignId !== undefined)
-      updateData.allocatedDesignId = data.allocatedDesignId || null
+    // `verificationStatus` and `verificationWaiver` are deliberately not
+    // writable here: the rollup and the waiver endpoint own them.
     if (data.parentRequirementId !== undefined)
       updateData.parentRequirementId = data.parentRequirementId || null
 

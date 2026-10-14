@@ -20,11 +20,12 @@ import {
   expect,
   it,
 } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { DesignService } from './DesignService'
 import type { TestUser } from '@/__tests__/fixtures/users'
 import { TestDatabase } from '@/__tests__/helpers/db'
 import { insertTestUser } from '@/__tests__/fixtures/users'
-import { items, programs } from '@/db/schema'
+import { designs, items, programs } from '@/db/schema'
 import { NotFoundError, ValidationError } from '@/errors'
 import { takeFirst } from '@/db/take-first'
 import '@/items/registerItemTypes.server'
@@ -743,6 +744,42 @@ describe('DesignService', () => {
       await expect(
         DesignService.createStandardLibrary(user.id),
       ).rejects.toThrow(ValidationError)
+    })
+  })
+
+  // ==========================================================================
+  // listLibraryIds()
+  // ==========================================================================
+
+  describe('listLibraryIds()', () => {
+    it('lists every non-archived library, not only STD-LIB', async () => {
+      const global = await createDesign({
+        programId: null,
+        name: 'Electrical Library',
+        designType: 'Library',
+      })
+      const inProgram = await createDesign({
+        name: 'Program Library',
+        designType: 'Library',
+      })
+      const archived = await createDesign({
+        programId: null,
+        name: 'Old Library',
+        designType: 'Library',
+      })
+      // archive() refuses every Library design, so archive it directly
+      await testDb.db
+        .update(designs)
+        .set({ isArchived: true })
+        .where(eq(designs.id, archived.id))
+      const engineering = await createDesign({ name: 'Not A Library' })
+
+      const ids = await DesignService.listLibraryIds()
+
+      expect(ids).toContain(global.id)
+      expect(ids).toContain(inProgram.id)
+      expect(ids).not.toContain(archived.id)
+      expect(ids).not.toContain(engineering.id)
     })
   })
 

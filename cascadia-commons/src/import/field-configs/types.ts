@@ -28,7 +28,7 @@ export interface ItemFieldConfig {
  */
 export interface ImportTypeConfig {
   /** The item type identifier */
-  itemType: 'Part' | 'Document' | 'Issue'
+  itemType: 'Part' | 'Document' | 'Issue' | 'Requirement'
   /** Fields available for this item type */
   fields: Array<ItemFieldConfig>
   /** Whether this item type requires a design context */

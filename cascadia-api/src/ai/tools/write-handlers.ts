@@ -22,6 +22,7 @@
 import { randomUUID } from 'node:crypto'
 
 import { eq } from 'drizzle-orm'
+import { catalogEntry } from '@cascadia/commons/items/relationships/catalog'
 import { parseOptionText } from '@cascadia/commons/types/variants'
 import { withWritePermissionAndAudit } from './permission-wrapper'
 import {
@@ -44,7 +45,12 @@ import type {
 import { AppError } from '@/errors'
 
 import { ChangeOrderService } from '@/items/services/ChangeOrderService'
+import { ItemRelationshipService } from '@/items/services/ItemRelationshipService'
 import { ItemService } from '@/items/services/ItemService'
+import {
+  SUSPECTABLE_RELATIONSHIP_TYPES,
+  isSuspectable,
+} from '@/items/trace-affirmation'
 import { BranchService } from '@/services/BranchService'
 import { DesignService } from '@/services/DesignService'
 import { LifecycleService } from '@/services/LifecycleService'
@@ -52,7 +58,7 @@ import { ProgramService } from '@/services/ProgramService'
 import { getResourceType } from '@/items/item-type-resources'
 import { aiLogger } from '@/logging/logger'
 import { db } from '@/db'
-import { programs } from '@/db/schema'
+import { itemRelationships, programs } from '@/db/schema'
 import { permissionService } from '@/auth/permission-service'
 import {
   requireChangeOrderAccess as requireChangeOrderAccess,
@@ -113,6 +119,12 @@ interface CreateRelationshipInput {
   referenceDesignator?: string
   option?: string
   targetMakeCode?: string
+  confirmed?: boolean
+  confirmationToken?: string
+}
+
+interface AffirmLinkInput {
+  relationshipId: string
   confirmed?: boolean
   confirmationToken?: string
 }
@@ -1256,5 +1268,148 @@ export const createProgramHandler = (
     'create_program',
     { resource: 'programs', action: 'create' },
     createProgramHandlerImpl,
+  )(input, context, meta)
+}
+
+// ============================================================================
+// affirm_link handler
+// ============================================================================
+
+type AffirmLinkResponse = WriteToolResponse & {
+  relationshipId?: string
+  suspect?: boolean
+  reasons?: Array<'source_revised' | 'target_revised'>
+}
+
+/** "PN-001 revised" / "REQ-004 revised": the end that moved, by number. */
+function suspectReasonText(
+  reasons: Array<'source_revised' | 'target_revised'>,
+  source: { itemNumber: string },
+  target: { itemNumber: string },
+): string {
+  return reasons
+    .map((reason) =>
+      reason === 'source_revised'
+        ? `${source.itemNumber} revised`
+        : `${target.itemNumber} revised`,
+    )
+    .join(', ')
+}
+
+async function affirmLinkHandlerImpl(
+  input: AffirmLinkInput,
+  context: ToolContext,
+): Promise<AffirmLinkResponse> {
+  try {
+    const [edge] = await db
+      .select()
+      .from(itemRelationships)
+      .where(eq(itemRelationships.id, input.relationshipId))
+      .limit(1)
+    if (!edge) {
+      return errorResponse(`Trace link ${input.relationshipId} not found`)
+    }
+    if (!isSuspectable(edge.relationshipType)) {
+      return errorResponse(
+        `${edge.relationshipType} links carry no affirmation; only ${[...SUSPECTABLE_RELATIONSHIP_TYPES].join(', ')} links can be affirmed`,
+      )
+    }
+
+    // Both ends gated at the instance level, before the preview names them.
+    const sourceItem = await ItemService.findById(edge.sourceId)
+    if (!sourceItem) {
+      return errorResponse(`Source item ${edge.sourceId} not found`)
+    }
+    await requireItemAccess(context.userId, sourceItem.id)
+    const targetItem = await ItemService.findById(edge.targetId)
+    if (!targetItem) {
+      return errorResponse(`Target item ${edge.targetId} not found`)
+    }
+    await requireItemAccess(context.userId, targetItem.id)
+
+    const state = (
+      await ItemRelationshipService.suspectStatesFor([edge.id])
+    ).get(edge.id)
+    const claim = `${sourceItem.itemNumber} ${catalogEntry(edge.relationshipType)?.label.toLowerCase() ?? edge.relationshipType} ${targetItem.itemNumber}`
+
+    if (!(await consumeConfirmation('affirm_link', input, context))) {
+      const info = [claim]
+      if (state?.suspect) {
+        info.push(
+          `Suspect: ${suspectReasonText(state.reasons, sourceItem, targetItem)}`,
+        )
+      } else {
+        info.push('Not suspect today; affirming records a fresh review')
+      }
+      return withConfirmationToken(
+        confirmationRequired(
+          'Affirm Trace Link',
+          {
+            action: 'affirm_link',
+            itemType: edge.relationshipType,
+            itemName: claim,
+            additionalInfo: info,
+          },
+          `Affirm that ${claim} still holds for the versions its ends now name?`,
+        ),
+        'affirm_link',
+        input,
+        context,
+      )
+    }
+
+    const affirmed = await ItemRelationshipService.affirmRelationship(
+      edge.id,
+      context.userId,
+    )
+    return {
+      requiresConfirmation: false,
+      success: true,
+      relationshipId: affirmed.relationship.id,
+      suspect: affirmed.state.suspect,
+      reasons: affirmed.state.reasons,
+      confirmationMessage: `Affirmed: ${claim}`,
+    }
+  } catch (e) {
+    return errorResponse(toErrorMessage(e, 'Failed to affirm trace link'))
+  }
+}
+
+/**
+ * `affirm_link`'s permission: `update` on the *source* item's own type, the
+ * tuple `POST /relationships/:id/affirm` charges. Resolved from the edge,
+ * since the caller names only the link; a missing edge falls back to `parts`
+ * for the reason `itemOwnUpdatePermission` does — the handler's own
+ * not-found message is the one the model needs.
+ */
+async function edgeSourceUpdatePermission(input: {
+  relationshipId: string
+}): Promise<PermissionSpec> {
+  const [edge] = await db
+    .select({ sourceId: itemRelationships.sourceId })
+    .from(itemRelationships)
+    .where(eq(itemRelationships.id, input.relationshipId))
+    .limit(1)
+  if (!edge) {
+    return { resource: 'parts', action: 'update' }
+  }
+  return itemOwnUpdatePermission(edge.sourceId)
+}
+
+export const affirmLinkHandler = (
+  input: AffirmLinkInput,
+  context: ToolContext,
+) => {
+  const meta: WriteOperationMeta = {
+    actionType: 'affirm_link',
+    affectedItemIds: [],
+    wasConfirmed: input.confirmationToken != null || (input.confirmed ?? false),
+    transactionId: randomUUID(),
+  }
+
+  return withWritePermissionAndAudit<AffirmLinkInput, AffirmLinkResponse>(
+    'affirm_link',
+    edgeSourceUpdatePermission,
+    affirmLinkHandlerImpl,
   )(input, context, meta)
 }

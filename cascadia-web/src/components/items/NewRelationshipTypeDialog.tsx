@@ -3,6 +3,10 @@
 
 import { useState } from 'react'
 import { Link2 } from 'lucide-react'
+import {
+  catalogEntriesFrom,
+  catalogEntry,
+} from '@cascadia/commons/items/relationships/catalog'
 import type { TargetItem } from '@/components/items/bom-target-scope'
 import {
   Dialog,
@@ -43,10 +47,14 @@ interface NewRelationshipTypeDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   itemId: string
+  /** The source item's type: decides which cataloged edges are offered. */
+  itemType?: string
   onSuccess: () => void
 }
 
-// Common relationship type suggestions
+// Common relationship type suggestions, offered after the cataloged types
+// the source item may be the source of. A cataloged type fixes the target
+// item types and its direction, so a trace claim cannot be stored backwards.
 const RELATIONSHIP_TYPE_SUGGESTIONS = [
   'BOM',
   'Child Part',
@@ -67,6 +75,7 @@ export function NewRelationshipTypeDialog({
   open,
   onOpenChange,
   itemId,
+  itemType: sourceItemType,
   onSuccess,
 }: NewRelationshipTypeDialogProps) {
   const { handleError, showError } = useErrorHandler()
@@ -75,6 +84,12 @@ export function NewRelationshipTypeDialog({
   const [customType, setCustomType] = useState('')
   const [searchQuery, setSearchQuery] = useState('')
   const [itemType, setItemType] = useState('Part')
+  const catalogSuggestions = sourceItemType
+    ? catalogEntriesFrom(sourceItemType)
+    : []
+  const genericSuggestions = RELATIONSHIP_TYPE_SUGGESTIONS.filter(
+    (type) => !catalogSuggestions.some((entry) => entry.value === type),
+  )
   const [selectedItem, setSelectedItem] = useState<TargetItem | null>(null)
   const [quantity, setQuantity] = useState('')
   const [referenceDesignator, setReferenceDesignator] = useState('')
@@ -84,7 +99,7 @@ export function NewRelationshipTypeDialog({
   const finalType =
     relationshipType === 'custom' ? customType : relationshipType
 
-  // Under BOM this is the source item's design plus the Standard Library —
+  // Under BOM this is the source item's design plus the libraries —
   // including when the user reaches BOM by typing it as a custom type
   const {
     scope: bomScope,
@@ -106,6 +121,13 @@ export function NewRelationshipTypeDialog({
     if ((nextFinal === BOM_RELATIONSHIP_TYPE) !== bomScope.active) {
       setSelectedItem(null)
     }
+    // A cataloged type names what it may point at; a pick made under a type
+    // that allowed something else must not be submitted under this one.
+    const nextEntry = catalogEntry(nextFinal)
+    if (nextEntry && !nextEntry.targetTypes.includes(itemType)) {
+      setItemType(nextEntry.targetTypes[0] ?? 'Part')
+      setSelectedItem(null)
+    }
     // A BOM line requires a quantity, so entering BOM fills the default in as
     // a real value — the placeholder `1` used to submit as null.
     if (nextFinal === BOM_RELATIONSHIP_TYPE && quantity.trim() === '') {
@@ -116,6 +138,12 @@ export function NewRelationshipTypeDialog({
   }
 
   const isBom = finalType === BOM_RELATIONSHIP_TYPE
+  const catalogedType = catalogEntry(finalType)
+  const targetTypeOptions = catalogedType
+    ? ITEM_TYPE_OPTIONS.filter((option) =>
+        catalogedType.targetTypes.includes(option.value),
+      )
+    : ITEM_TYPE_OPTIONS
   const quantityInvalid = isBom
     ? !isValidQuantity(quantity)
     : quantity.trim() !== '' && !isValidQuantity(quantity)
@@ -184,7 +212,13 @@ export function NewRelationshipTypeDialog({
                 <SelectValue placeholder="Select or create a type..." />
               </SelectTrigger>
               <SelectContent>
-                {RELATIONSHIP_TYPE_SUGGESTIONS.map((type) => (
+                {catalogSuggestions.map((entry) => (
+                  <SelectItem key={entry.value} value={entry.value}>
+                    {entry.label}{' '}
+                    <span className="text-slate-500">({entry.value})</span>
+                  </SelectItem>
+                ))}
+                {genericSuggestions.map((type) => (
                   <SelectItem key={type} value={type}>
                     {type}
                   </SelectItem>
@@ -192,6 +226,13 @@ export function NewRelationshipTypeDialog({
                 <SelectItem value="custom">Custom Type...</SelectItem>
               </SelectContent>
             </Select>
+            {catalogedType && (
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                {catalogedType.description}. Runs{' '}
+                {catalogedType.sourceTypes.join(', ')} →{' '}
+                {catalogedType.targetTypes.join(', ')}.
+              </p>
+            )}
           </div>
 
           {/* Custom Type Input */}
@@ -219,7 +260,7 @@ export function NewRelationshipTypeDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ITEM_TYPE_OPTIONS.map((option) => (
+                  {targetTypeOptions.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>

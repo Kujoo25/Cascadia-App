@@ -468,6 +468,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ai/dialogs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the payload behind a chat dialog button */
+        get: operations["getApiV1AiDialogsById"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ai/sessions": {
         parameters: {
             query?: never;
@@ -948,6 +965,10 @@ export interface paths {
         put?: never;
         /** Add one or more affected items to a change order */
         post: operations["postApiV1ChangeOrdersByIdAffectedItems"];
+        /**
+         * Remove an affected item from a change order
+         * @description Address the affected-items row with itemId, or the logical item with itemMasterId. Set discardBranchChanges=true to discard its ECO working copy and checkout as well.
+         */
         delete: operations["deleteApiV1ChangeOrdersByIdAffectedItems"];
         options?: never;
         head?: never;
@@ -1472,6 +1493,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/designs/{designId}/architecture": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * System architecture of a design
+         * @description The DECOMPOSES tree of the design's system elements at a version context — main as it stands when no context is given, else the branch, tag or commit named — each element with the items that realize it and the requirements allocated to it. Links are resolved and judged the way the requirements matrix resolves and judges them.
+         */
+        get: operations["getApiV1DesignsByDesignIdArchitecture"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/designs/{designId}/gap-analysis": {
         parameters: {
             query?: never;
@@ -1496,6 +1537,42 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getApiV1DesignsByDesignIdRequirementsCoverage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/designs/{designId}/requirements-export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getApiV1DesignsByDesignIdRequirementsExport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/designs/{designId}/rtm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Requirements traceability matrix for a design
+         * @description Every requirement of the design with what it is allocated to, what satisfies it and what verifies it, read at a version context: main as it stands when no context is given, else the branch, tag or commit named. Each link carries its suspect state, each row the one "verified" rule and its gaps, and the totals count rows. A tag is the compliance snapshot: claims are judged against the rows the tag holds.
+         */
+        get: operations["getApiV1DesignsByDesignIdRtm"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2065,6 +2142,26 @@ export interface paths {
         patch: operations["patchApiV1FilesByFileIdAnnotationsByAnnotationId"];
         trace?: never;
     };
+    "/api/v1/files/{fileId}/applicability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Set a file's product-configuration applicability
+         * @description The file remains owned and revisioned by its Part. Null makes it common to every execution; otherwise it is effective when any condition matches the Part selections.
+         */
+        patch: operations["patchApiV1FilesByFileIdApplicability"];
+        trace?: never;
+    };
     "/api/v1/files/{fileId}/cad-nodes": {
         parameters: {
             query?: never;
@@ -2411,6 +2508,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/import/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["postApiV1ImportRequirements"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/import/templates/documents": {
         parameters: {
             query?: never;
@@ -2451,6 +2564,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["getApiV1ImportTemplatesParts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/import/templates/requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getApiV1ImportTemplatesRequirements"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3067,7 +3196,7 @@ export interface paths {
         put?: never;
         /**
          * Upload one or more files to an item
-         * @description `multipart/form-data`. Every part carrying a file is uploaded; the part name is free, and the client uses `file0`, `file1`, and so on. Two optional parts hang off each file part by name: `<name>_description` and `<name>_isThumbnail` (the string `true`). A single `branchId` part applies to the whole request. Uploading a STEP or IGES file does not convert it — call POST /api/v1/files/:fileId/convert with the returned id.
+         * @description `multipart/form-data`. Every part carrying a file is uploaded; the part name is free, and the client uses `file0`, `file1`, and so on. Optional parts hang off each file part by name: `<name>_description`, `<name>_isThumbnail` (the string `true`), and `<name>_applicability` (JSON; omitted means common to every execution). A single `branchId` part applies to the whole request. Uploading a STEP or IGES file does not convert it — call POST /api/v1/files/:fileId/convert with the returned id.
          */
         post: operations["postApiV1ItemsByItemIdFilesUpload"];
         delete?: never;
@@ -3751,6 +3880,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/programs/{id}/requirements-rollup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Requirements coverage across a program
+         * @description Every design of the program at its released view: how many requirements each holds and how many are allocated, satisfied, verified or carry a suspect claim, with the open gaps across the program, most important first. The figures are the totals of each design's requirements traceability matrix (GET /api/v1/designs/{id}/rtm).
+         */
+        get: operations["getApiV1ProgramsByIdRequirementsRollup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/relationships": {
         parameters: {
             query?: never;
@@ -3761,6 +3910,26 @@ export interface paths {
         get: operations["getApiV1Relationships"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/relationships/affirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Affirm several trace links
+         * @description The bulk form of `POST /relationships/{relationshipId}/affirm`: records that each named claim still holds for the versions its ends currently name. Each id is charged on its own — `update` on the source item’s type, plus access to both ends — and reported on its own, so one link the caller may not affirm does not refuse the rest. At most 500 ids per call.
+         */
+        post: operations["postApiV1RelationshipsAffirm"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3798,6 +3967,26 @@ export interface paths {
         put: operations["putApiV1RelationshipsByRelationshipId"];
         post?: never;
         delete: operations["deleteApiV1RelationshipsByRelationshipId"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/relationships/{relationshipId}/affirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Affirm a trace link
+         * @description Records that a traceability claim (`SATISFIES`, `ALLOCATED_TO`, `VERIFIED_BY`, `VALIDATES`) still holds for the versions its ends currently name, which clears its suspect flag. Affirming is a review record, not an edit of the link, so it needs no checkout; it charges `update` on the source item’s own type.
+         */
+        post: operations["postApiV1RelationshipsByRelationshipIdAffirm"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3981,6 +4170,30 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/requirements/{id}/waive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Waive a requirement's verification
+         * @description A requirement's verification status is derived from the latest execution of every test case that verifies it. A waiver is the one manual exception: it records who waived verification, when and why, the status reads `Waived` until the waiver is cleared, and the rollup leaves the row alone meanwhile. A review record, not a design edit, so it needs no checkout or change order.
+         */
+        post: operations["postApiV1RequirementsByIdWaive"];
+        /**
+         * Clear a requirement's verification waiver
+         * @description The derived status takes over again, recomputed from the verifying tests' executions.
+         */
+        delete: operations["deleteApiV1RequirementsByIdWaive"];
         options?: never;
         head?: never;
         patch?: never;
@@ -4331,6 +4544,103 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system-elements/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getApiV1SystemElementsById"];
+        put: operations["putApiV1SystemElementsById"];
+        post?: never;
+        delete: operations["deleteApiV1SystemElementsById"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system-elements/{id}/allocated-requirements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the requirements allocated to a system element
+         * @description The incoming ALLOCATED_TO links, inherited from the rows this element succeeded. Allocation is written from the requirement (POST /requirements/{id}/allocate).
+         */
+        get: operations["getApiV1SystemElementsByIdAllocatedRequirements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system-elements/{id}/children": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the elements a system element decomposes into */
+        get: operations["getApiV1SystemElementsByIdChildren"];
+        put?: never;
+        /**
+         * Place system elements under this one
+         * @description Creates DECOMPOSES links from this element to each child. Both ends must be system elements of one design, and a link that would close a loop is refused. Pass branchId to write inside an ECO; without it the write lands on the rows named and is refused once the design has released items.
+         */
+        post: operations["postApiV1SystemElementsByIdChildren"];
+        /** Remove a system element from under this one */
+        delete: operations["deleteApiV1SystemElementsByIdChildren"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system-elements/{id}/parent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The system element this one sits under, if any */
+        get: operations["getApiV1SystemElementsByIdParent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/system-elements/{id}/realized-by": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the items that realize a system element */
+        get: operations["getApiV1SystemElementsByIdRealizedBy"];
+        put?: never;
+        /**
+         * Record the items that realize a system element
+         * @description Creates REALIZED_BY links from the element to each item — a part or software item. The link is a trace claim: it reads suspect once either end revises until it is affirmed again. Pass branchId to write inside an ECO.
+         */
+        post: operations["postApiV1SystemElementsByIdRealizedBy"];
+        /** Remove a realization of a system element */
+        delete: operations["deleteApiV1SystemElementsByIdRealizedBy"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6562,6 +6872,24 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    getApiV1AiDialogsById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     getApiV1AiSessions: {
         parameters: {
             query?: never;
@@ -7441,7 +7769,11 @@ export interface operations {
     };
     deleteApiV1ChangeOrdersByIdAffectedItems: {
         parameters: {
-            query?: never;
+            query?: {
+                itemId?: string;
+                itemMasterId?: string;
+                discardBranchChanges?: "true" | "false";
+            };
             header?: never;
             path: {
                 id: string;
@@ -7450,6 +7782,19 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            success: boolean;
+                        };
+                    };
+                };
+            };
             400: components["responses"]["ValidationError"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -8527,6 +8872,100 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    getApiV1DesignsByDesignIdArchitecture: {
+        parameters: {
+            query?: {
+                branch?: string;
+                tag?: string;
+                commit?: string;
+            };
+            header?: never;
+            path: {
+                designId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            context: {
+                                id: string | null;
+                                /** @enum {string} */
+                                type: "released" | "branch" | "tag" | "commit";
+                            };
+                            designCode: string;
+                            /** Format: uuid */
+                            designId: string;
+                            designName: string;
+                            roots: {
+                                allocatedRequirements: {
+                                    /** Format: uuid */
+                                    itemId: string;
+                                    itemNumber: string;
+                                    itemType: string;
+                                    /** Format: uuid */
+                                    masterId: string;
+                                    name: string | null;
+                                    /** Format: uuid */
+                                    relationshipId: string;
+                                    revision: string;
+                                    state: string;
+                                    suspect: boolean;
+                                    suspectReasons: ("source_revised" | "target_revised")[];
+                                }[];
+                                children: unknown[];
+                                description: string | null;
+                                elementKind: string | null;
+                                /** Format: uuid */
+                                itemId: string;
+                                itemNumber: string;
+                                /** Format: uuid */
+                                masterId: string;
+                                name: string | null;
+                                realizedBy: {
+                                    /** Format: uuid */
+                                    itemId: string;
+                                    itemNumber: string;
+                                    itemType: string;
+                                    /** Format: uuid */
+                                    masterId: string;
+                                    name: string | null;
+                                    /** Format: uuid */
+                                    relationshipId: string;
+                                    revision: string;
+                                    state: string;
+                                    suspect: boolean;
+                                    suspectReasons: ("source_revised" | "target_revised")[];
+                                }[];
+                                /** Format: uuid */
+                                relationshipId?: string;
+                                revision: string;
+                                state: string;
+                            }[];
+                            totals: {
+                                allocated: number;
+                                elements: number;
+                                realized: number;
+                                suspect: number;
+                            };
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     getApiV1DesignsByDesignIdGapAnalysis: {
         parameters: {
             query?: never;
@@ -8559,7 +8998,7 @@ export interface operations {
                 "application/json": {
                     includeDomains?: ("requirements" | "engineering" | "manufacturing" | "validation")[];
                     includeSeverities?: ("critical" | "major" | "minor")[];
-                    includeTypes?: ("unallocated_requirement" | "unsatisfied_requirement" | "unverified_requirement" | "untested_part" | "unmapped_ebom_item" | "orphan_mbom_item" | "missing_documentation")[];
+                    includeTypes?: ("unallocated_requirement" | "unsatisfied_requirement" | "unverified_requirement" | "suspect_requirement" | "untested_part" | "unmapped_ebom_item" | "orphan_mbom_item" | "missing_documentation")[];
                 };
             };
         };
@@ -8582,6 +9021,160 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1DesignsByDesignIdRequirementsExport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                designId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1DesignsByDesignIdRtm: {
+        parameters: {
+            query?: {
+                branch?: string;
+                tag?: string;
+                commit?: string;
+            };
+            header?: never;
+            path: {
+                designId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            context: {
+                                id: string | null;
+                                /** @enum {string} */
+                                type: "released" | "branch" | "tag" | "commit";
+                            };
+                            designCode: string;
+                            /** Format: uuid */
+                            designId: string;
+                            designName: string;
+                            rows: {
+                                allocatedTo: {
+                                    /** Format: uuid */
+                                    itemId: string;
+                                    itemNumber: string;
+                                    itemType: string;
+                                    /** Format: uuid */
+                                    masterId: string;
+                                    name: string | null;
+                                    realizedBy?: {
+                                        /** Format: uuid */
+                                        itemId: string;
+                                        itemNumber: string;
+                                        itemType: string;
+                                        /** Format: uuid */
+                                        masterId: string;
+                                        name: string | null;
+                                        /** Format: uuid */
+                                        relationshipId: string;
+                                        revision: string;
+                                        state: string;
+                                        suspect: boolean;
+                                        suspectReasons: ("source_revised" | "target_revised")[];
+                                    }[];
+                                    /** Format: uuid */
+                                    relationshipId: string;
+                                    revision: string;
+                                    state: string;
+                                    suspect: boolean;
+                                    suspectReasons: ("source_revised" | "target_revised")[];
+                                }[];
+                                gaps: ("not_allocated" | "not_satisfied" | "not_verified")[];
+                                requirement: {
+                                    /** Format: uuid */
+                                    id: string;
+                                    itemNumber: string;
+                                    /** Format: uuid */
+                                    masterId: string;
+                                    name: string | null;
+                                    priority: string | null;
+                                    requirementType: string | null;
+                                    revision: string;
+                                    state: string;
+                                    verificationMethod: string | null;
+                                    verificationStatus: string | null;
+                                };
+                                satisfiedBy: {
+                                    /** Format: uuid */
+                                    itemId: string;
+                                    itemNumber: string;
+                                    itemType: string;
+                                    /** Format: uuid */
+                                    masterId: string;
+                                    name: string | null;
+                                    /** Format: uuid */
+                                    relationshipId: string;
+                                    revision: string;
+                                    state: string;
+                                    suspect: boolean;
+                                    suspectReasons: ("source_revised" | "target_revised")[];
+                                }[];
+                                suspectCount: number;
+                                verified: boolean;
+                                verifiedBy: {
+                                    executionStatus: string | null;
+                                    /** Format: uuid */
+                                    itemId: string;
+                                    itemNumber: string;
+                                    itemType: string;
+                                    lastExecutedAt: string | null;
+                                    /** Format: uuid */
+                                    masterId: string;
+                                    name: string | null;
+                                    /** Format: uuid */
+                                    relationshipId: string;
+                                    revision: string;
+                                    state: string;
+                                    suspect: boolean;
+                                    suspectReasons: ("source_revised" | "target_revised")[];
+                                }[];
+                            }[];
+                            totals: {
+                                allocated: number;
+                                gaps: {
+                                    not_allocated: number;
+                                    not_satisfied: number;
+                                    not_verified: number;
+                                };
+                                satisfied: number;
+                                suspect: number;
+                                total: number;
+                                verified: number;
+                            };
+                        };
+                    };
+                };
+            };
             400: components["responses"]["ValidationError"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -9913,6 +10506,37 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    patchApiV1FilesByFileIdApplicability: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fileId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    applicability: {
+                        any: {
+                            all: {
+                                family: string;
+                                values: string[];
+                            }[];
+                        }[];
+                    } | null;
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     getApiV1FilesByFileIdCadNodes: {
         parameters: {
             query?: {
@@ -10461,6 +11085,55 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    postApiV1ImportRequirements: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    branchId?: string;
+                    /** @default false */
+                    bypassBranchProtection?: boolean;
+                    /** Format: uuid */
+                    designId: string;
+                    /** @default false */
+                    importAsReleased?: boolean;
+                    rows: {
+                        acceptanceCriteria?: string;
+                        attributes?: {
+                            [key: string]: unknown;
+                        };
+                        category?: string;
+                        description?: string;
+                        itemNumber?: string;
+                        name: string;
+                        parentItemNumber?: string;
+                        /** @enum {string} */
+                        priority?: "MustHave" | "ShouldHave" | "CouldHave" | "WontHave";
+                        /** @default - */
+                        revision?: string;
+                        source?: string;
+                        /** @enum {string} */
+                        type?: "Functional" | "Non-Functional" | "Performance" | "Security" | "Usability" | "Business";
+                        /** @enum {string} */
+                        verificationMethod?: "Analysis" | "Inspection" | "Demonstration" | "Test" | "Documentation";
+                    }[];
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     getApiV1ImportTemplatesDocuments: {
         parameters: {
             query?: never;
@@ -10494,6 +11167,22 @@ export interface operations {
         };
     };
     getApiV1ImportTemplatesParts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1ImportTemplatesRequirements: {
         parameters: {
             query?: never;
             header?: never;
@@ -10717,8 +11406,6 @@ export interface operations {
                     usageOf?: string;
                 } | {
                     acceptanceCriteria?: string;
-                    /** Format: uuid */
-                    allocatedDesignId?: string;
                     attributes?: {
                         [key: string]: unknown;
                     };
@@ -10750,8 +11437,30 @@ export interface operations {
                     usageOf?: string;
                     /** @enum {string} */
                     verificationMethod?: "Analysis" | "Inspection" | "Demonstration" | "Test" | "Documentation";
+                } | {
+                    attributes?: {
+                        [key: string]: unknown;
+                    };
+                    /**
+                     * Format: uuid
+                     * @description Create the item on this ECO branch instead of directly on main. Omitting it writes to main, which branch protection allows only before the design has released.
+                     */
+                    branchId?: string;
+                    /** @description Message for the commit the branch write produces. Ignored without `branchId`. Defaults to "Created <itemType> <itemNumber>". */
+                    commitMessage?: string;
+                    description?: string;
+                    /** Format: uuid */
+                    designId: string;
                     /** @enum {string} */
-                    verificationStatus?: "NotStarted" | "InProgress" | "Passed" | "Failed" | "Waived";
+                    elementKind?: "system" | "segment" | "subsystem" | "module";
+                    itemNumber?: string;
+                    /** @constant */
+                    itemType: "SystemElement";
+                    name?: string;
+                    revision?: string;
+                    state?: string;
+                    /** Format: uuid */
+                    usageOf?: string;
                 } | {
                     actualHours?: string;
                     /** Format: uuid */
@@ -12105,6 +12814,8 @@ export interface operations {
                      * @description First file. Repeat as file1, file2, …
                      */
                     file0?: string;
+                    /** @description JSON OptionApplicability for `file0`; omit for a common file. Repeat for file1, file2, … */
+                    file0_applicability?: string;
                     /** @description Description stored against `file0`. */
                     file0_description?: string;
                     /**
@@ -12128,6 +12839,14 @@ export interface operations {
                         data: {
                             count: number;
                             files: ({
+                                applicability: {
+                                    any: {
+                                        all: {
+                                            family: string;
+                                            values: string[];
+                                        }[];
+                                    }[];
+                                } | null;
                                 branchId: string | null;
                                 /** @description SHA-256 of the stored bytes */
                                 fileHash: string;
@@ -13476,6 +14195,7 @@ export interface operations {
                             findings: {
                                 code: string;
                                 family?: string;
+                                fileId?: string;
                                 makeCode?: string;
                                 message: string;
                                 relationshipId?: string;
@@ -14149,6 +14869,80 @@ export interface operations {
             500: components["responses"]["ServerError"];
         };
     };
+    getApiV1ProgramsByIdRequirementsRollup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            designs: {
+                                allocated: number;
+                                designCode: string;
+                                /** Format: uuid */
+                                designId: string;
+                                designName: string;
+                                designType: string;
+                                gaps: {
+                                    not_allocated: number;
+                                    not_satisfied: number;
+                                    not_verified: number;
+                                };
+                                satisfied: number;
+                                suspect: number;
+                                total: number;
+                                verified: number;
+                            }[];
+                            openGaps: {
+                                designCode: string;
+                                /** Format: uuid */
+                                designId: string;
+                                /** @enum {string} */
+                                gapType: "not_allocated" | "not_satisfied" | "not_verified";
+                                itemNumber: string;
+                                name: string | null;
+                                priority: string | null;
+                                /** Format: uuid */
+                                requirementId: string;
+                            }[];
+                            openGapsTotal: number;
+                            /** Format: uuid */
+                            programId: string;
+                            totals: {
+                                allocated: number;
+                                gaps: {
+                                    not_allocated: number;
+                                    not_satisfied: number;
+                                    not_verified: number;
+                                };
+                                satisfied: number;
+                                suspect: number;
+                                total: number;
+                                verified: number;
+                            };
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
     getApiV1Relationships: {
         parameters: {
             query?: never;
@@ -14158,6 +14952,49 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1RelationshipsAffirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    relationshipIds: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            affirmed: number;
+                            results: {
+                                /** @enum {string} */
+                                outcome: "affirmed" | "not_found" | "forbidden" | "not_suspectable";
+                                reasons?: ("source_revised" | "target_revised")[];
+                                /** Format: uuid */
+                                relationshipId: string;
+                                suspect?: boolean;
+                            }[];
+                        };
+                    };
+                };
+            };
             400: components["responses"]["ValidationError"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -14296,6 +15133,40 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1RelationshipsByRelationshipIdAffirm: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                relationshipId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            reasons: ("source_revised" | "target_revised")[];
+                            /** Format: uuid */
+                            relationshipId: string;
+                            suspect: boolean;
+                        };
+                    };
+                };
+            };
             400: components["responses"]["ValidationError"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -14602,11 +15473,11 @@ export interface operations {
                     commitMessage?: string;
                     description?: string | null;
                     name?: string | null;
-                    priority?: ("low" | "medium" | "high" | "critical") | null;
+                    priority?: ("MustHave" | "ShouldHave" | "CouldHave" | "WontHave") | null;
                     requirementType?: string | null;
                     state?: string;
                     type?: string | null;
-                    verificationMethod?: ("inspection" | "analysis" | "demonstration" | "test" | "documentation") | null;
+                    verificationMethod?: ("Analysis" | "Inspection" | "Demonstration" | "Test" | "Documentation") | null;
                 };
             };
         };
@@ -14955,6 +15826,80 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1RequirementsByIdWaive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    note: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            /** @constant */
+                            verificationStatus: "Waived";
+                            verificationWaiver: {
+                                note: string;
+                                waivedAt: string;
+                                waivedBy: string | null;
+                            };
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    deleteApiV1RequirementsByIdWaive: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            verificationStatus: string;
+                        };
+                    };
+                };
+            };
             400: components["responses"]["ValidationError"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -15497,6 +16442,403 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1SystemElementsById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    putApiV1SystemElementsById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    attributes?: {
+                        [key: string]: unknown;
+                    };
+                    commitMessage?: string;
+                    description?: string | null;
+                    elementKind?: ("system" | "segment" | "subsystem" | "module") | null;
+                    name?: string | null;
+                    state?: string;
+                };
+            };
+        };
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    deleteApiV1SystemElementsById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1SystemElementsByIdAllocatedRequirements: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            items: {
+                                /** Format: uuid */
+                                id: string;
+                                itemNumber: string;
+                                itemType: string;
+                                name: string | null;
+                                /** Format: uuid */
+                                relationshipId: string;
+                                revision: string;
+                                state: string;
+                                suspect: boolean;
+                                suspectReasons: ("source_revised" | "target_revised")[];
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1SystemElementsByIdChildren: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            items: {
+                                elementKind: string | null;
+                                /** Format: uuid */
+                                id: string;
+                                itemNumber: string;
+                                /** Format: uuid */
+                                masterId: string;
+                                name: string | null;
+                                /** Format: uuid */
+                                relationshipId: string;
+                                revision: string;
+                                state: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1SystemElementsByIdChildren: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    branchId?: string;
+                    itemIds: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            success: boolean;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    deleteApiV1SystemElementsByIdChildren: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    branchId?: string;
+                    /** Format: uuid */
+                    itemId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            success: boolean;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1SystemElementsByIdParent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            item: {
+                                elementKind: string | null;
+                                /** Format: uuid */
+                                id: string;
+                                itemNumber: string;
+                                /** Format: uuid */
+                                masterId: string;
+                                name: string | null;
+                                /** Format: uuid */
+                                relationshipId: string;
+                                revision: string;
+                                state: string;
+                            } | null;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    getApiV1SystemElementsByIdRealizedBy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            items: {
+                                /** Format: uuid */
+                                id: string;
+                                itemNumber: string;
+                                itemType: string;
+                                name: string | null;
+                                /** Format: uuid */
+                                relationshipId: string;
+                                revision: string;
+                                state: string;
+                                suspect: boolean;
+                                suspectReasons: ("source_revised" | "target_revised")[];
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    postApiV1SystemElementsByIdRealizedBy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    branchId?: string;
+                    itemIds: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            success: boolean;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["ValidationError"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            500: components["responses"]["ServerError"];
+        };
+    };
+    deleteApiV1SystemElementsByIdRealizedBy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: uuid */
+                    branchId?: string;
+                    /** Format: uuid */
+                    itemId: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Success */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        data: {
+                            success: boolean;
+                        };
+                    };
+                };
+            };
             400: components["responses"]["ValidationError"];
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];

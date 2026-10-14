@@ -26,6 +26,9 @@ const RESOURCE_DEPENDENTS: Partial<Record<Resource, ReadonlyArray<Resource>>> =
     parts: ['items', 'relationships', 'mbom'],
     documents: ['items'],
     requirements: ['items', 'relationships'],
+    // An element's tree and realizations are edges, and the design page's
+    // architecture reads them through `relationships` → `designs`.
+    'system-elements': ['items', 'relationships'],
     tasks: ['items'],
     issues: ['items'],
     tools: ['items'],

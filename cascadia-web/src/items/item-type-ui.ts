@@ -3,7 +3,7 @@
 
 /**
  * Client-side UI metadata for item types: detail-route paths, icons, and
- * filter options — complete for all 13 registered types.
+ * filter options — complete for all 14 registered types.
  *
  * Before this module, every consumer hand-rolled its own partial map
  * (EnterpriseSearchBar, BOM helpers, thread nodes each covered ~5 of 13
@@ -21,6 +21,7 @@ import {
   FileText,
   GitBranch,
   ListChecks,
+  Network,
   Package,
   Search,
   TestTube2,
@@ -72,6 +73,7 @@ const ICONS_BY_NAME: Record<string, LucideIcon> = {
   Cpu,
   Wrench,
   Factory,
+  Network,
 }
 
 /** Resolve an icon name from an item type definition to its component. */

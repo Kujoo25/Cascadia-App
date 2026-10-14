@@ -112,9 +112,7 @@ regressing — it is invisible in every other check.
 
 ## CI gate
 
-`npm run openapi:check` regenerates the spec and diffs it against `docs/api/openapi.v1.json`; run it locally to see whether a change moves the contract. Pull requests are **not** gated on it: contributors leave the snapshot out, so adding or changing a route without touching `docs/api/openapi.v1.json` is expected, and nothing in a contributor's PR turns red because of it.
-
-On every push to `main`, the **OpenAPI Snapshot** job in `.github/workflows/ci.yml` regenerates the snapshot and `cascadia-web/src/api/openapi-types.gen.ts` from the merged tree and, when they differ, commits them back as `github-actions[bot]`. The job refuses to do that when the regenerated spec removes an operation: that is a breaking change to v1, so it fails and leaves the snapshot for a person to handle.
+`npm run openapi:check` regenerates the spec and diffs it against `docs/api/openapi.v1.json`. The CI workflow runs this on every PR — if you change a route's signature or add a new endpoint, you must run `npm run openapi:snapshot` and commit the updated JSON.
 
 ## Generating a typed client
 

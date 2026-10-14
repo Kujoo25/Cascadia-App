@@ -14,16 +14,32 @@ import {
 import { users } from '../db/schema/users'
 import { notDeleted } from '../db/filters'
 import { NotFoundError, ValidationError } from '../errors'
+import { TEST_EXECUTED, publishDomainEvent } from '../events'
 import { ItemService } from '../items/services/ItemService'
 import { ItemRelationshipService } from '../items/services/ItemRelationshipService'
-import { VERIFIED_BY_RELATIONSHIP, idsWithLinks } from './RequirementService'
+import { VALIDATES_RELATIONSHIP } from '../items/traceability-relationships'
+import {
+  VERIFIED_BY_RELATIONSHIP,
+  idsWithLinks,
+  requirementsWithSuspectLinks,
+  suspectFields,
+} from './RequirementService'
+import {
+  isVerifiedStatus,
+  requirementMastersVerifiedBy,
+  rollupVerificationForMasters,
+} from './verification-rollup'
+import type { TransactionClient } from '../db'
+import type { SuspectLinkFields } from './RequirementService'
 import type { ExecutionStatus } from '@cascadia/commons/items/types/testcase'
 import { takeFirst } from '@/db/take-first'
 
 /**
- * Relationship type constant for test-to-part validation
+ * Relationship type constant for test-to-part validation. Declared in
+ * `items/traceability-relationships` beside its siblings; re-exported here
+ * for the callers that always found it on this service.
  */
-export const VALIDATES_RELATIONSHIP = 'VALIDATES' // TestCase → Part
+export { VALIDATES_RELATIONSHIP }
 
 /**
  * Test execution result
@@ -46,8 +62,15 @@ export interface TestExecutionResult {
  */
 export interface TestCoverage {
   totalRequirements: number
+  /** Requirements with at least one verifying test linked — a plan. */
   requirementsWithTests: number
+  /**
+   * Requirements verified by the one rule: derived status Passed or a
+   * waiver recorded, and no suspect verifying claim.
+   */
+  requirementsVerified: number
   coveragePercent: number
+  verifiedPercent: number
   totalTests: number
   passed: number
   failed: number
@@ -66,12 +89,14 @@ export interface VerificationGap {
   name: string | null
   priority: string | null
   verificationMethod: string | null
+  /** The derived status the gap was judged on. */
+  verificationStatus: string | null
 }
 
 /**
  * Validating test for a part
  */
-export interface ValidatingTest {
+export interface ValidatingTest extends SuspectLinkFields {
   id: string
   itemNumber: string
   name: string | null
@@ -84,7 +109,7 @@ export interface ValidatingTest {
 /**
  * Validated part by a test
  */
-export interface ValidatedPart {
+export interface ValidatedPart extends SuspectLinkFields {
   id: string
   itemNumber: string
   name: string | null
@@ -132,38 +157,61 @@ export class VerificationService {
       })
     }
 
-    // Create execution record
-    const execution = takeFirst(
-      await db
-        .insert(testExecutions)
-        .values({
-          testCaseId,
-          executorId: userId,
-          status: result.status,
-          duration: result.duration ?? null,
-          environment: result.environment ?? null,
-          actualResults: result.actualResults ?? null,
-          notes: result.notes ?? null,
-        })
-        .returning(),
-    )
+    // One transaction: the history row, the test case's latest result, the
+    // derived status of every requirement the test verifies, and the fact
+    // that says so. Recording a run is runtime metadata, not content
+    // authoring — it must work on a Released test case without a checkout,
+    // so none of this goes through the edit lock.
+    const execution = await db.transaction(async (tx) => {
+      const inserted = takeFirst(
+        await tx
+          .insert(testExecutions)
+          .values({
+            testCaseId,
+            executorId: userId,
+            status: result.status,
+            duration: result.duration ?? null,
+            environment: result.environment ?? null,
+            actualResults: result.actualResults ?? null,
+            notes: result.notes ?? null,
+          })
+          .returning(),
+      )
 
-    // Update test case with latest execution status
-    await db
-      .update(testCases)
-      .set({
-        executionStatus: result.status,
-        lastExecutedAt: new Date(),
-        lastExecutedBy: userId,
-        environment: result.environment ?? null,
+      await this.writeLatestResult(
+        tx,
+        testCaseId,
+        result.status,
+        userId,
+        result.environment ?? null,
+      )
+
+      const requirementMasterIds = await requirementMastersVerifiedBy(tx, [
+        testCaseId,
+      ])
+      await rollupVerificationForMasters(tx, requirementMasterIds, {
+        actorId: userId,
+        cause: 'execution',
+        testCaseId,
       })
-      .where(eq(testCases.itemId, testCaseId))
 
-    // Also update the item's modifiedAt/modifiedBy. Recording an execution
-    // is runtime metadata, not content authoring — it must work on Released
-    // test cases without a checkout, so it bypasses the edit-lock policy.
-    await ItemService.update(testCaseId, {}, userId, {
-      bypassBranchProtection: true,
+      await publishDomainEvent(tx, TEST_EXECUTED, {
+        actorId: userId,
+        subject: { id: testCaseId, masterId: testCase.masterId },
+        context: { designId: testCase.designId ?? undefined },
+        payload: {
+          executionId: inserted.id,
+          testCaseId,
+          testCaseMasterId: testCase.masterId,
+          itemNumber: testCase.itemNumber,
+          status: result.status,
+          executedBy: userId,
+          designId: testCase.designId ?? null,
+          requirementMasterIds,
+        },
+      })
+
+      return inserted
     })
 
     // Get executor name for response
@@ -188,11 +236,45 @@ export class VerificationService {
   }
 
   /**
+   * The test case's latest result and the item's modified stamp, in the
+   * caller's transaction. The stamp used to come from an empty
+   * `ItemService.update`, which changed nothing and so emitted nothing; the
+   * fact of the run is `test.executed` now, and the stamp is written here.
+   */
+  private static async writeLatestResult(
+    tx: TransactionClient,
+    testCaseId: string,
+    status: ExecutionStatus,
+    userId: string,
+    environment: string | null | undefined,
+  ): Promise<void> {
+    const now = new Date()
+    await tx
+      .update(testCases)
+      .set({
+        executionStatus: status,
+        lastExecutedAt: now,
+        lastExecutedBy: userId,
+        ...(environment === undefined ? {} : { environment }),
+      })
+      .where(eq(testCases.itemId, testCaseId))
+    await tx
+      .update(items)
+      .set({ modifiedAt: now, modifiedBy: userId })
+      .where(eq(items.id, testCaseId))
+  }
+
+  /**
    * List the test cases belonging to a test plan.
    *
-   * Parentage lives on `test_cases.test_plan_id` rather than in
+   * Parentage lives on `test_cases.test_plan_master_id` rather than in
    * `item_relationships`, so this is a direct join rather than an edge walk.
-   * Deleted rows are excluded; the caller renders the pass/fail rollup from
+   * Matched by the plan's master, so whichever row of the plan the caller
+   * names answers the same, and within the plan's own design: a clone
+   * re-points its cases at the clone's plan, and a usage pulled into another
+   * design starts with no plan, but a row that still names this master from
+   * another design is that design's business, not this listing's. Deleted
+   * rows are excluded; the caller renders the pass/fail rollup from
    * `executionStatus`.
    */
   static async getTestCasesForPlan(
@@ -219,7 +301,8 @@ export class VerificationService {
       .innerJoin(items, eq(items.id, testCases.itemId))
       .where(
         and(
-          eq(testCases.testPlanId, testPlanId),
+          eq(testCases.testPlanMasterId, plan.masterId),
+          plan.designId ? eq(items.designId, plan.designId) : undefined,
           notDeleted(),
           eq(items.isCurrent, true),
         ),
@@ -278,8 +361,12 @@ export class VerificationService {
 
     // Get all requirements for this design
     const allRequirements = await db
-      .select({ id: items.id })
+      .select({
+        id: items.id,
+        verificationStatus: requirements.verificationStatus,
+      })
       .from(items)
+      .innerJoin(requirements, eq(requirements.itemId, items.id))
       .where(
         and(
           eq(items.designId, designId),
@@ -293,7 +380,9 @@ export class VerificationService {
       return {
         totalRequirements: 0,
         requirementsWithTests: 0,
+        requirementsVerified: 0,
         coveragePercent: 0,
+        verifiedPercent: 0,
         totalTests: 0,
         passed: 0,
         failed: 0,
@@ -309,12 +398,20 @@ export class VerificationService {
     // Count requirements with VERIFIED_BY relationships. Version-aware: the
     // edge belongs to the test case, so a release leaves it naming the
     // requirement row it superseded.
-    const requirementsWithTests = idsWithLinks(
-      await ItemRelationshipService.findIncomingLinks(
-        requirementIds,
-        VERIFIED_BY_RELATIONSHIP,
-      ),
-    ).size
+    const verifyingLinks = await ItemRelationshipService.findIncomingLinks(
+      requirementIds,
+      VERIFIED_BY_RELATIONSHIP,
+    )
+    const requirementsWithTests = idsWithLinks(verifyingLinks).size
+
+    // Verified by the one rule every coverage read applies: the derived
+    // status says Passed (or a waiver is recorded), and no verifying claim is
+    // suspect — a claim under review is not evidence.
+    const suspectVerified = await requirementsWithSuspectLinks(verifyingLinks)
+    const requirementsVerified = allRequirements.filter(
+      (r) =>
+        isVerifiedStatus(r.verificationStatus) && !suspectVerified.has(r.id),
+    ).length
 
     // Get all test cases for this design
     const allTestCases = await db
@@ -364,8 +461,11 @@ export class VerificationService {
     return {
       totalRequirements,
       requirementsWithTests,
+      requirementsVerified,
       coveragePercent:
         Math.round((requirementsWithTests / totalRequirements) * 1000) / 10,
+      verifiedPercent:
+        Math.round((requirementsVerified / totalRequirements) * 1000) / 10,
       totalTests,
       passed,
       failed,
@@ -377,7 +477,10 @@ export class VerificationService {
   }
 
   /**
-   * Get requirements without test cases (verification gaps).
+   * The requirements that are not verified: by the one rule, their derived
+   * status is not Passed and no waiver is recorded, or a verifying claim is
+   * suspect. A requirement with a linked test that has never run is a gap —
+   * the link is a plan, not evidence.
    */
   static async getVerificationGaps(
     designId: string,
@@ -390,6 +493,7 @@ export class VerificationService {
         name: items.name,
         priority: requirements.priority,
         verificationMethod: requirements.verificationMethod,
+        verificationStatus: requirements.verificationStatus,
       })
       .from(items)
       .innerJoin(requirements, eq(items.id, requirements.itemId))
@@ -408,22 +512,25 @@ export class VerificationService {
     const requirementIds = allRequirements.map((r) => r.id)
 
     // Version-aware, so a revision does not read back as a fresh gap.
-    const verifiedIds = idsWithLinks(
+    const suspectVerified = await requirementsWithSuspectLinks(
       await ItemRelationshipService.findIncomingLinks(
         requirementIds,
         VERIFIED_BY_RELATIONSHIP,
       ),
     )
 
-    // Return requirements without tests
     const gaps = allRequirements
-      .filter((r) => !verifiedIds.has(r.id))
+      .filter(
+        (r) =>
+          !isVerifiedStatus(r.verificationStatus) || suspectVerified.has(r.id),
+      )
       .map((r) => ({
         id: r.id,
         itemNumber: r.itemNumber,
         name: r.name,
         priority: r.priority,
         verificationMethod: r.verificationMethod,
+        verificationStatus: r.verificationStatus,
       }))
 
     // Sort by priority (MustHave first)
@@ -457,20 +564,15 @@ export class VerificationService {
       })
     }
 
-    await db
-      .update(testCases)
-      .set({
-        executionStatus: status,
-        lastExecutedAt: new Date(),
-        lastExecutedBy: userId,
-      })
-      .where(eq(testCases.itemId, testCaseId))
-
-    // Also update the item's modifiedAt/modifiedBy. Status recording is
-    // runtime metadata, not content authoring — bypass the edit-lock policy
-    // (same rationale as recordExecution).
-    await ItemService.update(testCaseId, {}, userId, {
-      bypassBranchProtection: true,
+    // Runtime metadata, not content authoring — no edit lock, same as
+    // recordExecution; and the requirements the test verifies follow it.
+    await db.transaction(async (tx) => {
+      await this.writeLatestResult(tx, testCaseId, status, userId, undefined)
+      await rollupVerificationForMasters(
+        tx,
+        await requirementMastersVerifiedBy(tx, [testCaseId]),
+        { actorId: userId, cause: 'execution', testCaseId },
+      )
     })
   }
 
@@ -598,6 +700,9 @@ export class VerificationService {
       })
       .from(testCases)
       .where(inArray(testCases.itemId, sourceIds))
+    const states = await ItemRelationshipService.suspectStatesFor(
+      relationships.map((r) => r.id),
+    )
 
     // Combine data
     return testCaseItems.map((tc) => {
@@ -611,6 +716,7 @@ export class VerificationService {
         executionStatus: tcData?.executionStatus ?? null,
         lastExecutedAt: tcData?.lastExecutedAt ?? null,
         relationshipId: rel!.id,
+        ...suspectFields(states, rel!.id),
       }
     })
   }
@@ -646,6 +752,9 @@ export class VerificationService {
       })
       .from(items)
       .where(and(inArray(items.id, targetIds), eq(items.itemType, 'Part')))
+    const states = await ItemRelationshipService.suspectStatesFor(
+      relationships.map((r) => r.id),
+    )
 
     // Combine data
     return partItems.map((part) => {
@@ -656,6 +765,7 @@ export class VerificationService {
         name: part.name,
         state: part.state,
         relationshipId: rel!.id,
+        ...suspectFields(states, rel!.id),
       }
     })
   }

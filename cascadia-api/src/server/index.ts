@@ -41,6 +41,7 @@ import roles from './routes/roles'
 import setup from './routes/setup'
 import software from './routes/software'
 import sysml from './routes/sysml'
+import systemElements from './routes/system-elements'
 import tags from './routes/tags'
 import tasks from './routes/tasks'
 import testCases from './routes/test-cases'
@@ -123,6 +124,7 @@ app.route('/api/v1/roles', roles)
 app.route('/api/v1/setup', setup)
 app.route('/api/v1/software', software)
 app.route('/api/v1/sysml', sysml)
+app.route('/api/v1/system-elements', systemElements)
 app.route('/api/v1/tags', tags)
 app.route('/api/v1/tasks', tasks)
 app.route('/api/v1/test-cases', testCases)

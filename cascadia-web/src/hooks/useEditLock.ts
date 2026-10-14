@@ -28,6 +28,7 @@ export interface EditLockStatus {
 export interface ItemEditContext {
   lockBranchId: string | null
   branchType: string | null
+  existsOnMain: boolean
   isBranchLocked: boolean
   isMainProtected: boolean
   checkedOutBy: { id: string; name: string | null; email: string } | null

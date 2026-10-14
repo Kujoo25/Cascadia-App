@@ -50,6 +50,29 @@ export type { ImportIssueRow, ImportIssuesRequest } from './types/issue'
 
 export { importIssueRowSchema, importIssuesRequestSchema } from './types/issue'
 
+// Requirement import types
+export type {
+  ImportRequirementRow,
+  ImportRequirementsRequest,
+  ImportRequirementsResult,
+  RequirementSheetRow,
+} from './types/requirement'
+
+export {
+  importRequirementRowSchema,
+  importRequirementsRequestSchema,
+} from './types/requirement'
+
+// Requirement hierarchy (parents by item number, in one sheet)
+export type {
+  HierarchyRow,
+  RequirementHierarchyPlan,
+} from './requirement-hierarchy'
+export {
+  planRequirementHierarchy,
+  validateRequirementHierarchy,
+} from './requirement-hierarchy'
+
 // Field configs
 export type { ItemFieldConfig, ImportTypeConfig } from './field-configs'
 
@@ -62,6 +85,8 @@ export {
   getAutoGenerateFieldsForType,
   DOCUMENT_FIELDS,
   ISSUE_FIELDS,
+  REQUIREMENT_FIELDS,
+  REQUIREMENT_SHEET_FIELDS,
 } from './field-configs'
 
 // Constants (backwards compatible + new type-aware functions)

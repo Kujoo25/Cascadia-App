@@ -1050,6 +1050,31 @@ export class DesignService {
     return library.at(0) || null
   }
 
+  /**
+   * IDs of every library a part can be drawn from: each non-archived
+   * `Library` design, the Standard Library and user-created ones alike.
+   *
+   * This is what a `library` search scope means. STD-LIB is the default
+   * catch-all, not the only library — BOM writes already accept a target in
+   * any `Library` design (`ItemRelationshipService.assertBomTargetScope`), so
+   * a picker that searched STD-LIB alone could never offer parts the server
+   * would take.
+   *
+   * Not filtered by program here. Searches apply the caller's access scope
+   * separately, so a library in a program the caller is not a member of is
+   * listed but contributes nothing they cannot already read.
+   */
+  static async listLibraryIds(): Promise<Array<string>> {
+    const rows = await db
+      .select({ id: designs.id })
+      .from(designs)
+      .where(
+        and(eq(designs.designType, 'Library'), eq(designs.isArchived, false)),
+      )
+
+    return rows.map((row) => row.id)
+  }
+
   // ============================================================================
   // Design Hierarchy (Family Support)
   // ============================================================================

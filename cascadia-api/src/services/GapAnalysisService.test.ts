@@ -52,7 +52,10 @@ import {
   SATISFIES_RELATIONSHIP,
   VERIFIED_BY_RELATIONSHIP,
 } from '@/items/traceability-relationships'
-import { VALIDATES_RELATIONSHIP } from '@/services/VerificationService'
+import {
+  VALIDATES_RELATIONSHIP,
+  VerificationService,
+} from '@/services/VerificationService'
 import {
   itemRelationships,
   items,
@@ -289,8 +292,21 @@ describe('gap analysis', () => {
     ])
     expect(result.coverage.requirements.satisfied).toBe(1)
 
-    // VERIFIED_BY likewise, from the test case that verifies it.
+    // VERIFIED_BY likewise, from the test case that verifies it — but a
+    // linked test that has never run is a plan, not evidence: the gap stays
+    // until the test passes and the derived status says so.
     await link(testCase.id, requirement.id, VERIFIED_BY_RELATIONSHIP)
+    result = await analyze()
+    expect(gapsOfType(result, 'unverified_requirement')).toEqual([
+      requirement.itemNumber,
+    ])
+    expect(result.coverage.requirements.verified).toBe(0)
+
+    await VerificationService.recordExecution(
+      testCase.id,
+      { status: 'Passed' },
+      user.id,
+    )
     result = await analyze()
     expect(gapsOfType(result, 'unverified_requirement')).toEqual([])
     expect(result.coverage.requirements.verified).toBe(1)

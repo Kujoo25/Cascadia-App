@@ -13,6 +13,8 @@ export type GapType =
   | 'unallocated_requirement'
   | 'unsatisfied_requirement'
   | 'unverified_requirement'
+  /** A trace link on the requirement went stale: one end revised since it was affirmed */
+  | 'suspect_requirement'
   | 'untested_part'
   | 'unmapped_ebom_item'
   | 'orphan_mbom_item'
@@ -62,6 +64,8 @@ export interface GapAnalysisResult {
       allocated: number
       satisfied: number
       verified: number
+      /** Requirements with at least one suspect trace link */
+      suspect: number
     }
     engineering: {
       total: number

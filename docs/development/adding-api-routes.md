@@ -467,10 +467,9 @@ apiHandler(
 )
 ```
 
-The committed `docs/api/openapi.v1.json` snapshot is refreshed by the
-maintainers, so leave it out of your PR — `npm run openapi:check` runs on
-`main`, not on pull requests. Full reference, including multipart bodies and
-optional ones: [`docs/api/README.md`](../api/README.md).
+Then run `npm run openapi:snapshot` and commit `docs/api/openapi.v1.json` —
+`npm run openapi:check` is a CI gate. Full reference, including multipart
+bodies and optional ones: [`docs/api/README.md`](../api/README.md).
 
 ## Important Notes
 

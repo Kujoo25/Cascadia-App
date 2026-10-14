@@ -1,24 +1,40 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Cascadia PLM LLC
 
+import { catalogValues } from '@cascadia/commons/items/relationships/catalog'
 import { isBranchProtectionExempt } from './branch-protection'
 
 /**
  * The requirements-traceability edge types, and the rule for which end of one
- * carries the edit policy.
+ * carries the edit policy. The strings are the catalog's
+ * (`@cascadia/commons/items/relationships/catalog`); they are named here so
+ * the services can import a constant rather than spell a string.
  */
 
-export const SATISFIES_RELATIONSHIP = 'SATISFIES' // Part/Document → Requirement
+export const SATISFIES_RELATIONSHIP = 'SATISFIES' // Part/Software/Document → Requirement
 export const DERIVES_FROM_RELATIONSHIP = 'DERIVES_FROM' // ChildReq → ParentReq
-export const ALLOCATED_TO_RELATIONSHIP = 'ALLOCATED_TO' // Requirement → Part
+export const ALLOCATED_TO_RELATIONSHIP = 'ALLOCATED_TO' // Requirement → Part/Software/Document
 export const VERIFIED_BY_RELATIONSHIP = 'VERIFIED_BY' // TestCase → Requirement
+export const VALIDATES_RELATIONSHIP = 'VALIDATES' // TestCase → Part
 
-export const TRACEABILITY_RELATIONSHIP_TYPES: ReadonlySet<string> = new Set([
-  SATISFIES_RELATIONSHIP,
-  DERIVES_FROM_RELATIONSHIP,
-  ALLOCATED_TO_RELATIONSHIP,
-  VERIFIED_BY_RELATIONSHIP,
-])
+/**
+ * The architecture edges (systems-engineering Phase 5). `DECOMPOSES` is the
+ * tree — a structural edge, guarded on its source like `BOM`, and the one
+ * edge type the relationship service refuses a cycle of. `REALIZED_BY` is the
+ * hop from the logical element to the item that implements it.
+ */
+export const DECOMPOSES_RELATIONSHIP = 'DECOMPOSES' // SystemElement → SystemElement
+export const REALIZED_BY_RELATIONSHIP = 'REALIZED_BY' // SystemElement → Part/Software
+
+/**
+ * The edge types whose guard falls to the target end when the source is
+ * branch-protection exempt — the catalog's `target-when-source-exempt`
+ * entries. `VALIDATES` joined on 2026-10-09: with a Free TestCase as its
+ * source it had the hole `VERIFIED_BY` was closed for, a validation link
+ * writable onto a released part on protected main with no change order.
+ */
+export const TRACEABILITY_RELATIONSHIP_TYPES: ReadonlySet<string> =
+  catalogValues((entry) => entry.guardEnd === 'target-when-source-exempt')
 
 /**
  * Which end of an edge answers for it under the edit-lock policy.

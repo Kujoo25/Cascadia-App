@@ -17,10 +17,16 @@
  * its handler, then append one entry below. Both surfaces pick it up.
  */
 
+import { requestUserInputDef, suggestActionsDef } from './dialog-definitions'
+import {
+  requestUserInputHandler,
+  suggestActionsHandler,
+} from './dialog-handlers'
 import {
   analyzeChangeImpactDef,
   getBomDef,
   getItemDetailsDef,
+  getSuspectLinksDef,
   getWhereUsedDef,
   offerNavigationDef,
   searchDesignsDef,
@@ -31,6 +37,7 @@ import {
   analyzeChangeImpactHandler,
   getBomHandler,
   getItemDetailsHandler,
+  getSuspectLinksHandler,
   getWhereUsedHandler,
   offerNavigationHandler,
   searchDesignsHandler,
@@ -38,6 +45,7 @@ import {
   searchProgramsHandler,
 } from './handlers'
 import {
+  affirmLinkDef,
   createChangeOrderDef,
   createItemDef,
   createProgramDef,
@@ -46,6 +54,7 @@ import {
   updateItemDef,
 } from './write-definitions'
 import {
+  affirmLinkHandler,
   createChangeOrderHandler,
   createItemHandler,
   createProgramHandler,
@@ -203,6 +212,46 @@ const entries: Array<ToolRegistryEntry> = [
       searchDesignsDef.server((input) => searchDesignsHandler(input, context)),
     invoke: (input, context) => searchDesignsHandler(input as never, context),
   },
+  {
+    name: getSuspectLinksDef.name,
+    description: getSuspectLinksDef.description,
+    inputSchema: schemaOf(getSuspectLinksDef),
+    readOnly: true,
+    surfaces: ['chat', 'mcp'],
+    bind: (context) =>
+      getSuspectLinksDef.server((input) =>
+        getSuspectLinksHandler(input, context),
+      ),
+    invoke: (input, context) => getSuspectLinksHandler(input as never, context),
+  },
+
+  // ── Dialog tools (UI affordances: a modal in the chat panel) ─────────
+  {
+    name: requestUserInputDef.name,
+    description: requestUserInputDef.description,
+    inputSchema: schemaOf(requestUserInputDef),
+    readOnly: true,
+    // A form the user fills in; search mode never asks questions.
+    surfaces: ['chat'],
+    bind: (context) =>
+      requestUserInputDef.server((input) =>
+        requestUserInputHandler(input, context),
+      ),
+    invoke: (input, context) =>
+      requestUserInputHandler(input as never, context),
+  },
+  {
+    name: suggestActionsDef.name,
+    description: suggestActionsDef.description,
+    inputSchema: schemaOf(suggestActionsDef),
+    readOnly: true,
+    surfaces: ['chat'],
+    bind: (context) =>
+      suggestActionsDef.server((input) =>
+        suggestActionsHandler(input, context),
+      ),
+    invoke: (input, context) => suggestActionsHandler(input as never, context),
+  },
 
   // ── Write tools (two-step confirmation built into the handlers) ──────
   {
@@ -273,6 +322,16 @@ const entries: Array<ToolRegistryEntry> = [
     bind: (context) =>
       createProgramDef.server((input) => createProgramHandler(input, context)),
     invoke: (input, context) => createProgramHandler(input as never, context),
+  },
+  {
+    name: affirmLinkDef.name,
+    description: affirmLinkDef.description,
+    inputSchema: schemaOf(affirmLinkDef),
+    readOnly: false,
+    surfaces: ['chat', 'mcp'],
+    bind: (context) =>
+      affirmLinkDef.server((input) => affirmLinkHandler(input, context)),
+    invoke: (input, context) => affirmLinkHandler(input as never, context),
   },
 ]
 

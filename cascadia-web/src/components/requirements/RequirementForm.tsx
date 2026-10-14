@@ -79,13 +79,6 @@ export function RequirementForm({
         | 'Test'
         | 'Documentation'
         | undefined,
-      verificationStatus: undefined as
-        | 'NotStarted'
-        | 'InProgress'
-        | 'Passed'
-        | 'Failed'
-        | 'Waived'
-        | undefined,
       ...requirement,
     },
     validators: {
@@ -386,34 +379,8 @@ export function RequirementForm({
           )}
         </form.Field>
 
-        {/* Verification Status */}
-        <form.Field name="verificationStatus">
-          {(field) => (
-            <FormField
-              label="Verification Status"
-              error={field.state.meta.errors[0]}
-              helpText="Current verification status"
-            >
-              <Select
-                value={field.state.value}
-                onValueChange={(value) =>
-                  field.handleChange(value as typeof field.state.value)
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select status" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="NotStarted">Not Started</SelectItem>
-                  <SelectItem value="InProgress">In Progress</SelectItem>
-                  <SelectItem value="Passed">Passed</SelectItem>
-                  <SelectItem value="Failed">Failed</SelectItem>
-                  <SelectItem value="Waived">Waived</SelectItem>
-                </SelectContent>
-              </Select>
-            </FormField>
-          )}
-        </form.Field>
+        {/* No verification-status field: the status is derived from the
+            verifying tests' executions once the requirement exists. */}
       </div>
 
       {/* Custom Attributes */}
